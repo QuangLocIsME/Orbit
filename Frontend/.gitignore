@@ -112,7 +112,9 @@ dist
 
 # FuseBox cache
 .fusebox/
-
+.astro/
+.vscode/
+dist/
 # DynamoDB Local files
 .dynamodb/
 
