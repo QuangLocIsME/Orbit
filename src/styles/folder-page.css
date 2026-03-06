@@ -1,0 +1,167 @@
+/* Folder page - Projects > FolderName */
+
+.folder-page {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 24px 24px 0;
+  gap: 24px;
+  flex: 1;
+}
+
+.folder-breadcrumb {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #4A5565;
+  text-decoration: none;
+}
+
+.breadcrumb-item:hover {
+  color: #155DFC;
+}
+
+.breadcrumb-arrow {
+  color: #99A1AF;
+}
+
+.breadcrumb-sep {
+  color: #99A1AF;
+}
+
+.breadcrumb-current {
+  color: #101828;
+  font-weight: 500;
+}
+
+.folder-project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+  width: 100%;
+}
+
+.folder-project-card {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: 0.2s;
+}
+
+.folder-project-card:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+.folder-card-image {
+  position: relative;
+  width: 100%;
+  height: 192px;
+  background: #F3F4F6;
+}
+
+.folder-card-img-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.folder-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0) 100%);
+}
+
+.folder-card-status {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: #fff;
+}
+
+.folder-card-category {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-size: 14px;
+  line-height: 20px;
+  text-transform: capitalize;
+}
+
+.folder-card-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.folder-card-body h4 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  color: #101828;
+}
+
+.folder-card-body p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: #4A5565;
+}
+
+.folder-card-progress .progress-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #4A5565;
+}
+
+.folder-card-progress .progress-bar {
+  margin-top: 6px;
+  height: 8px;
+  background: #F3F4F6;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.folder-card-progress .progress {
+  height: 100%;
+  background: #155DFC;
+  border-radius: 999px;
+}
+
+.folder-card-metrics {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  color: #4A5565;
+  margin-top: 4px;
+}
+
+.folder-grid-loading,
+.folder-grid-empty {
+  font-size: 14px;
+  color: #6b7280;
+}

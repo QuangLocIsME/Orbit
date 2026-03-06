@@ -1,0 +1,53 @@
+/* Folders Section */
+
+.folders-section {
+  margin-top: 24px;
+}
+
+.folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.folder-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  transition: 0.2s;
+  text-decoration: none;
+  color: inherit;
+}
+
+.folder-card:hover {
+  background: #f3f4f6;
+}
+
+.folder-icon {
+  width: 40px;
+  height: 40px;
+  background: #155dfc;
+  border-radius: 8px;
+}
+
+.folder-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.folder-title {
+  font-weight: 500;
+  margin: 0;
+}
+
+.folder-count {
+  font-size: 13px;
+  color: #6b7280;
+}

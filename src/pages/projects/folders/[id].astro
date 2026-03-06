@@ -1,0 +1,63 @@
+---
+export const prerender = false;
+
+import Sidebar from "../../../components/layout/sidebar.jsx";
+import Topbar from "../../../components/layout/topbar.jsx";
+import FolderBreadcrumb from "../../../components/layout/project/folder/folder-breadcrumb.jsx";
+import FolderHeader from "../../../components/layout/project/folder/folder-header.jsx";
+import FolderProjectGrid from "../../../components/layout/project/folder/folder-project-grid.jsx";
+import { fetchSidebarData } from "../../../lib/server-fetch.js";
+
+const { id } = Astro.params;
+const { user, favorites, shared, privateProjects } = await fetchSidebarData(
+  Astro.url.origin
+);
+const currentPath = Astro.url.pathname;
+
+// Fetch folder name for breadcrumb
+const folderRes = await fetch(new URL("/api/folders", Astro.url.origin).href);
+const folders = folderRes.ok ? await folderRes.json() : [];
+const folder = folders.find((f) => String(f.id) === id);
+const folderName = folder?.name ?? "Folder";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{folderName} — ORBIT</title>
+    <link rel="stylesheet" href="/src/styles/home.css" />
+    <link rel="stylesheet" href="/src/styles/project.css" />
+    <link rel="stylesheet" href="/src/styles/folder-page.css" />
+    <link rel="stylesheet" href="/src/styles/create-project.css" />
+    <link rel="stylesheet" href="/src/styles/create-folder.css" />
+  </head>
+
+  <body>
+    <div class="app">
+
+      <Sidebar
+        user={user}
+        favorites={favorites}
+        shared={shared}
+        privateProjects={privateProjects}
+        currentPath={currentPath}
+        client:load
+      />
+
+      <div class="main-area">
+
+        <Topbar client:load />
+
+        <main class="page-content">
+          <div class="folder-page">
+            <FolderBreadcrumb folderName={folderName} client:load />
+            <FolderHeader folderName={folderName} client:load />
+            <FolderProjectGrid folderId={id} client:load />
+          </div>
+        </main>
+
+      </div>
+
+    </div>
+  </body>
+</html>

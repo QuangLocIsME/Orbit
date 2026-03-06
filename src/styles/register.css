@@ -1,0 +1,144 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f9fafb;
+  }
+  
+  /* HEADER */
+  
+  .orbit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 40px;
+    border-bottom: 1px solid #eee;
+    background: white;
+  }
+  
+  .logo {
+    font-size: 28px;
+    font-weight: bold;
+    color: #4338ca;
+  }
+  
+  nav a {
+    margin: 0 12px;
+    color: #616874;
+    text-decoration: none;
+  }
+  
+  .actions .login {
+    margin-right: 16px;
+    color: #616874;
+  }
+  
+  .new-model {
+    background: #2563eb;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 8px;
+    text-decoration: none;
+  }
+  
+  /* MAIN */
+  
+  .auth-wrapper {
+    display: flex;
+    justify-content: center;
+    padding: 60px 20px;
+  }
+  
+  .auth-card {
+    display: flex;
+    width: 1100px;
+    background: white;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 25px 50px rgba(0,0,0,0.1);
+  }
+  
+  /* LEFT */
+  
+  .auth-form {
+    width: 50%;
+    padding: 48px;
+  }
+  
+  .back {
+    text-decoration: none;
+    color: #616874;
+  }
+  
+  .auth-form h1 {
+    margin-top: 20px;
+  }
+  
+  .form label {
+    display: block;
+    margin-top: 20px;
+    font-size: 14px;
+  }
+  
+  .form input {
+    width: 100%;
+    padding: 12px;
+    margin-top: 6px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+  }
+  
+  .checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .primary-btn {
+    width: 100%;
+    margin-top: 20px;
+    padding: 14px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+  }
+  
+  .google-btn {
+    width: 100%;
+    margin-top: 12px;
+    padding: 14px;
+    background: #f3f4f6;
+    border: none;
+    border-radius: 10px;
+  }
+  
+  .login-link {
+    text-align: center;
+    margin-top: 18px;
+  }
+  
+  .login-link a {
+    color: #9810fa;
+  }
+  
+  /* RIGHT */
+  
+  .auth-visual {
+    width: 50%;
+    background: linear-gradient(
+      135deg,
+      #a947ff 0%,
+      #6060ff 50%,
+      #317cff 100%
+    );
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .visual-content {
+    text-align: center;
+    max-width: 320px;
+  }

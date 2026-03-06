@@ -1,0 +1,27 @@
+---
+import OrbitHeader from "../components/orbit-header.jsx";
+import OrbitFooter from "../components/orbit-footer.jsx";
+import LoginForm from "../components/auth/login-form.jsx";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Login — ORBIT</title>
+
+    <link rel="stylesheet" href="/src/styles/login.css" />
+    <link rel="stylesheet" href="/src/styles/orbit-footer.css" />
+  </head>
+
+  <body>
+
+    <OrbitHeader />
+
+    <main>
+      <LoginForm client:load />
+    </main>
+
+    <OrbitFooter />
+
+  </body>
+</html>

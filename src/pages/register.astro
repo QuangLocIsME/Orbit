@@ -1,0 +1,27 @@
+---
+import OrbitHeader from "../components/orbit-header.jsx";
+import OrbitFooter from "../components/orbit-footer.jsx";
+import RegisterForm from "../components/auth/register-form.jsx";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Register — ORBIT</title>
+
+    <link rel="stylesheet" href="/src/styles/register.css" />
+    <link rel="stylesheet" href="/src/styles/orbit-footer.css" />
+  </head>
+
+  <body>
+
+    <OrbitHeader />
+
+    <main class="auth-wrapper">
+      <RegisterForm client:load />
+    </main>
+
+    <OrbitFooter />
+
+  </body>
+</html>

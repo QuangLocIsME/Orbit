@@ -1,0 +1,64 @@
+---
+import ProjectHeader from "../../components/project/ProjectHeader.jsx";
+import ProjectStats from "../../components/project/ProjectStats.jsx";
+import ProjectMembers from "../../components/project/ProjectMembers.jsx";
+import RecentActivity from "../../components/project/RecentActivity.jsx";
+import ProjectMilestones from "../../components/project/ProjectMilestones.jsx";
+import TasksOverview from "../../components/project/TasksOverview.jsx";
+import { getProject } from "../../services/projectService";
+
+export const prerender = false;
+
+const { projectId } = Astro.params;
+const base = Astro.url.origin;
+
+let project = null;
+try {
+  project = await getProject(projectId, base);
+} catch (err) {
+  // project stays null - render an error message in the page
+  console.error(err);
+}
+---
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
+    <link rel="stylesheet" href="/src/styles/project.css" />
+    <link rel="stylesheet" href="/src/styles/folder-page.css" />
+  </head>
+
+  <body>
+    <div class="page-content">
+      {project ? (
+        <>
+          <ProjectHeader project={project} client:load />
+
+          <ProjectStats project={project} client:load />
+
+          <div class="layout-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; max-width:1115px; margin-top:16px;">
+            <div>
+              <ProjectMembers members={project.members || []} client:load />
+            </div>
+            <div>
+              <RecentActivity activities={project.activities || []} client:load />
+            </div>
+          </div>
+
+          <div style="max-width:1115px; margin-top:16px;">
+            <ProjectMilestones milestones={project.milestones || []} client:load />
+          </div>
+
+          <div style="max-width:1115px; margin-top:16px;">
+            <TasksOverview tasksOverview={project.tasksOverview || {}} client:load />
+          </div>
+        </>
+      ) : (
+        <div class="card">
+          <p>Unable to load project details.</p>
+        </div>
+      )}
+    </div>
+  </body>
+</html>

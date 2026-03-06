@@ -1,0 +1,74 @@
+/* Priority Projects Section */
+
+.priority-section {
+  margin-top: 32px;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.project-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: 0.2s;
+}
+
+.project-card:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+.project-image {
+  height: 180px;
+  background: #e5e7eb;
+  position: relative;
+}
+
+.status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #10b981;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.project-body {
+  padding: 16px;
+}
+
+.project-body h4 {
+  margin: 0 0 6px;
+}
+
+.project-body p {
+  margin: 0 0 12px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.progress-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.progress-bar {
+  margin-top: 6px;
+  height: 8px;
+  background: #f3f4f6;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress {
+  height: 100%;
+  background: #155dfc;
+}

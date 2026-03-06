@@ -1,0 +1,214 @@
+/* Create Folder Modal */
+
+.create-folder-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+}
+
+.create-folder-modal {
+  box-sizing: border-box;
+  width: 512px;
+  max-width: 95vw;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+}
+
+.create-folder-header {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  height: 68px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.create-folder-title-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.create-folder-icon-wrap {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+.create-folder-header h2 {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+  color: #101828;
+}
+
+.create-folder-close {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  font-size: 18px;
+  color: #6A7282;
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.create-folder-close:hover {
+  background: #f3f4f6;
+}
+
+.create-folder-form {
+  padding: 24px;
+}
+
+.create-folder-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.create-folder-form .form-group:last-of-type {
+  margin-bottom: 24px;
+}
+
+.create-folder-form label {
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  color: #364153;
+}
+
+.create-folder-form .required {
+  color: #FB2C36;
+}
+
+.create-folder-form input,
+.create-folder-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  font-size: 16px;
+  line-height: 18px;
+  font-family: Arial, sans-serif;
+}
+
+.create-folder-form input::placeholder,
+.create-folder-form textarea::placeholder {
+  color: #99A1AF;
+}
+
+.create-folder-form textarea {
+  min-height: 93px;
+  resize: vertical;
+  line-height: 24px;
+}
+
+/* Folder Color Grid */
+
+.folder-color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+.folder-color-btn {
+  position: relative;
+  width: 70px;
+  height: 44px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.folder-color-btn:hover {
+  transform: scale(1.02);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.folder-color-btn.selected {
+  box-shadow: 0 0 0 2px #155DFC;
+}
+
+.folder-color-check {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  background: #155DFC;
+  border-radius: 50%;
+  color: white;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+/* Footer */
+
+.create-folder-footer {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.create-folder-footer .btn-cancel {
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  line-height: 20px;
+  color: #364153;
+  cursor: pointer;
+}
+
+.create-folder-footer .btn-cancel:hover {
+  color: #111827;
+}
+
+.create-folder-footer .btn-create {
+  height: 36px;
+  padding: 0 14px;
+  background: #155DFC;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 20px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.create-folder-footer .btn-create:hover:not(.disabled) {
+  background: #1253e0;
+}
+
+.create-folder-footer .btn-create.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

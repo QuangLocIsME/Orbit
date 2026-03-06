@@ -1,0 +1,60 @@
+---
+import Sidebar from "../components/layout/sidebar.jsx";
+import Topbar from "../components/layout/topbar.jsx";
+import ProjectHeader from "../components/layout/project/project-header.jsx";
+import FoldersSection from "../components/layout/project/folders-section.jsx";
+import PrioritySection from "../components/layout/project/priority-section.jsx";
+import { fetchSidebarData } from "../lib/server-fetch.js";
+
+const { user, favorites, shared, privateProjects } = await fetchSidebarData(
+  Astro.url.origin
+);
+const currentPath = Astro.url.pathname;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Projects — ORBIT</title>
+    <link rel="stylesheet" href="/src/styles/home.css" />
+    <link rel="stylesheet" href="/src/styles/project.css" />
+    <link rel="stylesheet" href="/src/styles/folders.css" />
+    <link rel="stylesheet" href="/src/styles/priority.css" />
+    <link rel="stylesheet" href="/src/styles/create-project.css" />
+    <link rel="stylesheet" href="/src/styles/create-folder.css" />
+  </head>
+
+  <body>
+    <div class="app">
+
+      <Sidebar
+        user={user}
+        favorites={favorites}
+        shared={shared}
+        privateProjects={privateProjects}
+        currentPath={currentPath}
+        client:load
+      />
+
+      <div class="main-area">
+
+        <Topbar client:load />
+
+        <main class="page-content">
+
+          <!-- PROJECT HEADER -->
+          <ProjectHeader client:load />
+
+          <!-- FOLDERS -->
+          <FoldersSection client:load />
+
+          <!-- PRIORITY PROJECTS -->
+          <PrioritySection client:load />
+
+        </main>
+
+      </div>
+
+    </div>
+  </body>
+</html>

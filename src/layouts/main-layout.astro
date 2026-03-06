@@ -1,0 +1,39 @@
+---
+import Sidebar from "../components/layout/sidebar.jsx";
+import Topbar from "../components/layout/topbar.jsx";
+import { fetchSidebarData } from "../lib/server-fetch.js";
+
+const { user, favorites, shared, privateProjects } = await fetchSidebarData(
+  Astro.url.origin
+);
+const currentPath = Astro.url.pathname;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ORBIT App</title>
+    <link rel="stylesheet" href="/src/styles/home.css" />
+    <link rel="stylesheet" href="/src/styles/create-project.css"/>
+  </head>
+
+  <body>
+    <div class="app">
+
+        <Sidebar
+        user={user}
+        favorites={favorites}
+        shared={shared}
+        privateProjects={privateProjects}
+        client:load
+        currentPath={currentPath}
+      />
+
+      <div class="main-area">
+        <Topbar client:load />
+        <slot />
+      </div>
+
+    </div>
+  </body>
+</html>
