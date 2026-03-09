@@ -24,9 +24,15 @@ export default function PrioritySection() {
         ) : (
           projects.map((project) => (
             <div className="project-card" key={project.id}>
-              <div className="project-image">
-                <span className="status">{project.status || "Active"}</span>
-              </div>
+              <a href={`/projects/${project.id}`} className="project-image-link">
+                <div className="project-image">
+                  {project.image ? (
+                    <img src={project.image} alt={project.name} />
+                  ) : null}
+                  <span className="project-category">{project.category || "General"}</span>
+                  <span className="status">{project.status || "Active"}</span>
+                </div>
+              </a>
 
               <div className="project-body">
                 <h4>{project.name}</h4>
@@ -42,6 +48,12 @@ export default function PrioritySection() {
                     className="progress"
                     style={{ width: `${project.progress ?? 0}%` }}
                   />
+                </div>
+
+                <div className="project-metrics">
+                  <span className="metric">👥 {project.membersCount || 0}</span>
+                  <span className="metric">🗂 {project.filesCount || 0}</span>
+                  <span className="metric">⏱ {project.lastActivity || ""}</span>
                 </div>
               </div>
             </div>
