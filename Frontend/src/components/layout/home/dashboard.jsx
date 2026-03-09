@@ -4,6 +4,7 @@ import { getUpcomingEvents } from "../../../services/event-service";
 import { getUserTasks } from "../../../services/task-service";
 import CreateProjectModal from "./create-project-modal.jsx";
 
+
 export default function Dashboard() {
 
   const [projects, setProjects] = useState([]);
@@ -21,11 +22,11 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <main className="dashboard">
+    <main className="dashboard container">
   
       {/* HEADER */}
       <header className="dashboard-header">
-        <h1>Welcome back</h1>
+        <h1 className="page-title">Welcome back</h1>
         <button className="primary-btn" onClick={() => setOpen(true)}>+ New Project</button>
         {open && (
         <CreateProjectModal onClose={() => setOpen(false)} />
@@ -45,15 +46,36 @@ export default function Dashboard() {
         <div className="card-header">
           <h2>Recently visited</h2>
         </div>
-  
+
         <div className="recent-list">
-          {projects.map(p => (
-            <article className="project-card" key={p.id}>
-              <img src="/images/sample.jpg" alt={p.name} />
-  
-              <div className="project-info">
-                <h4>{p.name}</h4>
-                <span>{p.updatedAt}</span>
+          {projects.map((p) => (
+            <article className="recent-project" key={p.id}>
+              <a href={`/projects/${p.id}`} className="recent-thumb">
+                {p.image ? (
+                  <img src={p.image} alt={p.name} />
+                ) : (
+                  <div className="recent-placeholder" />
+                )}
+                <span className="recent-badge">{p.tag || "Construction"}</span>
+                <span className="recent-status">{p.status || "active"}</span>
+              </a>
+
+              <div className="recent-body">
+                <h4 className="recent-title">{p.name}</h4>
+                <div className="recent-sub">{p.description || p.subtitle || ""}</div>
+
+                <div className="recent-progress-row">
+                  <div className="recent-progress-bar">
+                    <div className="recent-progress" style={{ width: `${p.progress ?? 0}%` }} />
+                  </div>
+                  <div className="recent-progress-percent">{p.progress ?? 0}%</div>
+                </div>
+
+                <div className="recent-metrics">
+                  <span>👥 {p.members ?? 0}</span>
+                  <span>🔔 {p.tasks ?? 0}</span>
+                  <span>🕒 {p.updatedAt || ''}</span>
+                </div>
               </div>
             </article>
           ))}

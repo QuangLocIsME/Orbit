@@ -2,7 +2,7 @@ export const prerender = false;
 
 export async function GET() {
   return Response.json({
-    user: { name: "Thao Duyen" },
+    user: { name: "Gia Khanh" },
     favorites: [
       { id: 1, name: "Metro Station - Phase 2" },
       { id: 2, name: "Office Complex Tower A" },

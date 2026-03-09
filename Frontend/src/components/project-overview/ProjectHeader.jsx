@@ -1,5 +1,5 @@
 import React from "react";
-import ProjectTabs from "../project/ProjectTabs.jsx";
+import ProjectTabs from "./ProjectTabs.jsx";
 
 export default function ProjectHeader({ project }) {
     if (!project) return null;
