@@ -1,210 +1,622 @@
 /* Page content */
+.project-image {
+  width: 100%;
+  height: 160px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.project-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 .page-content {
-    padding: 24px;
-  }
-  
-  /* HEADER */
-  
-  .project-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: #fff;
-    padding: 12px 24px;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  
-  /* LEFT */
-  
-  .header-left {
-    display: flex;
-    gap: 12px;
-  }
-  
-  /* BUTTONS */
-  
-  .btn {
-    height: 36px;
-    padding: 0 16px;
-    border-radius: 8px;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  
-  .btn.primary {
-    background: #155dfc;
-    color: white;
-    border: none;
-  }
-  
-  .btn.outline {
-    background: white;
-    border: 1px solid #e5e7eb;
-    color: #374151;
-  }
-  
-  /* SEARCH */
-  
-  .header-search {
-    flex: 1;
-    position: relative;
-  }
-  
-  .header-search input {
-    width: 50%;
-    height: 36px;
-    padding: 0 16px 0 36px;
-    border-radius: 8px;
-    border: 1px solid #e5e7eb;
-    background: #f9fafb;
-  }
-  
-  .search-icon {
-    position: absolute;
-    left: 12px;
-    top: 8px;
-    font-size: 14px;
-  }
-  
-  /* RIGHT */
-  
-  .header-right {
-    display: flex;
-    gap: 8px;
-    margin-left: -4px;
-  }
-  
-  /* VIEW SWITCH */
-  
-  .view-switch {
-    display: flex;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  
-  .view-btn {
-    width: 36px;
-    height: 36px;
-    background: white;
-    border: none;
-    cursor: pointer;
-  }
-  
-  .view-btn.active {
-    background: #f3f4f6;
-  }
+  padding: 24px;
+}
 
-  /* Project overview hero & stats */
-  .project-hero {
-    position: relative;
-    width: 100%;
-    height: 256px;
-    border-radius: 14px;
-    overflow: hidden;
-    background: #f3f4f6;
-    margin-bottom: 18px;
-  }
+.project-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  /* horizontal padding comes from .page-content */
+  height: 62px;
+  background: var(--color-card);
+  border-bottom: 1px solid var(--color-border);
+}
 
-  .project-hero img.cover { width:100%; height:100%; object-fit:cover; display:block }
-  .project-hero .overlay { position:absolute; inset:0; background: linear-gradient(0deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0) 100%); }
-  .project-hero .content { position:absolute; left:24px; bottom:24px; color:#fff; max-width:900px; display:flex; flex-direction:column; gap:8px }
-  .project-hero .meta { display:flex; align-items:center; gap:8px; font-family:Arial, sans-serif; font-size:14px; color:rgba(255,255,255,0.85) }
-  .project-hero h1 { margin:0; font-family:Arial, sans-serif; font-size:36px; line-height:40px; color:#fff }
-  .project-hero p.desc { margin:0; font-family:Arial, sans-serif; font-size:16px; color:rgba(255,255,255,0.9) }
+.folder-card-image {
+  position: relative;
+  height: 160px;
+  overflow: hidden;
+  /* Quan trọng: cắt phần ảnh tràn */
+  border-radius: 10px 10px 0 0;
+}
 
-  .project-stats { margin-top: 12px }
-  .project-stats .stats-top { display:flex; gap:12px; align-items:center; background:#fff; padding:16px; border-radius:10px; border:1px solid #E5E7EB }
-  .project-stats .stat-item { flex:1 }
-  .project-stats .label { font-size:12px; color:#6b7280; margin-bottom:6px }
-  .status-pill { display:inline-block; padding:6px 10px; border-radius:999px; font-size:13px; background:#E6F6FF; color:#155DFC }
-  .progress-wrap { display:flex; align-items:center; gap:12px }
-  .progress-bar { flex:1; height:8px; background:#F3F4F6; border-radius:999px; overflow:hidden }
-  .progress { height:100%; background:#155DFC }
-  .progress-percent { width:48px; text-align:right; font-weight:500 }
+.folder-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Ảnh fill khung mà không méo */
+  display: block;
+}
 
-  .metrics-row { display:flex; gap:12px; margin-top:12px }
-  .metric-card { flex:1; background:#fff; border:1px solid #E5E7EB; padding:12px; border-radius:10px; display:flex; gap:12px; align-items:center }
-  .metric-icon { width:44px; height:44px; border-radius:8px; background:#F3F4F6; display:flex; align-items:center; justify-content:center }
-  .metric-value { font-size:18px; font-weight:600 }
-  .metric-label { font-size:13px; color:#6b7280 }
+/* LEFT */
 
-  /* Sections: members, activity, milestones, tasks */
-  .project-section { margin-top:16px }
-  .project-section .section-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px }
-  .project-section h3 { margin:0; font-size:14px; color:#4a5565 }
+.header-left {
+  display: flex;
+  gap: 12px;
+}
 
-  .members-card, .activity-card, .milestones-card, .tasks-card { background:#fff; border:1px solid #E5E7EB; border-radius:10px; padding:0; overflow:hidden }
+/* SEARCH */
 
-  .member-row { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid #f3f4f6 }
-  .member-row:last-child { border-bottom: none }
-  .avatar { width:40px; height:40px; border-radius:999px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; position:relative }
-  .presence { position:absolute; width:12px; height:12px; border-radius:999px; bottom:0; right:0; border:2px solid #fff; background:#00c950 }
-  .member-name { font-size:14px; color:#101828 }
-  .member-role { font-size:12px; color:#6a7282 }
+.header-search {
+  position: relative;
+}
 
-  .activity-item { display:flex; gap:12px; padding:12px 16px; border-bottom:1px solid #f3f4f6; align-items:center }
-  .activity-item:last-child { border-bottom:none }
-  .activity-icon { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center }
-  .activity-body .activity-title { font-size:14px; color:#101828 }
-  .activity-body .activity-meta { font-size:12px; color:#6a7282 }
+.header-search input {
+  width: 448px;
+  height: 33px;
+  padding: 6px 16px 6px 36px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  color: var(--color-foreground);
+  background: var(--color-muted);
 
-  .milestone-row { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid #f3f4f6 }
-  .milestone-dot { width:12px; height:12px; border-radius:999px }
-  .milestone-title { font-size:14px; color:#101828 }
-  .milestone-date { font-size:12px; color:#6a7282 }
-  .milestone-status { margin-left:auto; padding:6px 10px; border-radius:6px; font-size:12px }
-  .milestone-status.completed { background:#ecfdf5; color:#007a55 }
-  .milestone-status.in-progress { background:#f0f9ff; color:#0069a8 }
-  .milestone-status.upcoming { background:#f3f4f6; color:#4a5565 }
+}
 
-  .tasks-card { display:flex; gap:24px; padding:24px }
-  .task-pill { display:flex; align-items:center; gap:12px; background:transparent }
-  .task-icon { width:48px; height:48px; border-radius:999px }
-  .task-count { font-size:24px; font-weight:600; color:#101828 }
-  .task-label { font-size:12px; color:#6a7282 }
-  .tasks-overview .section-header .view-all { color:#155dfc; font-size:12px }
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 8px;
+}
 
-  /* Project top navigation tabs (below hero) */
-  .project-topnav { max-width:1115px; margin-top:16px }
-  .project-tabs { list-style:none; display:flex; gap:12px; padding:8px 12px; margin:0; background:transparent; }
-  .project-tab { padding:10px 14px; border-radius:8px; font-size:14px; color:#475569; cursor:pointer; transition:background 0.12s,color 0.12s }
-  .project-tab:hover { background:#f8fafc }
-  .project-tab.active { background:#fff; border:1px solid #e5e7eb; color:#101828; box-shadow:0 4px 12px rgba(16,24,40,0.04) }
+/* ACTIONS */
 
-  /* when tabs are rendered inside the hero, position them overlapping bottom */
-  .project-hero { padding-bottom: 48px }
-  .project-hero .tabs-wrap { position: absolute; left: 50%; transform: translateX(-50%); bottom: -28px; width: 100%; display:flex; justify-content:center; pointer-events:auto }
-  .project-hero .tabs-wrap .project-tabs { background: transparent; padding: 6px }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-  /* Top bar that sits above the hero and tabs (workspace + actions) */
-  .project-topbar {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:12px;
-    padding:8px 24px;
-    height:40px;
-    background:transparent;
-    border-bottom: 1px solid #e5e7eb;
-    margin-bottom:12px;
-  }
-  .project-topbar .topbar-left {
-    display:flex;
-    align-items:center;
-    gap:8px;
-  }
-  .btn.small { height:32px; padding:0 12px; border-radius:6px; font-size:14px }
-  .btn.small img { vertical-align:middle }
-  .btn.outline.small { background:#fff; border:1px solid #e5e7eb; color:#475569 }
-  .topbar-icon img { width:12px; height:12px; display:block }
-  .topbar-title { font-size:12px; color:#101828; white-space:nowrap }
+/* BUTTON */
 
-  .project-topbar .topbar-right { display:flex; align-items:center; gap:8px }
-  .project-topbar .sep { width:1px; height:20px; background:#e5e7eb; margin:0 8px }
-  .icon-btn { width:32px; height:32px; border-radius:6px; border:none; background:#fff; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px }
-  .icon-btn:hover { background:#f3f4f6 }
+.btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
 
-  /* Ensure hero sits below topbar with spacing */
-  .project-hero { margin-top:8px }
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px; /* khoảng cách icon + text */
+}
+
+.btn.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.btn.outline {
+  background: var(--color-card);
+  color: var(--color-foreground);
+  border: 1px solid var(--color-border);
+  padding: 8px 16px;
+  border-radius: 10px;
+}
+
+/* VIEW SWITCH */
+
+.view-switch {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.view-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-muted);
+}
+
+.view-btn.active {
+  background: var(--color-muted);
+}
+
+/* Project overview hero & stats */
+.project-hero {
+  position: relative;
+  width: 100%;
+  height: 256px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #f3f4f6;
+  margin-bottom: 18px;
+}
+
+.project-hero img.cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block
+}
+
+.project-hero .overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.2) 50%, rgba(0, 0, 0, 0) 100%);
+}
+
+.project-hero .content {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  color: #fff;
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px
+}
+
+.project-hero .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85)
+}
+
+.project-hero h1 {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  font-size: 36px;
+  line-height: 40px;
+  color: #fff
+}
+
+.project-hero p.desc {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.9)
+}
+
+.project-stats {
+  margin-top: 12px
+}
+
+.project-stats .stats-top {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-card-foreground);
+}
+
+.project-stats .stat-item {
+  flex: 1
+}
+
+.project-stats .label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 6px
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: #E6F6FF;
+  color: #155DFC
+}
+
+.progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--color-muted);
+  border-radius: 999px;
+  overflow: hidden
+}
+
+.progress {
+  height: 100%;
+  background: #155DFC
+}
+
+.progress-percent {
+  width: 48px;
+  text-align: right;
+  font-weight: 500
+}
+
+.metrics-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px
+}
+
+.metric-card {
+  flex: 1;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-card-foreground);
+  padding: 12px;
+  border-radius: 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center
+}
+
+.metric-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: #F3F4F6;
+  display: flex;
+  align-items: center;
+  justify-content: center
+}
+
+.metric-value {
+  font-size: 18px;
+  font-weight: 600
+}
+
+.metric-label {
+  font-size: 13px;
+  color: #6b7280
+}
+
+/* Sections: members, activity, milestones, tasks */
+.project-section {
+  margin-top: 16px
+}
+
+.project-section .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px
+}
+
+.project-section h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #4a5565
+}
+
+.members-card,
+.activity-card,
+.milestones-card,
+.tasks-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-card-foreground);
+  border-radius: 10px;
+  padding: 0;
+  overflow: hidden
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6
+}
+
+.member-row:last-child {
+  border-bottom: none
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+  position: relative
+}
+
+.presence {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  bottom: 0;
+  right: 0;
+  border: 2px solid #fff;
+  background: #00c950
+}
+
+.member-name {
+  font-size: 14px;
+  color: var(--color-foreground)
+}
+
+.member-role {
+  font-size: 12px;
+  color: #6a7282
+}
+
+.activity-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  align-items: center
+}
+
+.activity-item:last-child {
+  border-bottom: none
+}
+
+.activity-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center
+}
+
+.activity-body .activity-title {
+  font-size: 14px;
+  color: var(--color-foreground)
+}
+
+.activity-body .activity-meta {
+  font-size: 12px;
+  color: #6a7282
+}
+
+.milestone-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6
+}
+
+.milestone-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px
+}
+
+.milestone-title {
+  font-size: 14px;
+  color: var(--color-foreground);
+}
+
+.milestone-date {
+  font-size: 12px;
+  color: #6a7282
+}
+
+.milestone-status {
+  margin-left: auto;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px
+}
+
+.milestone-status.completed {
+  background: #ecfdf5;
+  color: #007a55
+}
+
+.milestone-status.in-progress {
+  background: #f0f9ff;
+  color: #0069a8
+}
+
+.milestone-status.upcoming {
+  background: #f3f4f6;
+  color: #4a5565
+}
+
+.tasks-card {
+  display: flex;
+  gap: 24px;
+  padding: 24px
+}
+
+.task-pill {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent
+}
+
+.task-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px
+}
+
+.task-count {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--color-foreground)
+}
+
+.task-label {
+  font-size: 12px;
+  color: #6a7282
+}
+
+.tasks-overview .section-header .view-all {
+  color: #155dfc;
+  font-size: 12px
+}
+
+/* Project top navigation tabs (below hero) */
+.project-topnav {
+  max-width: 1115px;
+  margin: 16px auto;
+}
+
+.project-tabs {
+  list-style: none;
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  margin: 0;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+}
+
+.project-tab {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #475569;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s
+}
+
+.project-tab:hover {
+  background: #f8fafc
+}
+
+.project-tab.active {
+  background: var(--color-card);
+  border: 1px solid #e5e7eb;
+  color: var(--color-foreground);
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.04)
+}
+
+/* when tabs are rendered inside the hero, position them overlapping bottom */
+.project-hero {
+  padding-bottom: 48px
+}
+
+.project-hero .tabs-wrap {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -28px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  pointer-events: auto
+}
+
+.project-hero .tabs-wrap .project-tabs {
+  background: transparent;
+  padding: 6px
+}
+
+/* Top bar that sits above the hero and tabs (workspace + actions) */
+/* .project-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 24px;
+  height: 40px;
+  background: transparent;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 12px;
+}
+
+.project-topbar .topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn.small {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 14px
+}
+
+.btn.small img {
+  vertical-align: middle
+}
+
+.btn.outline.small {
+  background: var(--color-card);
+  color: var(--color-foreground);
+  border: 1px solid var(--color-border);
+}
+
+.topbar-icon img {
+  width: 12px;
+  height: 12px;
+  display: block
+}
+
+.topbar-title {
+  font-size: 12px;
+  color: var(--color-foreground);
+  white-space: nowrap
+}
+
+.project-topbar .topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px
+}
+
+.project-topbar .sep {
+  width: 1px;
+  height: 20px;
+  background: #e5e7eb;
+  margin: 0 8px
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px
+}
+
+.icon-btn:hover {
+  background: #f3f4f6
+}
+
+/* Ensure hero sits below topbar with spacing */
+/* .project-hero {
+  margin-top: 8px
+}  */

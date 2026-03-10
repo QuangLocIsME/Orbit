@@ -2,38 +2,64 @@
 import Sidebar from "../components/layout/sidebar.jsx";
 import Topbar from "../components/layout/topbar.jsx";
 import { fetchSidebarData } from "../lib/server-fetch.js";
+import "../styles/global.css";
 
 const { user, favorites, shared, privateProjects } = await fetchSidebarData(
   Astro.url.origin
 );
 const currentPath = Astro.url.pathname;
+const routeTitle = {
+  "/projects": "Projects",
+  "/home": "Home",
+  "/settings": "Settings",
+};
+const currentTitle =
+  Object.keys(routeTitle).find((r) => currentPath.startsWith(r)) && "Projects";
 ---
 
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <title>ORBIT App</title>
+
+    <!-- DARKMODE INIT -->
+    <script is:inline>
+      try {
+        const theme = localStorage.getItem("theme");
+        if (theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else if (theme === "theme-light") {
+          document.documentElement.classList.remove("dark");
+        } else {
+          const prefers = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.classList[prefers ? "add" : "remove"]("dark");
+        }
+      } catch {}
+    </script>
+
     <link rel="stylesheet" href="/src/styles/home.css" />
-    <link rel="stylesheet" href="/src/styles/create-project.css"/>
+    <link rel="stylesheet" href="/src/styles/create-project.css" />
+    <link rel="stylesheet" href="/src/styles/sidebar.css" />
+    <link rel="stylesheet" href="/src/styles/topbar.css" />
+
+    <slot name="head" />
   </head>
 
   <body>
     <div class="app">
-
-        <Sidebar
+      <Sidebar
         user={user}
         favorites={favorites}
         shared={shared}
         privateProjects={privateProjects}
-        client:load
         currentPath={currentPath}
+        client:load
       />
 
       <div class="main-area">
-        <Topbar client:load />
+        <Topbar currentPath={currentPath} client:load />
         <slot />
       </div>
-
     </div>
   </body>
 </html>

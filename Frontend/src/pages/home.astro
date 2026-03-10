@@ -4,5 +4,13 @@ import Dashboard from "../components/layout/home/dashboard.jsx";
 ---
 
 <AppLayout>
-  <Dashboard client:load />
+
+  <Fragment slot="head">
+    <title>Home — ORBIT</title>
+  </Fragment>
+
+  <main class="page-content">
+    <Dashboard client:load />
+  </main>
+
 </AppLayout>
