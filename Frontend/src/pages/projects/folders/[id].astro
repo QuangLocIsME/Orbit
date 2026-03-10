@@ -4,6 +4,7 @@ export const prerender = false;
 import MainLayout from "../../../layouts/main-layout.astro";
 import FolderBreadcrumb from "../../../components/layout/project/folder/folder-breadcrumb.jsx";
 import FolderHeader from "../../../components/layout/project/folder/folder-header.jsx";
+import ProjectHeader from "../../../components/layout/project/project-header.jsx";
 import FolderProjectGrid from "../../../components/layout/project/folder/folder-project-grid.jsx";
 
 const { id } = Astro.params;
@@ -11,12 +12,11 @@ const { id } = Astro.params;
 // Fetch folder name
 const folderRes = await fetch(new URL("/api/folders", Astro.url.origin).href);
 const folders = folderRes.ok ? await folderRes.json() : [];
-const folder = folders.find((f) => String(f.id) === id);
+const folder = folders.find((f: any) => String(f.id) === id);
 const folderName = folder?.name ?? "Folder";
 ---
 
 <MainLayout>
-
   <Fragment slot="head">
     <title>{folderName} — ORBIT</title>
     <link rel="stylesheet" href="/src/styles/project.css" />
@@ -27,14 +27,9 @@ const folderName = folder?.name ?? "Folder";
 
   <main class="page-content">
     <div class="folder-page">
-
+      <ProjectHeader client:load />
       <FolderBreadcrumb folderName={folderName} client:load />
-
-      <FolderHeader folderName={folderName} client:load />
-
       <FolderProjectGrid folderId={id} client:load />
-
     </div>
   </main>
-
 </MainLayout>

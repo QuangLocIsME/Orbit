@@ -8,6 +8,13 @@ const { user, favorites, shared, privateProjects } = await fetchSidebarData(
   Astro.url.origin
 );
 const currentPath = Astro.url.pathname;
+const routeTitle = {
+  "/projects": "Projects",
+  "/home": "Home",
+  "/settings": "Settings",
+};
+const currentTitle =
+  Object.keys(routeTitle).find((r) => currentPath.startsWith(r)) && "Projects";
 ---
 
 <html lang="en">
