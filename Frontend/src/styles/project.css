@@ -1,18 +1,48 @@
 /* Page content */
+.project-image {
+  width: 100%;
+  height: 160px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.project-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 .page-content {
   padding: 24px;
 }
 
-/* HEADER */
-
 .project-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 24px;
+  gap: 16px;
+  padding: 12px 0;
+  /* horizontal padding comes from .page-content */
+  height: 62px;
   background: var(--color-card);
   border-bottom: 1px solid var(--color-border);
+}
+
+.folder-card-image {
+  position: relative;
+  height: 160px;
+  overflow: hidden;
+  /* Quan trọng: cắt phần ảnh tràn */
+  border-radius: 10px 10px 0 0;
+}
+
+.folder-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Ảnh fill khung mà không méo */
+  display: block;
 }
 
 /* LEFT */
@@ -22,79 +52,89 @@
   gap: 12px;
 }
 
-/* BUTTONS */
-
-.btn {
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 8px;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.btn.primary {
-  background: #155dfc;
-  color: white;
-  border: none;
-}
-
-.btn.outline {
-  background: white;
-  border: 1px solid #e5e7eb;
-  color: #374151;
-}
-
 /* SEARCH */
 
 .header-search {
-  flex: 1;
   position: relative;
 }
 
 .header-search input {
-  width: 50%;
-  height: 36px;
-  padding: 0 16px 0 36px;
+  width: 448px;
+  height: 33px;
+  padding: 6px 16px 6px 36px;
   border-radius: 8px;
-  background: var(--color-muted);
   border: 1px solid var(--color-border);
   color: var(--color-foreground);
+  background: var(--color-muted);
+
 }
 
 .search-icon {
   position: absolute;
   left: 12px;
   top: 8px;
-  font-size: 14px;
 }
 
-/* RIGHT */
+/* ACTIONS */
 
-.header-right {
+.header-actions {
   display: flex;
-  gap: 8px;
-  margin-left: -4px;
+  align-items: center;
+  gap: 10px;
+}
+
+/* BUTTON */
+
+.btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px; /* khoảng cách icon + text */
+}
+
+.btn.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.btn.outline {
+  background: var(--color-card);
+  color: var(--color-foreground);
+  border: 1px solid var(--color-border);
+  padding: 8px 16px;
+  border-radius: 10px;
 }
 
 /* VIEW SWITCH */
 
 .view-switch {
   display: flex;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
 }
 
 .view-btn {
-  width: 36px;
-  height: 36px;
-  background: white;
-  border: none;
-  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-muted);
 }
 
 .view-btn.active {
-  background: var(--color-card);
+  background: var(--color-muted);
 }
 
 /* Project overview hero & stats */
@@ -444,7 +484,7 @@
 /* Project top navigation tabs (below hero) */
 .project-topnav {
   max-width: 1115px;
-  margin-top: 16px
+  margin: 16px auto;
 }
 
 .project-tabs {

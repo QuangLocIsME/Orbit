@@ -1,6 +1,8 @@
 import { useState } from "react";
 import CreateProjectModal from "../../home/create-project-modal.jsx";
 import CreateFolderModal from "../create-folder-modal.jsx";
+import ViewSwitch from "../../../ui/ViewSwitch";
+import Filter from "../../../ui/Filter";
 
 export default function FolderHeader({ folderName }) {
   const [search, setSearch] = useState("");
@@ -30,11 +32,8 @@ export default function FolderHeader({ folderName }) {
       </div>
 
       <div className="header-right">
-        <button className="btn outline">⚙ Filter</button>
-        <div className="view-switch">
-          <button className="view-btn">☰</button>
-          <button className="view-btn active">▦</button>
-        </div>
+        <Filter />
+        <ViewSwitch />
       </div>
     </header>
   );

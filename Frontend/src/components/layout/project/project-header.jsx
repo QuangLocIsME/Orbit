@@ -1,6 +1,9 @@
 import { useState } from "react";
 import CreateProjectModal from "../home/create-project-modal.jsx";
 import CreateFolderModal from "./create-folder-modal.jsx";
+import ViewSwitch from "../../ui/ViewSwitch";
+import Filter from "../../ui/Filter";
+
 export default function ProjectHeader() {
 
   const [search, setSearch] = useState("");
@@ -10,22 +13,23 @@ export default function ProjectHeader() {
   return (
     <header className="project-header">
 
-      {/* LEFT ACTIONS */}
+      {/* LEFT */}
       <div className="header-left">
 
-      <button className="btn primary" onClick={() => setOpen(true)}>+ New Project</button>
-        {open && (
-        <CreateProjectModal onClose={() => setOpen(false)} />
-      )}
+        <button className="btn primary" onClick={() => setOpen(true)}>
+          + New Project
+        </button>
+
+        {open && <CreateProjectModal onClose={() => setOpen(false)} />}
 
         <button className="btn outline" onClick={() => setOpenFolder(true)}>
           📁 New Folder
         </button>
-        {openFolder && (
-          <CreateFolderModal onClose={() => setOpenFolder(false)} />
-        )}
+
+        {openFolder && <CreateFolderModal onClose={() => setOpenFolder(false)} />}
 
       </div>
+
 
       {/* SEARCH */}
       <div className="header-search">
@@ -36,24 +40,17 @@ export default function ProjectHeader() {
           type="text"
           placeholder="Search projects..."
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
         />
 
       </div>
 
-      {/* RIGHT ACTIONS */}
-      <div className="header-right">
 
-        <button className="btn outline">
-          ⚙ Filter
-        </button>
+      {/* ACTIONS */}
+      <div className="header-actions">
 
-        <div className="view-switch">
-
-          <button className="view-btn">☰</button>
-          <button className="view-btn active">▦</button>
-
-        </div>
+        <Filter />
+        <ViewSwitch />
 
       </div>
 
