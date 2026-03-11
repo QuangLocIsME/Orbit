@@ -59,10 +59,22 @@
 }
 
 .folder-card-image{
-  position:relative;
+  position: relative;
+  width: 100%;
+  height: 192px;
+
+  overflow: hidden;          /* QUAN TRỌNG */
+  border-radius: 10px 10px 0 0;
+
+  background: var(--color-muted);
+}
+
+.folder-card-image img{
   width:100%;
-  height:192px;
-  background:var(--color-muted);
+  height:100%;
+
+  object-fit: cover;         /* QUAN TRỌNG */
+  display:block;
 }
 
 .folder-card-overlay{
