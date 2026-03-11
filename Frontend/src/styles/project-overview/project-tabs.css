@@ -1,0 +1,64 @@
+/* TOP NAV CONTAINER */
+
+.project-topnav{
+  width:100%;
+  border-bottom:1px solid #E5E7EB;
+}
+
+/* TAB LIST */
+
+.project-tabs{
+  display:flex;
+  align-items:center;
+  gap:32px;
+
+  padding:0 24px;
+  margin:0;
+
+  list-style:none;
+}
+
+/* TAB ITEM */
+
+.project-tab{
+  position:relative;
+
+  padding:14px 0;
+
+  font-size:16px;
+  font-weight:400;
+
+  color:#6B7280;
+
+  cursor:pointer;
+  transition:color 0.2s;
+}
+
+/* HOVER */
+
+.project-tab:hover{
+  color:#111827;
+}
+
+/* ACTIVE TAB */
+
+.project-tab.active{
+  color:#111827;
+  font-weight:500;
+}
+
+/* BLUE UNDERLINE */
+
+.project-tab.active::after{
+  content:"";
+
+  position:absolute;
+  left:0;
+  bottom:-1px;
+
+  width:100%;
+  height:3px;
+
+  background:#155DFC;
+  border-radius:2px;
+}

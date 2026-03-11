@@ -5,7 +5,9 @@ import ProjectStats from "../../components/project-overview/ProjectStats.jsx";
 import ProjectMembers from "../../components/project-overview/ProjectMembers.jsx";
 import RecentActivity from "../../components/project-overview/RecentActivity.jsx";
 import ProjectMilestones from "../../components/project-overview/ProjectMilestones.jsx";
-import TasksOverview from "../../components/project-overview/TasksOverview.jsx";
+import ProjectTabs from "../../components/project-overview/ProjectTabs.jsx";
+import ProjectFigure from "../../components/project-overview/ProjectFigure.jsx";
+import { Fragment } from "react";
 import { getProject } from "../../services/projectService";
 
 export const prerender = false;
@@ -21,52 +23,37 @@ try {
 }
 ---
 
-<MainLayout>
 
   <Fragment slot="head">
     <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
-    <link rel="stylesheet" href="/src/styles/project.css" />
     <link rel="stylesheet" href="/src/styles/folder-page.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-navigation.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-tabs.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-configure.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-stats.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-member.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/recent-activity.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-overview.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-milestone.css" />
   </Fragment>
 
-  <main class="page-content">
+<main class="page-content">
 
-    {project ? (
-      <>
+  <ProjectHeader project={project} client:load />
+  <ProjectTabs project={project} client:load />
+  <ProjectFigure project={project} client:load />
 
-        <ProjectHeader project={project} client:load />
+  <div class="overview-container">
 
-        <ProjectStats project={project} client:load />
+    <ProjectStats project={project} client:load />
 
-        <div class="layout-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; max-width:1115px; margin-top:16px;">
-          
-          <div>
-            <ProjectMembers members={project.members || []} client:load />
-          </div>
+    <div class="layout-grid">
+      <ProjectMembers members={project.members || []} client:load />
+      <RecentActivity activities={project.activities || []} client:load />
+    </div>
 
-          <div>
-            <RecentActivity activities={project.activities || []} client:load />
-          </div>
+    <ProjectMilestones milestones={project.milestones || []} client:load />
 
-        </div>
+  </div>
 
-        <div style="max-width:1115px; margin-top:16px;">
-          <ProjectMilestones milestones={project.milestones || []} client:load />
-        </div>
-
-        <div style="max-width:1115px; margin-top:16px;">
-          <TasksOverview tasksOverview={project.tasksOverview || {}} client:load />
-        </div>
-
-      </>
-    ) : (
-
-      <div class="card">
-        <p>Unable to load project details.</p>
-      </div>
-
-    )}
-
-  </main>
-
-</MainLayout>
+</main>
