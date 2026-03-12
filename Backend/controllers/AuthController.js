@@ -85,6 +85,11 @@ class AuthController {
                 email: payload.email,
                 role: payload.role,
             });
+            const newRefreshToken = signRefreshToken({
+                id: payload.id,
+                email: payload.email,
+                role: payload.role,
+            });
             const isProduction = process.env.IS_PRODUCTION === 'true';
 
             res.cookie('accessToken', newAccessToken, {
@@ -94,12 +99,16 @@ class AuthController {
                 maxAge: 15 * 60 * 1000,
             });
 
+            res.cookie('refreshToken', newRefreshToken, {
+                httpOnly: true,
+                secure: isProduction,
+                sameSite: 'lax',
+                maxAge: 7 * 24 * 60 * 60 * 1000,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Refresh token success',
-                data: {
-                    accessToken: newAccessToken,
-                },
             });
         } catch (error) {
             return res.status(401).json({

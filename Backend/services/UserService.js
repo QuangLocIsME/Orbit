@@ -47,7 +47,8 @@ class UserService {
             throw new Error('Email or password is incorrect.');
         }
 
-        return user;
+        const updatedUser = await UserRepository.updateLastLoginAt(user._id);
+        return updatedUser || user;
     }
 }
 
