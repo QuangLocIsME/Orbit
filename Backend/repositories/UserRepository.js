@@ -11,10 +11,12 @@ class UserRepository {
     }
 
     async updateLastLoginAt(userId) {
+    const vietnamTime = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Ho_Chi_Minh"}));
+
         return await User.findByIdAndUpdate(
             userId,
-            { lastLoginAt: new Date(), updatedAt: new Date() },
-            { new: true }
+            { lastLoginAt: vietnamTime },
+            { returnDocument: 'after' }
         );
     }
 }
