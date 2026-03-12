@@ -1,4 +1,4 @@
-import { ModeToggle } from "../ui/ModeToggle";
+import { ModeToggle } from "../ui/mode-toggle";
 
 function getTitle(path) {
   if (!path) return "Home";

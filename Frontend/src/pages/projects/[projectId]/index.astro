@@ -1,14 +1,14 @@
 ---
-import MainLayout from "../../layouts/main-layout.astro";
-import ProjectHeader from "../../components/project-overview/ProjectHeader.jsx";
-import ProjectStats from "../../components/project-overview/ProjectStats.jsx";
-import ProjectMembers from "../../components/project-overview/ProjectMembers.jsx";
-import RecentActivity from "../../components/project-overview/RecentActivity.jsx";
-import ProjectMilestones from "../../components/project-overview/ProjectMilestones.jsx";
-import ProjectTabs from "../../components/project-overview/ProjectTabs.jsx";
-import ProjectFigure from "../../components/project-overview/ProjectFigure.jsx";
+import MainLayout from "../../../layouts/main-layout.astro";
+import ProjectHeader from "../../../components/layout/project/project-overview/project-header.jsx";
+import ProjectStats from "../../../components/layout/project/project-overview/project-stats.jsx";
+import ProjectMembers from "../../../components/layout/project/project-overview/project-members.jsx";
+import RecentActivity from "../../../components/layout/project/project-overview/recent-activity.jsx";
+import ProjectMilestones from "../../../components/layout/project/project-overview/project-milestones.jsx";
+import ProjectTabs from "../../../components/layout/project/project-overview/project-tabs.jsx";
+import ProjectFigure from "../../../components/layout/project/project-overview/project-figure.jsx";
 import { Fragment } from "react";
-import { getProject } from "../../services/projectService";
+import { getProject } from "../../../services/project-service.js";
 
 export const prerender = false;
 

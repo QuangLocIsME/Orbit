@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { getFolders } from "../../../services/folder-service";
-import useViewMode from "../../../hooks/use-view-mode";
-import ViewAdapter from "../../ui/ViewAdapter";
-import FolderCard from "./FolderCard";
-import FolderListItem from "./FolderListItem";
+import { getFolders } from "../../../../services/folder-service";
+import useViewMode from "../../../../hooks/use-view-mode";
+import ViewAdapter from "../../../ui/view-adapter";
+import FolderCard from "./folder-card";
+import FolderListItem from "../folder/folder-list-item";
 
 export default function FoldersSection() {
   const [folders, setFolders] = useState([]);

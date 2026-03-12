@@ -1,5 +1,5 @@
 import React from "react";
-import "../../styles/project-overview/project-overview.css";
+import "../../../../styles/project-overview/project-overview.css";
 
 export default function ProjectFigure({ project }) {
     if (!project) return null;

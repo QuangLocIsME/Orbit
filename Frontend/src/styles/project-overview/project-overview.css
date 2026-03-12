@@ -4,7 +4,7 @@
   padding:24px;
 }
 
-.layout-grid{
+.overview-grid{
   display:grid;
   grid-template-columns:1fr 1fr;
   gap:24px;

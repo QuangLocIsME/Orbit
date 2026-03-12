@@ -1,0 +1,56 @@
+---
+import ProjectHeader from "../../../components/layout/project/project-overview/project-header.jsx";
+import ProjectTabs from "../../../components/layout/project/project-overview/project-tabs.jsx";
+import { Fragment } from "react";
+import { getProject } from "../../../services/project-service.js";
+import PackagesHeader from "../../../components/layout/project/project-packages/packages-header.jsx";
+import PackagesSection from "../../../components/layout/project/project-packages/package-section.jsx";
+export const prerender = false;
+
+const { projectId } = Astro.params;
+const base = Astro.url.origin;
+
+let project = null;
+try {
+  project = await getProject(projectId, base);
+} catch (err) {
+  console.error(err);
+}
+---
+
+
+  <Fragment slot="head">
+    <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
+    <link rel="stylesheet" href="/src/styles/folder-page.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-navigation.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-tabs.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-configure.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-stats.css" />
+    <link rel="stylesheet" href="/src/styles/project-overview/project-overview.css" />
+    <link rel="stylesheet" href="/src/styles/project-packages/header-packages.css" />
+    <link rel="stylesheet" href="/src/styles/project-packages/package-card.css" />
+  </Fragment>
+
+<main class="page-content">
+
+  <ProjectHeader project={project} client:load />
+  <ProjectTabs project={project} client:load />
+  <PackagesHeader project={project} client:load  />
+  <PackagesSection
+  projectId={projectId}
+  client:load
+/>
+
+  <div class="overview-container">
+
+    
+
+    <div class="layout-grid">
+     
+    </div>
+
+   
+
+  </div>
+
+</main>

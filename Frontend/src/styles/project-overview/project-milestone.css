@@ -1,6 +1,4 @@
-.project-milestones{
-  margin-top:16px;
-}
+
 
 .milestones-card{
   background:#fff;
@@ -81,6 +79,20 @@
 .milestone-status.completed{
   background:#E6F4EA;
   color:#1E8E3E;
+}
+
+/* in-progress */
+
+.milestone-status.in-progress{
+  background:#DBEAFE;
+  color:#1D4ED8;
+}
+
+/* upcoming */
+
+.milestone-status.upcoming{
+  background:#F1F5F9;
+  color:#475569;
 }
 
 /* pending */

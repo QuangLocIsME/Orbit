@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { getFolderProjects } from "../../../../services/folder-project-service";
 import useViewMode from "../../../../hooks/use-view-mode";
-import ViewAdapter from "../../../ui/ViewAdapter";
-import ProjectListItem from "../ProjectListItem";
+import ViewAdapter from "../../../ui/view-adapter";
+import ProjectListItem from "../project-list-item";
 
 const STATUS_COLORS = {
   active: "#00BC7D",

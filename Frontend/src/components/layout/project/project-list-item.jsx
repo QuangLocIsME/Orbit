@@ -4,9 +4,17 @@ export default function ProjectListItem({ project }) {
   return (
     <div key={project.id} className="project-card" style={{ display: 'flex', gap: 12, padding: 12, alignItems: 'center' }}>
       <a href={`/projects/${project.id}`} className="project-image-link" style={{ display: 'block', width: 120 }}>
-        <div className="project-image" style={{ height: 80 }}>
+        <div className="project-image" style={{
+          height: 80,
+          overflow: "hidden",
+          borderRadius: 6
+        }}>
           {project.image ? (
-            <img src={project.image} alt={project.name} />
+            <img src={project.image} alt={project.name} style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover"
+            }} />
           ) : null}
         </div>
       </a>
@@ -20,13 +28,17 @@ export default function ProjectListItem({ project }) {
         </div>
       </div>
 
-      <div style={{ width: 160 }}>
+      <div className="folder-card-progress" style={{ width: 160 }}>
         <div className="progress-row">
           <span>Progress</span>
           <span>{project.progress ?? 0}%</span>
         </div>
+
         <div className="progress-bar">
-          <div className="progress" style={{ width: `${project.progress ?? 0}%` }} />
+          <div
+            className="progress"
+            style={{ width: `${project.progress ?? 0}%` }}
+          />
         </div>
       </div>
     </div>

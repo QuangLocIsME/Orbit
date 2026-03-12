@@ -1,8 +1,4 @@
-/* .project-stats{
-  margin-top:-40px;
-  position:relative;
-  z-index:10;
-} */
+
 
 .project-stats{
   margin-top:-40px;
@@ -18,6 +14,8 @@
 .stats-top{
   display:grid;
   grid-template-columns: 1fr 2fr 1fr 1fr;
+
+  align-items:center;   /* thêm dòng này */
 
   background:#fff;
   border-radius:10px;

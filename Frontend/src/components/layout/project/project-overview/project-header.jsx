@@ -14,7 +14,7 @@ export default function ProjectHeader({ project }) {
 
           <div className="workspace-btn">Workspace</div>
 
-          <span className="breadcrumb-sep">›</span>
+          <span className="breadcrumb-sep">&rsaquo;</span>
 
           <span className="breadcrumb">
             {projectName}

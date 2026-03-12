@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { getPriorityProjects } from "../../../services/project-service";
+import { getPriorityProjects } from "../../../services/project-priority-service";
 import useViewMode from "../../../hooks/use-view-mode";
 import useFilters from "../../../hooks/use-filters";
-import ViewAdapter from "../../ui/ViewAdapter";
-import ProjectCard from "./ProjectCard";
-import ProjectListItem from "./ProjectListItem";
+import ViewAdapter from "../../ui/view-adapter";
+import ProjectCard from "./project-card";
+import ProjectListItem from "./project-list-item";
 
 export default function PrioritySection() {
   const [projects, setProjects] = useState([]);

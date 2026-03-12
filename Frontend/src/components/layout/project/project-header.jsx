@@ -1,8 +1,8 @@
 import { useState } from "react";
 import CreateProjectModal from "../home/create-project-modal.jsx";
-import CreateFolderModal from "./create-folder-modal.jsx";
-import ViewSwitch from "../../ui/ViewSwitch";
-import Filter from "../../ui/Filter";
+import CreateFolderModal from "./folder/create-folder-modal.jsx";
+import ViewSwitch from "../../ui/view-switch.jsx";
+import Filter from "../../ui/filter.jsx";
 
 export default function ProjectHeader() {
 
