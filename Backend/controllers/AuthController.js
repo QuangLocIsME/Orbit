@@ -52,10 +52,8 @@ class AuthController {
                 success: true,
                 message: 'Login success',
                 data: {
-                    id: user._id,
                     fullName: user.fullName,
                     email: user.email,
-                    role: user.role,
                 },
             });
         } catch (error) {

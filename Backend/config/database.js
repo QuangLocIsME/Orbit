@@ -9,7 +9,8 @@ const connectDB = async () => {
 
   try {
     const isProduction = process.env.IS_PRODUCTION === 'true';
-    mongoose.set('strictQuery', !isProduction);
+
+    mongoose.set('strictQuery', isProduction);
     mongoose.set('autoIndex', isProduction);
 
     const dbConnection = mongoose.connection;
