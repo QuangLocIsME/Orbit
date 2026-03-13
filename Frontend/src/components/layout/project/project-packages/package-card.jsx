@@ -1,34 +1,34 @@
-import React from "react";
-
 export default function PackageCard({ package: pkg }) {
 
   return (
-    <div className="package-card">
+    <a href={`/projects/packages/${pkg.id}`} className="package-card">
 
       {/* HEADER */}
+
       <div className="package-header">
 
+        <div
+          className="package-icon"
+          style={{ background: pkg.color || "#6366f1" }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+          </svg>
+        </div>
+
         <div className="package-title">
+          <h4>{pkg.name}</h4>
 
-          <div
-            className="package-icon"
-            style={{ background: pkg.color }}
-          />
-
-          <div>
-            <h4>{pkg.name}</h4>
-            <span className={`package-status ${pkg.status}`}>
-              {pkg.status}
-            </span>
-          </div>
-
+          <span className={`status ${pkg.status}`}>
+            {pkg.status}
+          </span>
         </div>
 
       </div>
 
       {/* DESCRIPTION */}
 
-      <p className="package-description">
+      <p className="package-desc">
         {pkg.description}
       </p>
 
@@ -45,19 +45,22 @@ export default function PackageCard({ package: pkg }) {
           <div
             className="progress-fill"
             style={{
-              width: `${pkg.progress}%`,
-              background: pkg.color
+              width:`${pkg.progress}%`,
+              background:pkg.color
             }}
           />
         </div>
 
       </div>
 
-      {/* TASK + DEADLINE */}
+      {/* META */}
 
       <div className="package-meta">
-        <span>{pkg.tasks}</span>
-        <span>{pkg.deadline}</span>
+
+        <span>✓ {pkg.tasks}</span>
+
+        <span>📅 {pkg.deadline}</span>
+
       </div>
 
       {/* FOOTER */}
@@ -66,15 +69,19 @@ export default function PackageCard({ package: pkg }) {
 
         <div className="package-members">
 
-          {pkg.members.slice(0,3).map((m,i)=>(
-            <div key={i} className="member-avatar">
+          {pkg.members?.slice(0,3).map((m,i)=>(
+            <div
+              key={i}
+              className="member-avatar"
+              style={{background:pkg.color}}
+            >
               {m}
             </div>
           ))}
 
-          {pkg.members.length > 3 && (
+          {pkg.members?.length > 3 && (
             <div className="member-avatar more">
-              +{pkg.members.length - 3}
+              +{pkg.members.length-3}
             </div>
           )}
 
@@ -86,6 +93,6 @@ export default function PackageCard({ package: pkg }) {
 
       </div>
 
-    </div>
+    </a>
   );
 }

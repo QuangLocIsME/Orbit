@@ -17,7 +17,7 @@ export const packages = [
   {
     id: 4,
     name: "Interior Model",
-    status: "onHold"
+    status: "on-hold"
   },
   {
     id: 5,
