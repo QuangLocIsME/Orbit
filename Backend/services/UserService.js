@@ -17,7 +17,8 @@ class UserService {
             throw new Error('Password confirmation does not match.');
         }
 
-        const existingUser = await UserRepository.findbyEmail(email);
+        const normalizedEmail = email.toLowerCase().trim();
+        const existingUser = await UserRepository.findbyEmail(normalizedEmail);
         if (existingUser) {
             throw new Error('Email already exists.');
         }
@@ -25,7 +26,7 @@ class UserService {
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = {
             fullName,
-            email,
+            email: normalizedEmail,
             password: hashedPassword,
         };
 
@@ -37,9 +38,15 @@ class UserService {
             throw new Error('Missing email or password.');
         }
 
-        const user = await UserRepository.findbyEmail(email);
+        const normalizedEmail = email.toLowerCase().trim();
+        const user = await UserRepository.findbyEmail(normalizedEmail);
         if (!user) {
             throw new Error('Email or password is incorrect.');
+        }
+
+        if (user.isBlocked) {
+            console.log('User account got banned');
+            throw new Error('User account is blocked.');
         }
 
         const isMatch = await bcrypt.compare(password, user.password);

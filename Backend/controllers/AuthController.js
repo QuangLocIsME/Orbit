@@ -1,5 +1,38 @@
 const UserService = require('../services/UserService');
-const { signAccessToken, signRefreshToken, verifyToken } = require('../utils/jwt');
+const UserRepository = require('../repositories/UserRepository');
+const {
+    signAccessToken,
+    signRefreshToken,
+    verifyToken,
+    ACCESS_TOKEN_EXPIRES_MS,
+    REFRESH_TOKEN_EXPIRES_MS,
+} = require('../utils/jwt');
+
+const buildRefreshTokenRecord = (token) => ({
+    token,
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_MS),
+    revokedAt: null,
+    replacedByToken: null,
+});
+
+const setAuthCookies = (res, accessToken, refreshToken) => {
+    const isProduction = process.env.IS_PRODUCTION === 'true';
+
+    res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax',
+        maxAge: ACCESS_TOKEN_EXPIRES_MS,
+    });
+
+    res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax',
+        maxAge: REFRESH_TOKEN_EXPIRES_MS,
+    });
+};
 
 class AuthController {
     async register(req, res) {
@@ -32,21 +65,13 @@ class AuthController {
             const payload = { id: user._id, email: user.email, role: user.role };
             const accessToken = signAccessToken(payload);
             const refreshToken = signRefreshToken(payload);
-            const isProduction = process.env.IS_PRODUCTION === 'true';
 
-            res.cookie('accessToken', accessToken, {
-                httpOnly: true,
-                secure: isProduction,
-                sameSite: 'lax',
-                maxAge: 15 * 60 * 1000,
-            });
+            await UserRepository.setSingleRefreshToken(
+                user._id,
+                buildRefreshTokenRecord(refreshToken)
+            );
 
-            res.cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: isProduction,
-                sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            });
+            setAuthCookies(res, accessToken, refreshToken);
 
             return res.status(200).json({
                 success: true,
@@ -78,6 +103,36 @@ class AuthController {
             }
 
             const payload = verifyToken(refreshToken);
+            const user = await UserRepository.findUserByRefreshToken(refreshToken);
+            if (!user) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Refresh token not found',
+                });
+            }
+
+            if (user.isBlocked || user.isActive === false) {
+                await UserRepository.revokeAllRefreshTokens(user._id);
+                return res.status(403).json({
+                    success: false,
+                    message: 'User account is blocked',
+                });
+            }
+
+            await UserRepository.removeExpiredRefreshTokens(user._id);
+
+            const activeTokenUser = await UserRepository.getActiveRefreshToken(
+                user._id,
+                refreshToken
+            );
+            if (!activeTokenUser) {
+                await UserRepository.revokeAllRefreshTokens(user._id);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Refresh token revoked',
+                });
+            }
+
             const newAccessToken = signAccessToken({
                 id: payload.id,
                 email: payload.email,
@@ -88,21 +143,14 @@ class AuthController {
                 email: payload.email,
                 role: payload.role,
             });
-            const isProduction = process.env.IS_PRODUCTION === 'true';
 
-            res.cookie('accessToken', newAccessToken, {
-                httpOnly: true,
-                secure: isProduction,
-                sameSite: 'lax',
-                maxAge: 15 * 60 * 1000,
-            });
+            await UserRepository.revokeRefreshToken(user._id, refreshToken, newRefreshToken);
+            await UserRepository.addRefreshToken(
+                user._id,
+                buildRefreshTokenRecord(newRefreshToken)
+            );
 
-            res.cookie('refreshToken', newRefreshToken, {
-                httpOnly: true,
-                secure: isProduction,
-                sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            });
+            setAuthCookies(res, newAccessToken, newRefreshToken);
 
             return res.status(200).json({
                 success: true,
@@ -112,6 +160,34 @@ class AuthController {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid or expired refresh token',
+            });
+        }
+    }
+
+    async logout(req, res) {
+        try {
+            const tokenFromBody = req.body?.refreshToken;
+            const tokenFromCookie = req.cookies?.refreshToken;
+            const refreshToken = tokenFromBody || tokenFromCookie;
+
+            if (refreshToken) {
+                const user = await UserRepository.findUserByRefreshToken(refreshToken);
+                if (user) {
+                    await UserRepository.revokeRefreshToken(user._id, refreshToken);
+                }
+            }
+
+            res.clearCookie('accessToken');
+            res.clearCookie('refreshToken');
+
+            return res.status(200).json({
+                success: true,
+                message: 'Logout success',
+            });
+        } catch (error) {
+            return res.status(500).json({
+                success: false,
+                message: 'Logout failed',
             });
         }
     }
