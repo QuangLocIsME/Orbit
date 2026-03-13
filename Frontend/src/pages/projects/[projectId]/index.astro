@@ -1,14 +1,13 @@
 ---
 import MainLayout from "../../../layouts/main-layout.astro";
-import ProjectHeader from "../../../components/layout/project/project-overview/project-header.jsx";
-import ProjectStats from "../../../components/layout/project/project-overview/project-stats.jsx";
-import ProjectMembers from "../../../components/layout/project/project-overview/project-members.jsx";
-import RecentActivity from "../../../components/layout/project/project-overview/recent-activity.jsx";
-import ProjectMilestones from "../../../components/layout/project/project-overview/project-milestones.jsx";
-import ProjectTabs from "../../../components/layout/project/project-overview/project-tabs.jsx";
-import ProjectFigure from "../../../components/layout/project/project-overview/project-figure.jsx";
-import { Fragment } from "react";
-import { getProject } from "../../../services/project-service.js";
+import ProjectHeader from "../../../modules/project/project-detail/project-overview/component/project-header.jsx";
+import ProjectStats from "../../../modules/project/project-detail/project-overview/component/project-stats.jsx";
+import ProjectMembers from "../../../modules/project/project-detail/project-overview/component/project-members.jsx";
+import RecentActivity from "../../../modules/project/project-detail/project-overview/component/recent-activity.jsx";
+import ProjectMilestones from "../../../modules/project/project-detail/project-overview/component/project-milestones.jsx";
+import ProjectTabs from "../../../modules/project/project-detail/project-overview/component/project-tabs.jsx";
+import ProjectFigure from "../../../modules/project/project-detail/project-overview/component/project-figure.jsx";
+import { getProject } from "../../../modules/project/project-detail/project-overview/service/project-service.js";
 
 export const prerender = false;
 
@@ -23,6 +22,7 @@ try {
 }
 ---
 
+<MainLayout>
 
   <Fragment slot="head">
     <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
@@ -48,12 +48,13 @@ try {
     <ProjectStats project={project} client:load />
 
     <div class="layout-grid">
-      <ProjectMembers members={project.members || []} client:load />
-      <RecentActivity activities={project.activities || []} client:load />
+      <ProjectMembers members={project?.members || []} client:load />
+      <RecentActivity activities={project?.activities || []} client:load />
     </div>
 
-    <ProjectMilestones milestones={project.milestones || []} client:load />
+    <ProjectMilestones milestones={project?.milestones || []} client:load />
 
   </div>
 
 </main>
+</MainLayout>

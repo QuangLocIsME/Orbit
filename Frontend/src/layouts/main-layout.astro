@@ -1,6 +1,6 @@
 ---
-import Sidebar from "../components/layout/sidebar.jsx";
-import Topbar from "../components/layout/topbar.jsx";
+import Sidebar from "../modules/project/component/sidebar.jsx";
+import Topbar from "../modules/project/component/topbar.jsx";
 import { fetchSidebarData } from "../lib/server-fetch.js";
 import "../styles/global.css";
 
@@ -37,8 +37,8 @@ const currentTitle =
       } catch {}
     </script>
 
-    <link rel="stylesheet" href="/src/styles/home.css" />
-    <link rel="stylesheet" href="/src/styles/create-project.css" />
+    <link rel="stylesheet" href="/src/modules/home/home.css" />
+    <link rel="stylesheet" href="/src/modules/project/project-page/style/create-project.css" />
     <link rel="stylesheet" href="/src/styles/sidebar.css" />
     <link rel="stylesheet" href="/src/styles/topbar.css" />
 

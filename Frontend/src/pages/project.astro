@@ -1,20 +1,19 @@
 ---
-import ProjectHeader from "../components/layout/project/project-header.jsx";
-import FoldersSection from "../components/layout/project/folder/folders-section.jsx";
-import PrioritySection from "../components/layout/project/priority-section.jsx";
+import ProjectHeader from "../modules/project/project-page/component/project-header.jsx";
+import FoldersSection from "../modules/project/project-folder/component/folders-section.jsx";
+import PrioritySection from "../modules/project/project-detail/project-overview/component/priority-section.jsx";
 import MainLayout from "../layouts/main-layout.astro";
+import "/src/modules/project/project-folder/style/create-folder.css";
+import "/src/modules/project/project-page/style/create-project.css";
+import "/src/modules/project/project-page/style/project.css";
+import "/src/modules/project/project-page/style/priority.css";
+import "/src/modules/project/project-folder/style/folders.css";
 ---
 
 <MainLayout>
 
   <Fragment slot="head">
     <title>Projects — ORBIT</title>
-    <link rel="stylesheet" href="/src/styles/project.css" />
-    <link rel="stylesheet" href="/src/styles/sidebar.css" />
-    <link rel="stylesheet" href="/src/styles/topbar.css" />
-    <link rel="stylesheet" href="/src/styles/folders.css" />
-    <link rel="stylesheet" href="/src/styles/priority.css" />
-    <link rel="stylesheet" href="/src/styles/create-folder.css" />
   </Fragment>
 
   <main class="page-content">

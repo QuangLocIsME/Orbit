@@ -1,6 +1,6 @@
 export const prerender = false;
 
-export async function POST({ request }) {
+export async function POST({ request }: { request: Request }) {
   const { username, password } = await request.json();
   // TODO: validate và kết nối backend thật
   return Response.json({

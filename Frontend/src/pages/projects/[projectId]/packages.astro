@@ -1,10 +1,10 @@
 ---
-import ProjectHeader from "../../../components/layout/project/project-overview/project-header.jsx";
-import ProjectTabs from "../../../components/layout/project/project-overview/project-tabs.jsx";
+import ProjectHeader from "../../../modules/project/project-detail/project-overview/component/project-header.jsx";
+import ProjectTabs from "../../../modules/project/project-detail/project-overview/component/project-tabs.jsx";
 import { Fragment } from "react";
-import { getProject } from "../../../services/project-service.js";
-import PackagesHeader from "../../../components/layout/project/project-packages/packages-header.jsx";
-import PackagesSection from "../../../components/layout/project/project-packages/package-section.jsx";
+import { getProject } from "../../../modules/project/project-detail/project-overview/service/project-service.js";
+import PackagesHeader from "../../../modules/project/project-detail/project-package/component/packages-header.jsx";
+import PackagesSection from "../../../modules/project/project-detail/project-package/component/package-section.jsx";
 export const prerender = false;
 
 const { projectId } = Astro.params;
@@ -35,7 +35,7 @@ try {
 
   <ProjectHeader project={project} client:load />
   <ProjectTabs project={project} client:load />
-  <PackagesHeader project={project} client:load  />
+  <PackagesHeader projectId={projectId} client:load  />
   <PackagesSection
   projectId={projectId}
   client:load

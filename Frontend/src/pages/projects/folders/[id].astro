@@ -2,10 +2,10 @@
 export const prerender = false;
 
 import MainLayout from "../../../layouts/main-layout.astro";
-import FolderBreadcrumb from "../../../components/layout/project/folder/folder-breadcrumb.jsx";
-import FolderHeader from "../../../components/layout/project/folder/folder-header.jsx";
-import ProjectHeader from "../../../components/layout/project/project-header.jsx";
-import FolderProjectGrid from "../../../components/layout/project/folder/folder-project-grid.jsx";
+import FolderBreadcrumb from "../../../modules/project/project-folder/component/folder-breadcrumb.jsx";
+import FolderHeader from "../../../modules/project/project-folder/component/folder-header.jsx";
+import ProjectHeader from "../../../modules/project/project-page/component/project-header.jsx";
+import FolderProjectGrid from "../../../modules/project/project-folder/component/folder-project-grid.jsx";
 
 const { id } = Astro.params;
 
@@ -19,10 +19,10 @@ const folderName = folder?.name ?? "Folder";
 <MainLayout>
   <Fragment slot="head">
     <title>{folderName} — ORBIT</title>
-    <link rel="stylesheet" href="/src/styles/project.css" />
-    <link rel="stylesheet" href="/src/styles/folder-page.css" />
-    <link rel="stylesheet" href="/src/styles/create-project.css" />
-    <link rel="stylesheet" href="/src/styles/create-folder.css" />
+    <link rel="stylesheet" href="src/modules/project/project-page/style/project.css" />
+    <link rel="stylesheet" href="src/modules/project/project-folder/style/folders.css" />
+    <link rel="stylesheet" href="src/modules/project/project-page/style/create-project.css" />
+    <link rel="stylesheet" href="src/modules/project/project-folder/style/create-folder.css" />
   </Fragment>
 
   <main class="page-content">
