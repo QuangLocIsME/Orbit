@@ -24,6 +24,12 @@ const UserSchema = new mongoose.Schema({
     isActive: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
     refreshTokens: { type: [RefreshTokenSchema], default: [] },
+    // Forgot password: mã 6 số gửi qua email
+    resetCode: { type: String, default: null },
+    resetCodeExpiresAt: { type: Date, default: null },
+    // Link đặt lại mật khẩu dùng 1 lần (lưu hash token)
+    resetPasswordToken: { type: String, default: null },
+    resetPasswordTokenExpiresAt: { type: Date, default: null },
 });
 
 const User = mongoose.model('User', UserSchema);

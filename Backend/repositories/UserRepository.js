@@ -99,6 +99,74 @@ class UserRepository {
             }
         );
     }
+
+    // --- Forgot password: mã xác nhận qua email ---
+    async setResetCode(userId, code, expiresAt) {
+        return await User.findByIdAndUpdate(
+            userId,
+            {
+                resetCode: code,
+                resetCodeExpiresAt: expiresAt,
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async findUserByEmailAndValidResetCode(email, code) {
+        const now = new Date();
+        return await User.findOne({
+            email: email.toLowerCase().trim(),
+            resetCode: code,
+            resetCodeExpiresAt: { $gt: now },
+        });
+    }
+
+    // --- Reset password: token dùng 1 lần (lưu hash) ---
+    async setResetPasswordToken(userId, hashedToken, expiresAt) {
+        return await User.findByIdAndUpdate(
+            userId,
+            {
+                resetPasswordToken: hashedToken,
+                resetPasswordTokenExpiresAt: expiresAt,
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async findUserByResetToken(hashedToken) {
+        const now = new Date();
+        return await User.findOne({
+            resetPasswordToken: hashedToken,
+            resetPasswordTokenExpiresAt: { $gt: now },
+        });
+    }
+
+    async clearResetPassword(userId) {
+        return await User.findByIdAndUpdate(
+            userId,
+            {
+                resetCode: null,
+                resetCodeExpiresAt: null,
+                resetPasswordToken: null,
+                resetPasswordTokenExpiresAt: null,
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async updatePassword(userId, hashedPassword) {
+        return await User.findByIdAndUpdate(
+            userId,
+            {
+                password: hashedPassword,
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
 }
 
 module.exports = new UserRepository();
