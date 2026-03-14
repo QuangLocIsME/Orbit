@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { login as loginApi, register as registerApi } from "../services/auth-service.js";
+import { login as loginApi, register as registerApi } from "../modules/auth/service/auth-service.js";
 
 export function useAuth() {
   const [user, setUser] = useState(null);

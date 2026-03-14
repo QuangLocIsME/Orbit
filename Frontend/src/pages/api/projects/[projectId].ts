@@ -16,7 +16,7 @@ export async function GET({ params }) {
     versionsCount: 124,
     membersCount: 12,
     openClashes: 5,
-    coverImage: "/images/sample.jpg",
+    coverImage: "https://picsum.photos/400/300",
     updated: "Last updated 2 hours ago",
     members: [
       { id: 1, name: "Minh Anh", role: "Project Manager", color: "#ff2056", initials: "MA", online: true },
@@ -32,9 +32,18 @@ export async function GET({ params }) {
     ],
     milestones: [
       { id: 1, title: "Foundation Complete", date: "Jan 15, 2024", status: "completed", statusLabel: "completed", dotColor: "#00c950" },
+
       { id: 2, title: "Structural Framing", date: "Apr 20, 2024", status: "in-progress", statusLabel: "in-progress", dotColor: "#2b7fff" },
+
       { id: 3, title: "MEP Installation", date: "Jul 30, 2024", status: "upcoming", statusLabel: "upcoming", dotColor: "#d1d5dc" },
-      { id: 4, title: "Final Inspection", date: "Dec 15, 2025", status: "upcoming", statusLabel: "upcoming", dotColor: "#d1d5dc" },
+
+      { id: 4, title: "Facade Installation", date: "Sep 18, 2024", status: "upcoming", statusLabel: "upcoming", dotColor: "#d1d5dc" },
+
+      { id: 5, title: "Interior Finishing", date: "Jan 10, 2025", status: "upcoming", statusLabel: "upcoming", dotColor: "#d1d5dc" },
+
+      { id: 6, title: "System Testing", date: "Aug 20, 2025", status: "upcoming", statusLabel: "upcoming", dotColor: "#d1d5dc" },
+
+      { id: 7, title: "Final Inspection", date: "Dec 15, 2025", status: "pending", statusLabel: "pending", dotColor: "#f59e0b" }
     ],
     tasksOverview: { todo: 8, inProgress: 12, review: 5, done: 34 },
   };

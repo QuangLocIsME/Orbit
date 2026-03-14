@@ -1,0 +1,60 @@
+---
+import MainLayout from "../../../layouts/main-layout.astro";
+import ProjectHeader from "../../../modules/project/project-detail/project-overview/component/project-header.jsx";
+import ProjectStats from "../../../modules/project/project-detail/project-overview/component/project-stats.jsx";
+import ProjectMembers from "../../../modules/project/project-detail/project-overview/component/project-members.jsx";
+import RecentActivity from "../../../modules/project/project-detail/project-overview/component/recent-activity.jsx";
+import ProjectMilestones from "../../../modules/project/project-detail/project-overview/component/project-milestones.jsx";
+import ProjectTabs from "../../../modules/project/project-detail/project-overview/component/project-tabs.jsx";
+import ProjectFigure from "../../../modules/project/project-detail/project-overview/component/project-figure.jsx";
+import { getProject } from "../../../modules/project/project-detail/project-overview/service/project-service.js";
+import "/src/modules/project/project-folder/style/folder-page.css";
+import "/src/modules/project/project-detail/project-overview/style/project-navigation.css";
+import "/src/modules/project/project-detail/project-overview/style/project-tabs.css";
+import "/src/modules/project/project-detail/project-overview/style/project-configure.css";
+import "/src/modules/project/project-detail/project-overview/style/project-stats.css";
+import "/src/modules/project/project-detail/project-overview/style/project-overview.css";
+import "/src/modules/project/project-detail/project-overview/style/project-member.css";
+import "/src/modules/project/project-detail/project-overview/style/recent-activity.css";
+import "/src/modules/project/project-detail/project-overview/style/project-milestone.css";
+import { Fragment } from "react";
+export const prerender = false;
+
+const { projectId } = Astro.params;
+
+const base = Astro.url.origin;
+
+let project = null;
+
+try {
+  project = await getProject(projectId, base);
+} catch (err) {
+  console.error(err);
+} 
+---
+
+
+  <Fragment slot="head">
+    <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
+  </Fragment>
+
+<main class="page-content">
+
+  <ProjectHeader project={project} client:load />
+  <ProjectTabs client:load />
+  <ProjectFigure project={project} client:load />
+
+  <div class="overview-container">
+
+    <ProjectStats project={project} client:load />
+
+    <div class="layout-grid">
+      <ProjectMembers members={project?.members || []} client:load />
+      <RecentActivity activities={project?.activities || []} client:load />
+    </div>
+
+    <ProjectMilestones milestones={project?.milestones || []} client:load />
+
+  </div>
+
+</main>

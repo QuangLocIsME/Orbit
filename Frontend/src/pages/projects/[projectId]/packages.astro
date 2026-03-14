@@ -1,0 +1,58 @@
+---
+import ProjectHeader from "../../../modules/project/project-detail/project-overview/component/project-header.jsx";
+import ProjectTabs from "../../../modules/project/project-detail/project-overview/component/project-tabs.jsx";
+import { Fragment } from "react";
+import { getProject } from "../../../modules/project/project-detail/project-overview/service/project-service.js";
+import PackagesHeader from "../../../modules/project/project-detail/project-package/component/packages-header.jsx";
+import PackagesSection from "../../../modules/project/project-detail/project-package/component/package-section.jsx";
+export const prerender = false;
+import "/src/modules/project/project-folder/style/folder-page.css";
+import "/src/modules/project/project-detail/project-overview/style/project-navigation.css";
+import "/src/modules/project/project-detail/project-overview/style/project-tabs.css";
+import "/src/modules/project/project-detail/project-overview/style/project-configure.css";
+import "/src/modules/project/project-detail/project-overview/style/project-stats.css";
+import "/src/modules/project/project-detail/project-overview/style/project-overview.css";
+import "/src/modules/project/project-folder/style/folder-page.css"
+import "/src/modules/project/project-detail/project-package/style/header-packages.css"
+import "/src/modules/project/project-detail/project-package/style/package-card.css"
+
+
+const { projectId } = Astro.params;
+const base = Astro.url.origin;
+
+let project = null;
+try {
+  project = await getProject(projectId, base);
+} catch (err) {
+  console.error(err);
+}
+---
+
+
+  <Fragment slot="head">
+    <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
+  </Fragment>
+
+<main class="page-content">
+
+  <ProjectHeader project={project} client:load />
+  <ProjectTabs project={project} client:load />
+  <PackagesHeader projectId={projectId} client:load  />
+  <PackagesSection
+  projectId={projectId}
+  client:load
+/>
+
+  <div class="overview-container">
+
+    
+
+    <div class="layout-grid">
+     
+    </div>
+
+   
+
+  </div>
+
+</main>

@@ -1,0 +1,140 @@
+/* Priority Projects Section */
+
+.priority-section {
+  margin-top: 32px;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.project-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: 0.2s;
+  color: var(--color-card-foreground);
+}
+
+.project-card:hover {
+  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+}
+  
+.project-image {
+  height: 180px;
+  background: var(--color-muted);
+  position: relative;
+}
+
+.status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #10b981;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.project-body {
+  padding: 16px;
+}
+
+.project-body h4 {
+  margin: 0 0 6px;
+  color: var(--color-foreground);
+}
+
+.project-body p {
+  margin: 0 0 12px;
+  color: var(--color-muted-foreground);
+  font-size: 14px;
+}
+
+.progress-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.progress-bar {
+  margin-top: 6px;
+  height: 8px;
+  background: var(--color-muted);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress {
+  height: 100%;
+  background: #155dfc;
+}
+
+/* Category badge on image */
+.project-category {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  background: var(--color-card);
+  color: var(--color-foreground);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: 0 4px 14px rgba(16,24,40,0.06);
+}
+
+/* List item (component) styles */
+.project-list-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  align-items: center;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+
+.project-list-image {
+  display: block;
+  width: 160px;
+  flex: 0 0 160px;
+}
+
+.project-list-thumb {
+  height: 96px;
+  overflow: hidden;
+}
+
+.project-list-thumb img { object-fit: cover; width: 100%; height: 100%; display: block; }
+
+.project-list-body { flex: 1; }
+.project-list-title { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.project-list-desc { margin: 0 0 8px; color: var(--color-muted-foreground); }
+.project-list-meta { display:flex; gap:12px; font-size:13px; color:var(--color-muted-foreground); }
+
+.project-image img {
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+}
+
+.project-metrics {
+  display:flex;
+  gap:12px;
+  margin-top:12px;
+  font-size:13px;
+  color: var(--color-muted-foreground);
+}
+
+.project-metrics .metric {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
