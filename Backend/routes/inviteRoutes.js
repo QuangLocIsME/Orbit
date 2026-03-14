@@ -1,0 +1,12 @@
+const express = require('express');
+const InviteController = require('../controllers/InviteController');
+const { authenticate } = require('../middlewares/authMiddleware');
+
+const router = express.Router();
+
+router.post('/', authenticate, (req, res) => InviteController.createInvite(req, res));
+router.post('/accept', authenticate, (req, res) => InviteController.acceptInvite(req, res));
+router.post('/revoke', authenticate, (req, res) => InviteController.revokeInvite(req, res));
+router.post('/invites-list', authenticate, (req, res) => InviteController.listInvites(req, res));
+
+module.exports = router;
