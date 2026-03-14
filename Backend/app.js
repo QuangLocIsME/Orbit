@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/authRoutes');
@@ -18,6 +19,12 @@ const limiter = rateLimit({
 });
 
 app.use(express.json());
+app.use(
+    cors({
+        origin: process.env.FRONTED_URI ,
+        credentials: true,
+    })
+);
 app.use(cookieParser());
 app.use(limiter);
 
