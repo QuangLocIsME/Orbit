@@ -1,4 +1,4 @@
-import { apiUrl } from "../../../../config/api.js";
+import { apiFetch } from "@/lib/api-client";
 
 /**
  * GET /api/user/sidebar
@@ -6,7 +6,7 @@ import { apiUrl } from "../../../../config/api.js";
  */
 export async function getUserSidebarData() {
   try {
-    const res = await fetch(apiUrl("/user/sidebar"));
+    const res = await apiFetch("/user/sidebar");
     if (!res.ok) return getDefaultSidebarData();
     return res.json();
   } catch {

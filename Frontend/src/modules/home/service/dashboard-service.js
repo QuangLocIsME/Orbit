@@ -1,8 +1,8 @@
-import { apiUrl } from "../../../config/api.js";
+import { apiFetch } from "@/lib/api-client";
 
 export async function getRecentProjects() {
   try {
-    const res = await fetch(apiUrl("/dashboard/recent"));
+    const res = await apiFetch("/dashboard/recent");
     if (!res.ok) return [];
     return res.json();
   } catch {
