@@ -6,6 +6,16 @@ import { getProject } from "../../../modules/project/project-detail/project-over
 import PackagesHeader from "../../../modules/project/project-detail/project-package/component/packages-header.jsx";
 import PackagesSection from "../../../modules/project/project-detail/project-package/component/package-section.jsx";
 export const prerender = false;
+import "/src/modules/project/project-folder/style/folder-page.css";
+import "/src/modules/project/project-detail/project-overview/style/project-navigation.css";
+import "/src/modules/project/project-detail/project-overview/style/project-tabs.css";
+import "/src/modules/project/project-detail/project-overview/style/project-configure.css";
+import "/src/modules/project/project-detail/project-overview/style/project-stats.css";
+import "/src/modules/project/project-detail/project-overview/style/project-overview.css";
+import "/src/modules/project/project-folder/style/folder-page.css"
+import "/src/modules/project/project-detail/project-package/style/header-packages.css"
+import "/src/modules/project/project-detail/project-package/style/package-card.css"
+
 
 const { projectId } = Astro.params;
 const base = Astro.url.origin;
@@ -21,14 +31,6 @@ try {
 
   <Fragment slot="head">
     <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
-    <link rel="stylesheet" href="/src/styles/folder-page.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-navigation.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-tabs.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-configure.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-stats.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-overview.css" />
-    <link rel="stylesheet" href="/src/styles/project-packages/header-packages.css" />
-    <link rel="stylesheet" href="/src/styles/project-packages/package-card.css" />
   </Fragment>
 
 <main class="page-content">

@@ -13,7 +13,7 @@ export default function ProjectTabs({
     "Extensions",
     "Settings",
   ],
-  onChange,
+  onChange = () => {},
 }) {
   const [active, setActive] = useState("Overview");
 

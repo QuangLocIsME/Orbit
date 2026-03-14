@@ -16,7 +16,7 @@ export async function GET({ params }) {
     versionsCount: 124,
     membersCount: 12,
     openClashes: 5,
-    coverImage: "/images/sample.jpg",
+    coverImage: "https://picsum.photos/400/300",
     updated: "Last updated 2 hours ago",
     members: [
       { id: 1, name: "Minh Anh", role: "Project Manager", color: "#ff2056", initials: "MA", online: true },

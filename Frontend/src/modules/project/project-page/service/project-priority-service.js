@@ -6,7 +6,7 @@ import { apiUrl } from "../../../../config/api.js";
  */
 export async function getPriorityProjects() {
   try {
-    const res = await fetch(apiUrl("/project-page/priority"));
+    const res = await fetch(apiUrl("/project-folder/priority"));
     if (!res.ok) return [];
     return res.json();
   } catch {

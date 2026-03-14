@@ -6,11 +6,15 @@ import FolderBreadcrumb from "../../../modules/project/project-folder/component/
 import FolderHeader from "../../../modules/project/project-folder/component/folder-header.jsx";
 import ProjectHeader from "../../../modules/project/project-page/component/project-header.jsx";
 import FolderProjectGrid from "../../../modules/project/project-folder/component/folder-project-grid.jsx";
-
+import "../../../modules/project/project-page/style/project.css";
+import "../../../modules/project/project-folder/style/folders.css";
+import "../../../modules/project/project-page/style/create-project.css";
+import "src/modules/project/project-folder/style/folder-page.css"
+import "../../../modules/project/project-folder/style/create-folder.css";
 const { id } = Astro.params;
 
 // Fetch folder name
-const folderRes = await fetch(new URL("/api/folders", Astro.url.origin).href);
+const folderRes = await fetch(new URL("/api/project-folder/folder", Astro.url.origin).href);
 const folders = folderRes.ok ? await folderRes.json() : [];
 const folder = folders.find((f: any) => String(f.id) === id);
 const folderName = folder?.name ?? "Folder";
@@ -19,10 +23,6 @@ const folderName = folder?.name ?? "Folder";
 <MainLayout>
   <Fragment slot="head">
     <title>{folderName} — ORBIT</title>
-    <link rel="stylesheet" href="src/modules/project/project-page/style/project.css" />
-    <link rel="stylesheet" href="src/modules/project/project-folder/style/folders.css" />
-    <link rel="stylesheet" href="src/modules/project/project-page/style/create-project.css" />
-    <link rel="stylesheet" href="src/modules/project/project-folder/style/create-folder.css" />
   </Fragment>
 
   <main class="page-content">

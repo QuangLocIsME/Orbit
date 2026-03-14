@@ -8,39 +8,40 @@ import ProjectMilestones from "../../../modules/project/project-detail/project-o
 import ProjectTabs from "../../../modules/project/project-detail/project-overview/component/project-tabs.jsx";
 import ProjectFigure from "../../../modules/project/project-detail/project-overview/component/project-figure.jsx";
 import { getProject } from "../../../modules/project/project-detail/project-overview/service/project-service.js";
-
+import "/src/modules/project/project-folder/style/folder-page.css";
+import "/src/modules/project/project-detail/project-overview/style/project-navigation.css";
+import "/src/modules/project/project-detail/project-overview/style/project-tabs.css";
+import "/src/modules/project/project-detail/project-overview/style/project-configure.css";
+import "/src/modules/project/project-detail/project-overview/style/project-stats.css";
+import "/src/modules/project/project-detail/project-overview/style/project-overview.css";
+import "/src/modules/project/project-detail/project-overview/style/project-member.css";
+import "/src/modules/project/project-detail/project-overview/style/recent-activity.css";
+import "/src/modules/project/project-detail/project-overview/style/project-milestone.css";
+import { Fragment } from "react";
 export const prerender = false;
 
 const { projectId } = Astro.params;
+
 const base = Astro.url.origin;
 
 let project = null;
+
 try {
   project = await getProject(projectId, base);
 } catch (err) {
   console.error(err);
-}
+} 
 ---
 
-<MainLayout>
 
   <Fragment slot="head">
     <title>{project ? `${project.projectName} — ORBIT` : "Project — ORBIT"}</title>
-    <link rel="stylesheet" href="/src/styles/folder-page.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-navigation.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-tabs.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-configure.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-stats.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-member.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/recent-activity.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-overview.css" />
-    <link rel="stylesheet" href="/src/styles/project-overview/project-milestone.css" />
   </Fragment>
 
 <main class="page-content">
 
   <ProjectHeader project={project} client:load />
-  <ProjectTabs project={project} client:load />
+  <ProjectTabs client:load />
   <ProjectFigure project={project} client:load />
 
   <div class="overview-container">
@@ -57,4 +58,3 @@ try {
   </div>
 
 </main>
-</MainLayout>
