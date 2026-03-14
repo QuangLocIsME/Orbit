@@ -40,18 +40,18 @@ class UserService {
 
         const normalizedEmail = email.toLowerCase().trim();
         const user = await UserRepository.findbyEmail(normalizedEmail);
-        if (!user) {
+        const passwordHash = user?.password;
+        const dummyHash =
+            '$2b$10$GvSi4ZC7JqjBHSK0yU3p8u9oGqZQb3Q5m0yQ8u1jL9n9eA3H6pCkK';
+
+        const isMatch = await bcrypt.compare(password, passwordHash || dummyHash);
+        if (!user || !isMatch) {
             throw new Error('Email or password is incorrect.');
         }
 
         if (user.isBlocked) {
             console.log('User account got banned');
             throw new Error('User account is blocked.');
-        }
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            throw new Error('Email or password is incorrect.');
         }
 
         const updatedUser = await UserRepository.updateLastLoginAt(user._id);
