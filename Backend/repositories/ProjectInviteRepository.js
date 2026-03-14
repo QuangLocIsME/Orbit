@@ -31,6 +31,10 @@ class ProjectInviteRepository {
             '-_id projectId email role status invitedBy createdAt expiresAt acceptedAt'
         );
     }
+
+    async removeByProject(projectId) {
+        return await ProjectInvite.deleteMany({ projectId });
+    }
 }
 
 module.exports = new ProjectInviteRepository();

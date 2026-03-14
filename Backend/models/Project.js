@@ -8,6 +8,7 @@ const ProjectSchema = new mongoose.Schema({
         index: true,
         default: () => crypto.randomUUID(),
     },
+    ownerId: { type: String, required: true, index: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, default: '', trim: true },
     industry: { type: String, default: '', trim: true },
