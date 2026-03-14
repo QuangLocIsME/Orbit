@@ -21,6 +21,26 @@ class ProjectMemberRepository {
             '-_id projectId userId role status invitedBy createdAt'
         );
     }
+
+    async updateMemberRole(projectId, userId, role) {
+        return await ProjectMember.findOneAndUpdate(
+            { projectId, userId },
+            { role },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async removeMember(projectId, userId) {
+        return await ProjectMember.deleteOne({ projectId, userId });
+    }
+
+    async countAdmins(projectId) {
+        return await ProjectMember.countDocuments({ projectId, role: 'admin' });
+    }
+
+    async removeMembersByProject(projectId) {
+        return await ProjectMember.deleteMany({ projectId });
+    }
 }
 
 module.exports = new ProjectMemberRepository();
