@@ -2,28 +2,65 @@ import { apiUrl } from "../../../config/api.js";
 
 /**
  * POST /api/auth/login
- * @returns {Promise<{ token: string, user: { username: string } }>}
  */
-export async function login(username, password) {
+export async function login(email, password) {
   const res = await fetch(apiUrl("/auth/login"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include", // QUAN TRỌNG để nhận cookie
+    body: JSON.stringify({
+      email,
+      password,
+    }),
   });
-  if (!res.ok) throw new Error("Login failed");
-  return res.json();
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data.message || "Login failed");
+  }
+
+  return data;
 }
 
 /**
  * POST /api/auth/register
- * @returns {Promise<{ success: boolean, message: string }>}
  */
-export async function register(data) {
+export async function register(form) {
   const res = await fetch(apiUrl("/auth/register"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(form),
   });
-  if (!res.ok) throw new Error("Register failed");
-  return res.json();
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data.message || "Register failed");
+  }
+
+  return data;
+}
+
+export async function refreshToken() {
+  const res = await fetch(apiUrl("/auth/refresh-token"), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data.message || "Refresh token failed");
+  }
+
+  return data;
 }

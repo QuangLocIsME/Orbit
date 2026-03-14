@@ -1,8 +1,8 @@
-import { apiUrl } from "../../../config/api.js";
+import { apiFetch } from "@/lib/api-client";
 
 export async function getUserTasks() {
   try {
-    const res = await fetch(apiUrl("/dashboard/tasks"));
+    const res = await apiFetch("/dashboard/tasks");
     if (!res.ok) return [];
     return res.json();
   } catch {

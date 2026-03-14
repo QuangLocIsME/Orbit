@@ -1,27 +1,17 @@
-export async function getProject(projectId: string, baseUrl?: string) {
-  const origin = baseUrl ? baseUrl.replace(/\/$/, "") : "";
-  const url = origin + `/api/projects/${encodeURIComponent(projectId)}`;
+import { apiFetch } from "@/lib/api-client";
 
-  const res = await fetch(url, { cache: "no-store" });
+export async function getProject(projectId: string) {
+
+  const res = await apiFetch(`/projects/${encodeURIComponent(projectId)}`, {
+    cache: "no-store",
+  });
+
   if (!res.ok) {
     const text = await res.text().catch(() => null);
-    throw new Error(`Failed to fetch project ${projectId}: ${res.status} ${text || res.statusText}`);
+    throw new Error(
+      `Failed to fetch project ${projectId}: ${res.status} ${text || res.statusText}`
+    );
   }
 
-  const data = await res.json();
-  return data;
+  return res.json();
 }
-
-export type ProjectDTO = {
-  projectId: string;
-  projectName: string;
-  description?: string;
-  status?: string;
-  progress?: number;
-  startDate?: string;
-  deadline?: string;
-  documentsCount?: number;
-  versionsCount?: number;
-  membersCount?: number;
-  openClashes?: number;
-};

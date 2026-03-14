@@ -1,4 +1,4 @@
-import { apiUrl } from "../../../../config/api.js";
+import { apiFetch } from "@/lib/api-client";
 
 /**
  * GET /api/folders
@@ -6,7 +6,7 @@ import { apiUrl } from "../../../../config/api.js";
  */
 export async function getFolders() {
   try {
-    const res = await fetch(apiUrl("/project-folder/folder"));
+    const res = await apiFetch("/project-folder/folder");
     if (!res.ok) return [];
     return res.json();
   } catch {
