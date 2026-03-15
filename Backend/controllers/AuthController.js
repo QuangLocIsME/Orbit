@@ -1,5 +1,6 @@
 const UserService = require('../services/UserService');
 const UserRepository = require('../repositories/UserRepository');
+const emailService = require('../services/emailService');
 const {
     signAccessToken,
     signRefreshToken,
@@ -265,6 +266,64 @@ class AuthController {
                 message: error.message || 'Reset failed',
             });
         }
+    }
+
+    /**
+     * Google OAuth callback: generate JWT, send welcome email if new user, redirect to frontend with token + user.
+     */
+    async googleCallback(req, res) {
+        const result = req.authResult;
+        if (!result?.user) {
+            const message = result?.error?.message || 'Google authentication failed';
+            return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, message));
+        }
+
+        const { user, isNew } = result;
+        if (user.isBlocked || user.isActive === false) {
+            return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, 'Account is blocked'));
+        }
+
+        const payload = { id: user._id, email: user.email, role: user.role };
+        const accessToken = signAccessToken(payload);
+        const refreshToken = signRefreshToken(payload);
+
+        try {
+            if (user.refreshTokens !== undefined) {
+                await UserRepository.setSingleRefreshToken(user._id, buildRefreshTokenRecord(refreshToken));
+            }
+        } catch (e) {
+            // ignore if no refreshTokens field
+        }
+
+        setAuthCookies(res, accessToken, refreshToken);
+
+        if (isNew) {
+            emailService.sendWelcomeEmail(user.email, user.fullName).catch((err) =>
+                console.error('[Auth] Welcome email failed:', err.message)
+            );
+        }
+
+        const frontendUrl = this.getFrontendAuthRedirectUrl(true, accessToken, {
+            id: user._id,
+            fullName: user.fullName,
+            email: user.email,
+            role: user.role,
+            avatar: user.avatar,
+            provider: user.provider,
+        });
+        return res.redirect(frontendUrl);
+    }
+
+    getFrontendAuthRedirectUrl(success, token, user, errorMessage) {
+        const base = (process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321').replace(/\/$/, '');
+        const params = new URLSearchParams();
+        if (success && token) {
+            params.set('token', token);
+            if (user) params.set('user', JSON.stringify(user));
+        }
+        if (errorMessage) params.set('error', errorMessage);
+        const q = params.toString();
+        return `${base}/auth/callback${q ? `?${q}` : ''}`;
     }
 }
 

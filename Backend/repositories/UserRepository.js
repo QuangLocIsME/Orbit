@@ -2,7 +2,11 @@ const User = require('../models/User');
 
 class UserRepository {
     async findbyEmail(email) {
-        return await User.findOne({ email });
+        return await User.findOne({ email: (email || '').toLowerCase().trim() });
+    }
+
+    async findByGoogleId(googleId) {
+        return await User.findOne({ googleId });
     }
 
     async createUser(user) {
@@ -165,6 +169,9 @@ class UserRepository {
                 updatedAt: new Date(),
             },
             { returnDocument: 'after' }
+        );
+    }
+
     async getProfileById(userId) {
         return await User.findById(userId).select(
             '-_id -role -updatedAt -refreshTokens -isBlocked -password'
