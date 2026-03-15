@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const RefreshTokenSchema = new mongoose.Schema(
     {
@@ -12,6 +13,12 @@ const RefreshTokenSchema = new mongoose.Schema(
 );
 
 const UserSchema = new mongoose.Schema({
+    publicId: {
+        type: String,
+        unique: true,
+        index: true,
+        default: () => crypto.randomUUID(),
+    },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
     fullName: { type: String, required: true },

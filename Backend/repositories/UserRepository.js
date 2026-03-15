@@ -165,6 +165,15 @@ class UserRepository {
                 updatedAt: new Date(),
             },
             { returnDocument: 'after' }
+    async getProfileById(userId) {
+        return await User.findById(userId).select(
+            '-_id -role -updatedAt -refreshTokens -isBlocked -password'
+        );
+    }
+
+    async getProfileByPublicId(publicId) {
+        return await User.findOne({ publicId }).select(
+            '-_id -role -updatedAt -refreshTokens -isBlocked -password'
         );
     }
 }
