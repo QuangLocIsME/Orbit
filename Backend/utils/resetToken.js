@@ -1,16 +1,14 @@
 const crypto = require('crypto');
 
-const RESET_CODE_LENGTH = 6;
 const RESET_CODE_EXPIRES_MS = 15 * 60 * 1000;      // 15 phút
 const RESET_TOKEN_EXPIRES_MS = 15 * 60 * 1000;     // 15 phút, link dùng 1 lần
 
 function generateResetCode() {
-    const digits = '0123456789';
-    let code = '';
-    for (let i = 0; i < RESET_CODE_LENGTH; i++) {
-        code += digits[Math.floor(Math.random() * digits.length)];
-    }
-    return code;
+    return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+function getFrontendBaseUrl() {
+    return process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321';
 }
 
 function generateResetToken() {
@@ -25,6 +23,7 @@ module.exports = {
     generateResetCode,
     generateResetToken,
     hashResetToken,
+    getFrontendBaseUrl,
     RESET_CODE_EXPIRES_MS,
     RESET_TOKEN_EXPIRES_MS,
 };

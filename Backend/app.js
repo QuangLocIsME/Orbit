@@ -1,5 +1,4 @@
 require('dotenv').config();
-console.log('[Env] SMTP_HOST:', process.env.SMTP_HOST, '| SMTP_USER:', process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{3}).*(@.*)/, '$1***$2') : '(trống)');
 
 const express = require('express');
 const cors = require('cors');
@@ -25,7 +24,7 @@ const limiter = rateLimit({
 app.use(express.json());
 app.use(
     cors({
-        origin: process.env.FRONTED_URI ,
+        origin: process.env.FRONTEND_URI,
         credentials: true,
     })
 );

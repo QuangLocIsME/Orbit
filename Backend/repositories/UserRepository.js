@@ -157,11 +157,15 @@ class UserRepository {
         );
     }
 
-    async updatePassword(userId, hashedPassword) {
+    async updatePasswordAndClearReset(userId, hashedPassword) {
         return await User.findByIdAndUpdate(
             userId,
             {
                 password: hashedPassword,
+                resetCode: null,
+                resetCodeExpiresAt: null,
+                resetPasswordToken: null,
+                resetPasswordTokenExpiresAt: null,
                 updatedAt: new Date(),
             },
             { returnDocument: 'after' }

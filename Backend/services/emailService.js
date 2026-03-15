@@ -4,11 +4,15 @@
  */
 const nodemailer = require('nodemailer');
 
+let _transporter = undefined;
+
 /**
- * Transporter từ .env (Gmail SMTP hoặc SMTP khác).
+ * Trả về transporter đã được cache (lazy singleton).
  * @returns {nodemailer.Transporter|null}
  */
 function getTransporter() {
+    if (_transporter !== undefined) return _transporter;
+
     const host = process.env.SMTP_HOST || 'smtp.gmail.com';
     const port = Number(process.env.SMTP_PORT) || 587;
     const user = (process.env.SMTP_USER || '').trim();
@@ -16,16 +20,17 @@ function getTransporter() {
 
     if (!user || !pass) {
         console.warn('[Email] SMTP chưa cấu hình: SMTP_USER hoặc SMTP_PASS trống trong .env');
+        _transporter = null;
         return null;
     }
 
-    console.log('[Email] Đang dùng SMTP:', host, '| User:', user);
-    return nodemailer.createTransport({
+    _transporter = nodemailer.createTransport({
         host,
         port,
         secure: false,
         auth: { user, pass },
     });
+    return _transporter;
 }
 
 /**
@@ -80,10 +85,6 @@ async function sendEmail(to, subject, message) {
  * Gửi email mã đặt lại mật khẩu. Chỉ dùng SMTP từ .env.
  */
 async function sendResetCodeEmail(toEmail, code) {
-    const resetPageUrl =
-        process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321';
-    const resetPasswordUrl = `${resetPageUrl.replace(/\/$/, '')}/reset-password`;
-
     const subject = 'Mã xác nhận đặt lại mật khẩu - Orbit';
     const text = [
         'Bạn đã yêu cầu đặt lại mật khẩu.',

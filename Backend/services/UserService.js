@@ -4,6 +4,7 @@ const {
     generateResetCode,
     generateResetToken,
     hashResetToken,
+    getFrontendBaseUrl,
     RESET_CODE_EXPIRES_MS,
     RESET_TOKEN_EXPIRES_MS,
 } = require('../utils/resetToken');
@@ -81,13 +82,17 @@ class UserService {
         }
 
         if (user.isBlocked) {
-            throw new Error('Account is blocked.');
+            const err = new Error('Account is blocked.');
+            err.code = 'ACCOUNT_BLOCKED';
+            throw err;
         }
 
         const code = generateResetCode();
         const expiresAt = new Date(Date.now() + RESET_CODE_EXPIRES_MS);
-        await UserRepository.setResetCode(user._id, code, expiresAt);
-        await emailService.sendResetCodeEmail(normalizedEmail, code);
+        await Promise.all([
+            UserRepository.setResetCode(user._id, code, expiresAt),
+            emailService.sendResetCodeEmail(normalizedEmail, code),
+        ]);
     }
 
     /**
@@ -112,19 +117,12 @@ class UserService {
         const expiresAt = new Date(Date.now() + RESET_TOKEN_EXPIRES_MS);
         await UserRepository.setResetPasswordToken(user._id, hashedToken, expiresAt);
 
-        const baseUrl = process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321';
-        const resetPasswordUrl = `${baseUrl}/reset-password?token=${rawToken}`;
+        const resetPasswordUrl = `${getFrontendBaseUrl()}/reset-password?token=${rawToken}`;
 
         return { resetToken: rawToken, resetPasswordUrl };
     }
 
-    /**
-     * Đặt lại mật khẩu bằng token (dùng 1 lần).
-     */
-    async resetPassword(token, newPassword, confirmPassword) {
-        if (!token) {
-            throw new Error('Reset token is required.');
-        }
+    _validatePasswordChange(newPassword, confirmPassword) {
         if (!newPassword || !confirmPassword) {
             throw new Error('New password and confirmation are required.');
         }
@@ -134,6 +132,16 @@ class UserService {
         if (newPassword.length < 6) {
             throw new Error('Password must be at least 6 characters.');
         }
+    }
+
+    /**
+     * Đặt lại mật khẩu bằng token (dùng 1 lần).
+     */
+    async resetPassword(token, newPassword, confirmPassword) {
+        if (!token) {
+            throw new Error('Reset token is required.');
+        }
+        this._validatePasswordChange(newPassword, confirmPassword);
 
         const hashedToken = hashResetToken(token);
         const user = await UserRepository.findUserByResetToken(hashedToken);
@@ -142,8 +150,7 @@ class UserService {
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-        await UserRepository.updatePassword(user._id, hashedPassword);
-        await UserRepository.clearResetPassword(user._id);
+        await UserRepository.updatePasswordAndClearReset(user._id, hashedPassword);
     }
 
     /**
@@ -155,15 +162,7 @@ class UserService {
         if (!normalizedEmail || !code) {
             throw new Error('Email and code are required.');
         }
-        if (!newPassword || !confirmPassword) {
-            throw new Error('New password and confirmation are required.');
-        }
-        if (newPassword !== confirmPassword) {
-            throw new Error('Password confirmation does not match.');
-        }
-        if (newPassword.length < 6) {
-            throw new Error('Password must be at least 6 characters.');
-        }
+        this._validatePasswordChange(newPassword, confirmPassword);
 
         const user = await UserRepository.findUserByEmailAndValidResetCode(
             normalizedEmail,
@@ -174,8 +173,7 @@ class UserService {
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-        await UserRepository.updatePassword(user._id, hashedPassword);
-        await UserRepository.clearResetPassword(user._id);
+        await UserRepository.updatePasswordAndClearReset(user._id, hashedPassword);
     }
 }
 

@@ -201,7 +201,7 @@ class AuthController {
                 message: 'If that email exists, a verification code has been sent.',
             });
         } catch (error) {
-            if (error.message === 'Account is blocked.') {
+            if (error.code === 'ACCOUNT_BLOCKED') {
                 return res.status(403).json({ success: false, message: error.message });
             }
             return res.status(400).json({
