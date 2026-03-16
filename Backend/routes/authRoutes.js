@@ -15,7 +15,7 @@ router.get('/google/callback', (req, res, next) => {
     passport.authenticate('google', { session: false }, (err, result) => {
         if (err) {
             const base = (process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321').replace(/\/$/, '');
-            return res.redirect(`${base}/auth/callback?error=${encodeURIComponent(err.message)}`);
+            return res.redirect(`${base}/auth/callback?success=0&error=${encodeURIComponent(err.message)}`);
         }
         req.authResult = result;
         next();

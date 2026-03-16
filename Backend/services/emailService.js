@@ -19,7 +19,9 @@ function getTransporter() {
         return null;
     }
 
-    console.log('[Email] Đang dùng SMTP:', host, '| User:', user);
+    if (process.env.NODE_ENV !== 'production') {
+        console.log('[Email] Đang dùng SMTP:', host, '| User:', user);
+    }
     return nodemailer.createTransport({
         host,
         port,

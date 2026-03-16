@@ -112,7 +112,7 @@ class AuthController {
                 });
             }
 
-            if (user.isBlocked || user.isActive === false) {
+            if (user.isBlocked) {
                 await UserRepository.revokeAllRefreshTokens(user._id);
                 return res.status(403).json({
                     success: false,
@@ -287,13 +287,10 @@ class AuthController {
         const accessToken = signAccessToken(payload);
         const refreshToken = signRefreshToken(payload);
 
-        try {
-            if (user.refreshTokens !== undefined) {
-                await UserRepository.setSingleRefreshToken(user._id, buildRefreshTokenRecord(refreshToken));
-            }
-        } catch (e) {
-            // ignore if no refreshTokens field
-        }
+        await UserRepository.setSingleRefreshToken(
+            user._id,
+            buildRefreshTokenRecord(refreshToken)
+        );
 
         setAuthCookies(res, accessToken, refreshToken);
 
@@ -317,7 +314,9 @@ class AuthController {
     getFrontendAuthRedirectUrl(success, token, user, errorMessage) {
         const base = (process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321').replace(/\/$/, '');
         const params = new URLSearchParams();
-        if (success && token) {
+        params.set('success', success ? '1' : '0');
+        const allowQueryToken = process.env.FRONTEND_AUTH_TOKEN_IN_QUERY === 'true';
+        if (allowQueryToken && success && token) {
             params.set('token', token);
             if (user) params.set('user', JSON.stringify(user));
         }

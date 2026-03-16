@@ -1,7 +1,7 @@
 const User = require('../models/User');
 
 class UserRepository {
-    async findbyEmail(email) {
+    async findByEmail(email) {
         return await User.findOne({ email: (email || '').toLowerCase().trim() });
     }
 
@@ -133,6 +133,8 @@ class UserRepository {
             {
                 resetPasswordToken: hashedToken,
                 resetPasswordTokenExpiresAt: expiresAt,
+                resetCode: null,
+                resetCodeExpiresAt: null,
                 updatedAt: new Date(),
             },
             { returnDocument: 'after' }
@@ -155,6 +157,18 @@ class UserRepository {
                 resetCodeExpiresAt: null,
                 resetPasswordToken: null,
                 resetPasswordTokenExpiresAt: null,
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async clearResetCode(userId) {
+        return await User.findByIdAndUpdate(
+            userId,
+            {
+                resetCode: null,
+                resetCodeExpiresAt: null,
                 updatedAt: new Date(),
             },
             { returnDocument: 'after' }

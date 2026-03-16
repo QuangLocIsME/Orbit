@@ -26,7 +26,7 @@ class UserService {
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        const existingUser = await UserRepository.findbyEmail(normalizedEmail);
+        const existingUser = await UserRepository.findByEmail(normalizedEmail);
         if (existingUser) {
             throw new Error('Email already exists.');
         }
@@ -47,7 +47,7 @@ class UserService {
         }
 
         const normalizedEmail = email.toLowerCase().trim();
-        const user = await UserRepository.findbyEmail(normalizedEmail);
+        const user = await UserRepository.findByEmail(normalizedEmail);
         const passwordHash = user?.password;
         const dummyHash =
             '$2b$10$GvSi4ZC7JqjBHSK0yU3p8u9oGqZQb3Q5m0yQ8u1jL9n9eA3H6pCkK';
@@ -75,7 +75,7 @@ class UserService {
             throw new Error('Email is required.');
         }
 
-        const user = await UserRepository.findbyEmail(normalizedEmail);
+        const user = await UserRepository.findByEmail(normalizedEmail);
         if (!user) {
             return; // Không throw để không lộ thông tin
         }
@@ -111,6 +111,7 @@ class UserService {
         const hashedToken = hashResetToken(rawToken);
         const expiresAt = new Date(Date.now() + RESET_TOKEN_EXPIRES_MS);
         await UserRepository.setResetPasswordToken(user._id, hashedToken, expiresAt);
+        await UserRepository.clearResetCode(user._id);
 
         const baseUrl = process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321';
         const resetPasswordUrl = `${baseUrl}/reset-password?token=${rawToken}`;

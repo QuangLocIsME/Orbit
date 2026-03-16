@@ -1,6 +1,9 @@
 require('dotenv').config();
-console.log('[Env] SMTP_HOST:', process.env.SMTP_HOST, '| SMTP_USER:', process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{3}).*(@.*)/, '$1***$2') : '(trống)');
-console.log('[Env] Google OAuth:', process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'NOT configured (add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to .env)');
+
+if (process.env.NODE_ENV !== 'production') {
+    console.log('[Env] SMTP_HOST:', process.env.SMTP_HOST, '| SMTP_USER:', process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{3}).*(@.*)/, '$1***$2') : '(trống)');
+    console.log('[Env] Google OAuth:', process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'NOT configured (add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to .env)');
+}
 
 const express = require('express');
 const cors = require('cors');
@@ -35,11 +38,14 @@ app.use((err, req, res, next) => {
             message: 'Invalid JSON in request body. Use valid JSON (e.g. {"key": "value"}). For token, use Authorization: Bearer <token> or body: {"refreshToken": "..."}.',
         });
     }
-    next(err);
+    return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+    });
 });
 app.use(
     cors({
-        origin: process.env.FRONTED_URI ,
+        origin: process.env.FRONTEND_URI || process.env.FRONTED_URI,
         credentials: true,
     })
 );
@@ -49,7 +55,7 @@ app.use(limiter);
 connectDB();
 
 app.use('/api/auth', authRoutes);
-app.use('/api', emailRoutes);
+app.use('/api/email', emailRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/projects', projectRoutes);
