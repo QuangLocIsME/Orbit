@@ -49,7 +49,13 @@ passport.use(
                         return done(new Error('User account is blocked.'), null);
                     }
                     if (user.provider === 'local') {
-                        return done(new Error('Email already registered with password. Please sign in with password.'), null);
+                        const linkedUser = await UserRepository.linkGoogleAccount(
+                            user._id,
+                            googleId,
+                            avatar
+                        );
+                        await UserRepository.updateLastLoginAt(linkedUser._id);
+                        return done(null, { user: linkedUser, isNew: false });
                     }
                     await UserRepository.updateLastLoginAt(user._id);
                     user = await UserRepository.findById(user._id);
