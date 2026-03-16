@@ -35,13 +35,19 @@ passport.use(
 
                 let user = await UserRepository.findByGoogleId(googleId);
                 if (user) {
+                    if (user.isBlocked) {
+                        return done(new Error('User account is blocked.'), null);
+                    }
                     await UserRepository.updateLastLoginAt(user._id);
                     user = await UserRepository.findById(user._id);
                     return done(null, { user, isNew: false });
                 }
 
-                user = await UserRepository.findbyEmail(email);
+                user = await UserRepository.findByEmail(email);
                 if (user) {
+                    if (user.isBlocked) {
+                        return done(new Error('User account is blocked.'), null);
+                    }
                     if (user.provider === 'local') {
                         return done(new Error('Email already registered with password. Please sign in with password.'), null);
                     }
