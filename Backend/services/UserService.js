@@ -32,10 +32,12 @@ class UserService {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
+        const avatarImage = userData?.avatar || userData?.image || null;
         const newUser = {
             fullName,
             email: normalizedEmail,
             password: hashedPassword,
+            avatar: avatarImage,
         };
 
         return await UserRepository.createUser(newUser);

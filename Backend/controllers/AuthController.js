@@ -305,7 +305,7 @@ class AuthController {
             fullName: user.fullName,
             email: user.email,
             role: user.role,
-            avatar: user.avatar,
+            avatar: user.avatar || user.image,
             provider: user.provider,
         });
         return res.redirect(frontendUrl);
