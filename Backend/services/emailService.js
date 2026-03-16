@@ -112,4 +112,37 @@ async function sendResetCodeEmail(toEmail, code) {
     throw new Error(result.error || 'Không gửi được email. Kiểm tra SMTP trong .env (Gmail cần App Password).');
 }
 
-module.exports = { sendEmail, sendResetCodeEmail, getTransporter };
+/**
+ * Gửi email chào mừng khi tạo tài khoản bằng Google.
+ */
+async function sendWelcomeEmail(toEmail, userName) {
+    const subject = 'Your Account Has Been Successfully Created';
+    const text = [
+        `Hello ${userName || 'User'},`,
+        '',
+        'Your account has been successfully created using your Google account.',
+        '',
+        'You can now access the system using Google Sign-In without needing a password.',
+        '',
+        'If you did not authorize this action, please contact support immediately.',
+        '',
+        'Best regards,',
+        'System Administration',
+    ].join('\n');
+    const html = `
+      <div style="font-family: sans-serif; max-width: 560px;">
+        <p>Hello ${(userName || 'User').replace(/</g, '&lt;')},</p>
+        <p>Your account has been successfully created using your Google account.</p>
+        <p>You can now access the system using Google Sign-In without needing a password.</p>
+        <p>If you did not authorize this action, please contact support immediately.</p>
+        <p>Best regards,<br/>System Administration</p>
+      </div>
+    `;
+    const result = await sendEmail(toEmail, subject, { text, html });
+    if (!result.success) {
+        console.error('[Email] Welcome email failed:', result.error);
+    }
+    return result;
+}
+
+module.exports = { sendEmail, sendResetCodeEmail, sendWelcomeEmail, getTransporter };

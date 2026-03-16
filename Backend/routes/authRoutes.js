@@ -1,7 +1,26 @@
 const express = require('express');
+const passport = require('passport');
 const AuthController = require('../controllers/AuthController');
 
 const router = express.Router();
+
+router.get('/google', (req, res, next) => {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        return res.status(503).json({ success: false, message: 'Google login is not configured.' });
+    }
+    passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+});
+
+router.get('/google/callback', (req, res, next) => {
+    passport.authenticate('google', { session: false }, (err, result) => {
+        if (err) {
+            const base = (process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321').replace(/\/$/, '');
+            return res.redirect(`${base}/auth/callback?error=${encodeURIComponent(err.message)}`);
+        }
+        req.authResult = result;
+        next();
+    })(req, res, next);
+}, (req, res) => AuthController.googleCallback(req, res));
 
 router.post('/register', (req, res) => AuthController.register(req, res));
 router.post('/login', (req, res) => AuthController.login(req, res));
