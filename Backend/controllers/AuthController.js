@@ -279,7 +279,7 @@ class AuthController {
         }
 
         const { user, isNew } = result;
-        if (user.isBlocked || user.isActive === false) {
+        if (user.isBlocked) {
             return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, 'Account is blocked'));
         }
 
@@ -315,11 +315,6 @@ class AuthController {
         const base = (process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321').replace(/\/$/, '');
         const params = new URLSearchParams();
         params.set('success', success ? '1' : '0');
-        const allowQueryToken = process.env.FRONTEND_AUTH_TOKEN_IN_QUERY === 'true';
-        if (allowQueryToken && success && token) {
-            params.set('token', token);
-            if (user) params.set('user', JSON.stringify(user));
-        }
         if (errorMessage) params.set('error', errorMessage);
         const q = params.toString();
         return `${base}/auth/callback${q ? `?${q}` : ''}`;

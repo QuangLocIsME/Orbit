@@ -22,6 +22,20 @@ class UserRepository {
         );
     }
 
+    async linkGoogleAccount(userId, googleId, avatar) {
+        return await User.findByIdAndUpdate(
+            userId,
+            {
+                googleId,
+                avatar: avatar || null,
+                provider: 'google',
+                isVerified: true,
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
     async findById(userId) {
         return await User.findById(userId);
     }
