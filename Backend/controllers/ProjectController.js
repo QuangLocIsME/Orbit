@@ -107,7 +107,8 @@ class ProjectController {
     async getProjectMembers(req, res) {
         try {
             const { projectId } = req.body || {};
-            if (!projectId) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            if (!normalizedProjectId) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId',
@@ -122,7 +123,7 @@ class ProjectController {
                 });
             }
 
-            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member) {
                 return res.status(403).json({
                     success: false,
@@ -130,7 +131,7 @@ class ProjectController {
                 });
             }
 
-            const members = await ProjectMemberRepository.getMembersByProject(projectId);
+            const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
 
             return res.status(200).json({
                 success: true,
@@ -147,7 +148,8 @@ class ProjectController {
     async updateProject(req, res) {
         try {
             const { projectId, name, description, industry, coverImageUrl } = req.body || {};
-            if (!projectId) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            if (!normalizedProjectId) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId',
@@ -162,7 +164,7 @@ class ProjectController {
                 });
             }
 
-            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
                 return res.status(403).json({
                     success: false,
@@ -179,7 +181,7 @@ class ProjectController {
             if (coverImageUrl !== undefined) updateFields.coverImageUrl = coverImageUrl;
 
             const project = await Project.findOneAndUpdate(
-                { publicId: projectId },
+                { publicId: normalizedProjectId },
                 updateFields,
                 { returnDocument: 'after' }
             );
@@ -213,7 +215,8 @@ class ProjectController {
     async deleteProject(req, res) {
         try {
             const { projectId } = req.body || {};
-            if (!projectId) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            if (!normalizedProjectId) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId',
@@ -228,7 +231,7 @@ class ProjectController {
                 });
             }
 
-            const project = await Project.findOne({ publicId: projectId });
+            const project = await Project.findOne({ publicId: normalizedProjectId });
             if (!project) {
                 return res.status(404).json({
                     success: false,
@@ -243,9 +246,9 @@ class ProjectController {
                 });
             }
 
-            await Project.deleteOne({ publicId: projectId });
-            await ProjectMemberRepository.removeMembersByProject(projectId);
-            await ProjectInviteRepository.removeByProject(projectId);
+            await Project.deleteOne({ publicId: normalizedProjectId });
+            await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
+            await ProjectInviteRepository.removeByProject(normalizedProjectId);
 
             return res.status(200).json({
                 success: true,
@@ -262,7 +265,10 @@ class ProjectController {
     async updateMemberRole(req, res) {
         try {
             const { projectId, targetUserId, role } = req.body || {};
-            if (!projectId || !targetUserId || !role) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            const normalizedTargetUserId = typeof targetUserId === 'string' ? targetUserId.trim() : '';
+            const normalizedRole = typeof role === 'string' ? role.trim() : '';
+            if (!normalizedProjectId || !normalizedTargetUserId || !normalizedRole) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId, targetUserId or role',
@@ -277,7 +283,7 @@ class ProjectController {
                 });
             }
 
-            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
                 return res.status(403).json({
                     success: false,
@@ -285,7 +291,7 @@ class ProjectController {
                 });
             }
 
-            if (targetUserId === userId) {
+            if (normalizedTargetUserId === userId) {
                 return res.status(403).json({
                     success: false,
                     message: 'Admins cannot change their own role',
@@ -293,8 +299,8 @@ class ProjectController {
             }
 
             const targetMember = await ProjectMemberRepository.findMember(
-                projectId,
-                targetUserId
+                normalizedProjectId,
+                normalizedTargetUserId
             );
             if (!targetMember) {
                 return res.status(404).json({
@@ -304,7 +310,7 @@ class ProjectController {
             }
 
             if (targetMember.role === 'admin' && role !== 'admin') {
-                const adminCount = await ProjectMemberRepository.countAdmins(projectId);
+                const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
                     return res.status(403).json({
                         success: false,
@@ -314,9 +320,9 @@ class ProjectController {
             }
 
             const updatedMember = await ProjectMemberRepository.updateMemberRole(
-                projectId,
-                targetUserId,
-                role
+                normalizedProjectId,
+                normalizedTargetUserId,
+                normalizedRole
             );
 
             return res.status(200).json({
@@ -339,7 +345,9 @@ class ProjectController {
     async removeMember(req, res) {
         try {
             const { projectId, targetUserId } = req.body || {};
-            if (!projectId || !targetUserId) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            const normalizedTargetUserId = typeof targetUserId === 'string' ? targetUserId.trim() : '';
+            if (!normalizedProjectId || !normalizedTargetUserId) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId or targetUserId',
@@ -354,7 +362,7 @@ class ProjectController {
                 });
             }
 
-            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
                 return res.status(403).json({
                     success: false,
@@ -362,7 +370,7 @@ class ProjectController {
                 });
             }
 
-            if (targetUserId === userId) {
+            if (normalizedTargetUserId === userId) {
                 return res.status(403).json({
                     success: false,
                     message: 'Admins cannot remove themselves',
@@ -370,8 +378,8 @@ class ProjectController {
             }
 
             const targetMember = await ProjectMemberRepository.findMember(
-                projectId,
-                targetUserId
+                normalizedProjectId,
+                normalizedTargetUserId
             );
             if (!targetMember) {
                 return res.status(404).json({
@@ -381,7 +389,7 @@ class ProjectController {
             }
 
             if (targetMember.role === 'admin') {
-                const adminCount = await ProjectMemberRepository.countAdmins(projectId);
+                const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
                     return res.status(403).json({
                         success: false,
@@ -390,7 +398,7 @@ class ProjectController {
                 }
             }
 
-            await ProjectMemberRepository.removeMember(projectId, targetUserId);
+            await ProjectMemberRepository.removeMember(normalizedProjectId, normalizedTargetUserId);
 
             return res.status(200).json({
                 success: true,

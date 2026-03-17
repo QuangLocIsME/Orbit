@@ -7,34 +7,34 @@ const {
     RESET_CODE_EXPIRES_MS,
     RESET_TOKEN_EXPIRES_MS,
 } = require('../utils/resetToken');
+const { normalizeEmail, normalizeString, requireString } = require('../utils/sanitize');
 const bcrypt = require('bcrypt');
 
 class UserService {
     async createUser(userData) {
         const { fullName, email, password, confirmPassword, agree } = userData || {};
 
-        if (!fullName || !email || !password || !confirmPassword) {
-            throw new Error('Missing required fields.');
-        }
+        const normalizedFullName = requireString(fullName, 'Full name');
+        const normalizedEmail = normalizeEmail(email);
+        const normalizedPassword = requireString(password, 'Password');
+        const normalizedConfirmPassword = requireString(confirmPassword, 'Password confirmation');
 
         if (!agree) {
             throw new Error('You must accept the terms.');
         }
 
-        if (password !== confirmPassword) {
+        if (normalizedPassword !== normalizedConfirmPassword) {
             throw new Error('Password confirmation does not match.');
         }
-
-        const normalizedEmail = email.toLowerCase().trim();
         const existingUser = await UserRepository.findByEmail(normalizedEmail);
         if (existingUser) {
             throw new Error('Email already exists.');
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
         const avatarImage = userData?.avatar || userData?.image || null;
         const newUser = {
-            fullName,
+            fullName: normalizedFullName,
             email: normalizedEmail,
             password: hashedPassword,
             avatar: avatarImage,
@@ -44,11 +44,11 @@ class UserService {
     }
 
     async loginUser(email, password) {
-        if (!email || !password) {
+        const normalizedEmail = normalizeEmail(email);
+        const normalizedPassword = normalizeString(password);
+        if (!normalizedEmail || !normalizedPassword) {
             throw new Error('Missing email or password.');
         }
-
-        const normalizedEmail = email.toLowerCase().trim();
         const user = await UserRepository.findByEmail(normalizedEmail);
         const passwordHash = user?.password;
         const dummyHash =
@@ -72,7 +72,7 @@ class UserService {
      * Gửi mã xác nhận qua email. Không báo lộ email có tồn tại hay không.
      */
     async requestResetCode(email) {
-        const normalizedEmail = (email || '').toLowerCase().trim();
+        const normalizedEmail = normalizeEmail(email);
         if (!normalizedEmail) {
             throw new Error('Email is required.');
         }
@@ -96,14 +96,15 @@ class UserService {
      * Xác minh mã → tạo reset token dùng 1 lần, trả về link đặt lại mật khẩu.
      */
     async verifyCodeAndCreateResetToken(email, code) {
-        const normalizedEmail = (email || '').toLowerCase().trim();
-        if (!normalizedEmail || !code) {
+        const normalizedEmail = normalizeEmail(email);
+        const normalizedCode = normalizeString(code);
+        if (!normalizedEmail || !normalizedCode) {
             throw new Error('Email and code are required.');
         }
 
         const user = await UserRepository.findUserByEmailAndValidResetCode(
             normalizedEmail,
-            String(code).trim()
+            normalizedCode
         );
         if (!user) {
             throw new Error('Invalid or expired code.');
@@ -144,7 +145,7 @@ class UserService {
             throw new Error('Invalid or expired reset link. Please request a new one.');
         }
 
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
         await UserRepository.clearResetPassword(user._id);
     }
@@ -154,29 +155,33 @@ class UserService {
      * Dùng cho link trong email: user mở link, nhập mã + mật khẩu mới 2 lần.
      */
     async resetPasswordWithCode(email, code, newPassword, confirmPassword) {
-        const normalizedEmail = (email || '').toLowerCase().trim();
-        if (!normalizedEmail || !code) {
+        const normalizedEmail = normalizeEmail(email);
+        const normalizedCode = normalizeString(code);
+        const normalizedPassword = normalizeString(newPassword);
+        const normalizedConfirmPassword = normalizeString(confirmPassword);
+
+        if (!normalizedEmail || !normalizedCode) {
             throw new Error('Email and code are required.');
         }
-        if (!newPassword || !confirmPassword) {
+        if (!normalizedPassword || !normalizedConfirmPassword) {
             throw new Error('New password and confirmation are required.');
         }
-        if (newPassword !== confirmPassword) {
+        if (normalizedPassword !== normalizedConfirmPassword) {
             throw new Error('Password confirmation does not match.');
         }
-        if (newPassword.length < 6) {
+        if (normalizedPassword.length < 6) {
             throw new Error('Password must be at least 6 characters.');
         }
 
         const user = await UserRepository.findUserByEmailAndValidResetCode(
             normalizedEmail,
-            String(code).trim()
+            normalizedCode
         );
         if (!user) {
             throw new Error('Invalid or expired code. Please request a new one.');
         }
 
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
         await UserRepository.clearResetPassword(user._id);
     }

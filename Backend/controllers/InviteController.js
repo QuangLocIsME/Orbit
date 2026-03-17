@@ -12,7 +12,10 @@ class InviteController {
     async createInvite(req, res) {
         try {
             const { projectId, email, role } = req.body || {};
-            if (!projectId || !email) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+            const normalizedRole = typeof role === 'string' ? role.trim() : '';
+            if (!normalizedProjectId || !normalizedEmail) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId or email',
@@ -21,12 +24,11 @@ class InviteController {
 
             const token = crypto.randomBytes(32).toString('hex');
             const tokenHash = hashToken(token);
-            const normalizedEmail = email.toLowerCase().trim();
 
             const invite = await ProjectInviteRepository.createInvite({
-                projectId,
+                projectId: normalizedProjectId,
                 email: normalizedEmail,
-                role: role || 'member',
+                role: normalizedRole || 'member',
                 tokenHash,
                 status: 'pending',
                 invitedBy: req.user?.id || 'system',
@@ -53,14 +55,15 @@ class InviteController {
     async acceptInvite(req, res) {
         try {
             const { token } = req.body || {};
-            if (!token) {
+            const normalizedToken = typeof token === 'string' ? token.trim() : '';
+            if (!normalizedToken) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing token',
                 });
             }
 
-            const tokenHash = hashToken(token);
+            const tokenHash = hashToken(normalizedToken);
             const invite = await ProjectInviteRepository.findByTokenHash(tokenHash);
 
             if (!invite || invite.status !== 'pending') {
@@ -119,14 +122,15 @@ class InviteController {
     async revokeInvite(req, res) {
         try {
             const { inviteId } = req.body || {};
-            if (!inviteId) {
+            const normalizedInviteId = typeof inviteId === 'string' ? inviteId.trim() : '';
+            if (!normalizedInviteId) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing inviteId',
                 });
             }
 
-            const invite = await ProjectInviteRepository.revokeInvite(inviteId);
+            const invite = await ProjectInviteRepository.revokeInvite(normalizedInviteId);
             if (!invite) {
                 return res.status(404).json({
                     success: false,
@@ -149,7 +153,8 @@ class InviteController {
     async listInvites(req, res) {
         try {
             const { projectId } = req.body || {};
-            if (!projectId) {
+            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            if (!normalizedProjectId) {
                 return res.status(400).json({
                     success: false,
                     message: 'Missing projectId',
@@ -164,7 +169,7 @@ class InviteController {
                 });
             }
 
-            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
                 return res.status(403).json({
                     success: false,
@@ -172,7 +177,7 @@ class InviteController {
                 });
             }
 
-            const invites = await ProjectInviteRepository.listByProject(projectId);
+            const invites = await ProjectInviteRepository.listByProject(normalizedProjectId);
 
             return res.status(200).json({
                 success: true,
