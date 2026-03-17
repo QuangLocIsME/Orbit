@@ -13,7 +13,7 @@ router.post('/delete', authenticate, (req, res) => ProjectController.deleteProje
 router.post('/members/update-role', authenticate, (req, res) => ProjectController.updateMemberRole(req, res));
 router.post('/members/remove', authenticate, (req, res) => ProjectController.removeMember(req, res));
 
-// Package (UC-PKG-001: Create New Package)
+// Package (UC-PKG-001 Create New Package)
 router.post('/packages/create', authenticate, (req, res) => PackageController.createPackage(req, res));
 router.post('/packages/list', authenticate, (req, res) => PackageController.getPackagesByProject(req, res));
 
