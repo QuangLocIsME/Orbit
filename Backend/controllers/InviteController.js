@@ -1,4 +1,4 @@
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const UserRepository = require('../repositories/UserRepository');
