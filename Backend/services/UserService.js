@@ -10,6 +10,8 @@ const {
 const { normalizeEmail, normalizeString, requireString } = require('../utils/sanitize');
 const bcrypt = require('bcrypt');
 
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('invalid_password', 10);
+
 class UserService {
     async createUser(userData) {
         const { fullName, email, password, confirmPassword, agree } = userData || {};
@@ -51,10 +53,7 @@ class UserService {
         }
         const user = await UserRepository.findByEmail(normalizedEmail);
         const passwordHash = user?.password;
-        const dummyHash =
-            '$2b$10$GvSi4ZC7JqjBHSK0yU3p8u9oGqZQb3Q5m0yQ8u1jL9n9eA3H6pCkK';
-
-        const isMatch = await bcrypt.compare(password, passwordHash || dummyHash);
+        const isMatch = await bcrypt.compare(normalizedPassword, passwordHash || DUMMY_PASSWORD_HASH);
         if (!user || !isMatch) {
             throw new Error('Email or password is incorrect.');
         }
