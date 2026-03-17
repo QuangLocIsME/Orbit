@@ -1,4 +1,4 @@
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 const RESET_CODE_LENGTH = 6;
 const RESET_CODE_EXPIRES_MS = 15 * 60 * 1000;      // 15 phút
