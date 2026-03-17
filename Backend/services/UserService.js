@@ -3,11 +3,12 @@ const emailService = require('./emailService');
 const {
     generateResetCode,
     generateResetToken,
-    hashResetToken,
     RESET_CODE_EXPIRES_MS,
     RESET_TOKEN_EXPIRES_MS,
 } = require('../utils/resetToken');
 const { normalizeEmail, normalizeString, requireString } = require('../utils/sanitize');
+const { validateEmail, validateResetCode } = require('../utils/validators');
+const { logSecurityEvent } = require('../utils/securityLog');
 const bcrypt = require('bcrypt');
 
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('invalid_password', 10);
@@ -46,20 +47,22 @@ class UserService {
     }
 
     async loginUser(email, password) {
-        const normalizedEmail = normalizeEmail(email);
+        const normalizedEmail = validateEmail(email);
         const normalizedPassword = normalizeString(password);
         if (!normalizedEmail || !normalizedPassword) {
-            throw new Error('Missing email or password.');
+            logSecurityEvent('auth.login.missing_credentials', { email: normalizedEmail || 'unknown' });
+            throw new Error('Email or password is incorrect.');
         }
         const user = await UserRepository.findByEmail(normalizedEmail);
         const passwordHash = user?.password;
         const isMatch = await bcrypt.compare(normalizedPassword, passwordHash || DUMMY_PASSWORD_HASH);
         if (!user || !isMatch) {
+            logSecurityEvent('auth.login.failed', { email: normalizedEmail });
             throw new Error('Email or password is incorrect.');
         }
 
         if (user.isBlocked) {
-            console.log('User account got banned');
+            logSecurityEvent('auth.login.blocked', { userId: user._id, email: user.email });
             throw new Error('User account is blocked.');
         }
 
@@ -71,9 +74,9 @@ class UserService {
      * Gửi mã xác nhận qua email. Không báo lộ email có tồn tại hay không.
      */
     async requestResetCode(email) {
-        const normalizedEmail = normalizeEmail(email);
+        const normalizedEmail = validateEmail(email);
         if (!normalizedEmail) {
-            throw new Error('Email is required.');
+            return; // Không lộ thông tin
         }
 
         const user = await UserRepository.findByEmail(normalizedEmail);
@@ -82,6 +85,7 @@ class UserService {
         }
 
         if (user.isBlocked) {
+            logSecurityEvent('auth.reset_code.blocked', { userId: user._id, email: user.email });
             throw new Error('Account is blocked.');
         }
 
@@ -95,10 +99,10 @@ class UserService {
      * Xác minh mã → tạo reset token dùng 1 lần, trả về link đặt lại mật khẩu.
      */
     async verifyCodeAndCreateResetToken(email, code) {
-        const normalizedEmail = normalizeEmail(email);
-        const normalizedCode = normalizeString(code);
+        const normalizedEmail = validateEmail(email);
+        const normalizedCode = validateResetCode(code);
         if (!normalizedEmail || !normalizedCode) {
-            throw new Error('Email and code are required.');
+            throw new Error('Invalid or expired code.');
         }
 
         const user = await UserRepository.findUserByEmailAndValidResetCode(
@@ -106,13 +110,13 @@ class UserService {
             normalizedCode
         );
         if (!user) {
+            logSecurityEvent('auth.reset_code.invalid', { email: normalizedEmail });
             throw new Error('Invalid or expired code.');
         }
 
         const rawToken = generateResetToken();
-        const hashedToken = hashResetToken(rawToken);
         const expiresAt = new Date(Date.now() + RESET_TOKEN_EXPIRES_MS);
-        await UserRepository.setResetPasswordToken(user._id, hashedToken, expiresAt);
+        await UserRepository.setResetPasswordToken(user._id, rawToken, expiresAt);
         await UserRepository.clearResetCode(user._id);
 
         const baseUrl = process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321';
@@ -138,15 +142,16 @@ class UserService {
             throw new Error('Password must be at least 6 characters.');
         }
 
-        const hashedToken = hashResetToken(token);
-        const user = await UserRepository.findUserByResetToken(hashedToken);
+        const user = await UserRepository.findUserByResetToken(token);
         if (!user) {
+            logSecurityEvent('auth.reset_token.invalid', { token: 'present' });
             throw new Error('Invalid or expired reset link. Please request a new one.');
         }
 
-        const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
         await UserRepository.clearResetPassword(user._id);
+        logSecurityEvent('auth.password.reset', { userId: user._id, email: user.email });
     }
 
     /**
@@ -154,13 +159,13 @@ class UserService {
      * Dùng cho link trong email: user mở link, nhập mã + mật khẩu mới 2 lần.
      */
     async resetPasswordWithCode(email, code, newPassword, confirmPassword) {
-        const normalizedEmail = normalizeEmail(email);
-        const normalizedCode = normalizeString(code);
+        const normalizedEmail = validateEmail(email);
+        const normalizedCode = validateResetCode(code);
         const normalizedPassword = normalizeString(newPassword);
         const normalizedConfirmPassword = normalizeString(confirmPassword);
 
         if (!normalizedEmail || !normalizedCode) {
-            throw new Error('Email and code are required.');
+            throw new Error('Invalid or expired code. Please request a new one.');
         }
         if (!normalizedPassword || !normalizedConfirmPassword) {
             throw new Error('New password and confirmation are required.');
@@ -177,12 +182,14 @@ class UserService {
             normalizedCode
         );
         if (!user) {
+            logSecurityEvent('auth.reset_code.invalid', { email: normalizedEmail });
             throw new Error('Invalid or expired code. Please request a new one.');
         }
 
         const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
         await UserRepository.clearResetPassword(user._id);
+        logSecurityEvent('auth.password.reset', { userId: user._id, email: user.email });
     }
 }
 

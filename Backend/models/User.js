@@ -19,11 +19,18 @@ const UserSchema = new mongoose.Schema({
         index: true,
         default: () => crypto.randomUUID(),
     },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    password: { type: String, required: false, default: null },
-    fullName: { type: String, required: true },
-    googleId: { type: String, sparse: true, unique: true },
-    avatar: { type: String, default: null },
+    email: {
+        type: String,
+        required: true,
+        unique: true,
+        lowercase: true,
+        trim: true,
+        match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email format'],
+    },
+    password: { type: String, required: false, default: null, minlength: 6 },
+    fullName: { type: String, required: true, trim: true, minlength: 2, maxlength: 200 },
+    googleId: { type: String, sparse: true, unique: true, match: [/^\d+$/, 'Invalid Google ID'] },
+    avatar: { type: String, default: null, trim: true },
     provider: { type: String, enum: ['local', 'google'], default: 'local' },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -33,12 +40,17 @@ const UserSchema = new mongoose.Schema({
     isActive: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
     refreshTokens: { type: [RefreshTokenSchema], default: [] },
-    // Forgot password: mã 6 số gửi qua email
+    // Forgot password: mã 6 số gửi qua email (lưu hash)
     resetCode: { type: String, default: null },
     resetCodeExpiresAt: { type: Date, default: null },
     // Link đặt lại mật khẩu dùng 1 lần (lưu hash token)
     resetPasswordToken: { type: String, default: null },
     resetPasswordTokenExpiresAt: { type: Date, default: null },
+});
+
+UserSchema.pre('save', function (next) {
+    this.updatedAt = new Date();
+    next();
 });
 
 const User = mongoose.model('User', UserSchema);

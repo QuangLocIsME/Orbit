@@ -1,8 +1,9 @@
 require('dotenv').config();
 
 if (process.env.NODE_ENV !== 'production') {
-    console.log('[Env] SMTP_HOST:', process.env.SMTP_HOST, '| SMTP_USER:', process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{3}).*(@.*)/, '$1***$2') : '(trống)');
-    console.log('[Env] Google OAuth:', process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'NOT configured (add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to .env)');
+    console.info('[Env] SMTP_HOST:', process.env.SMTP_HOST ? '[set]' : '[missing]');
+    console.info('[Env] SMTP_USER:', process.env.SMTP_USER ? '[set]' : '[missing]');
+    console.info('[Env] Google OAuth:', process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'NOT configured (add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to .env)');
 }
 
 const express = require('express');

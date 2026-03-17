@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const UserRepository = require('../repositories/UserRepository');
+const { errorResponse } = require('../utils/response');
 
 const INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -16,10 +17,7 @@ class InviteController {
             const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
             const normalizedRole = typeof role === 'string' ? role.trim() : '';
             if (!normalizedProjectId || !normalizedEmail) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId or email',
-                });
+                return errorResponse(res, 400, 'Missing projectId or email');
             }
 
             const token = crypto.randomBytes(32).toString('hex');
@@ -45,10 +43,7 @@ class InviteController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Create invite failed',
-            });
+            return errorResponse(res, 400, 'Create invite failed');
         }
     }
 
@@ -57,44 +52,29 @@ class InviteController {
             const { token } = req.body || {};
             const normalizedToken = typeof token === 'string' ? token.trim() : '';
             if (!normalizedToken) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing token',
-                });
+                return errorResponse(res, 400, 'Missing token');
             }
 
             const tokenHash = hashToken(normalizedToken);
             const invite = await ProjectInviteRepository.findByTokenHash(tokenHash);
 
             if (!invite || invite.status !== 'pending') {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Invite not found or invalid',
-                });
+                return errorResponse(res, 404, 'Invite not found or invalid');
             }
 
             if (invite.expiresAt <= new Date()) {
                 await ProjectInviteRepository.revokeInvite(invite._id);
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invite expired',
-                });
+                return errorResponse(res, 400, 'Invite expired');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const profile = await UserRepository.getProfileById(userId);
             if (!profile || profile.email !== invite.email) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Invite email mismatch',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             await ProjectMemberRepository.addMember({
@@ -112,10 +92,7 @@ class InviteController {
                 message: 'Invite accepted',
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Accept invite failed',
-            });
+            return errorResponse(res, 400, 'Accept invite failed');
         }
     }
 
@@ -124,18 +101,12 @@ class InviteController {
             const { inviteId } = req.body || {};
             const normalizedInviteId = typeof inviteId === 'string' ? inviteId.trim() : '';
             if (!normalizedInviteId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing inviteId',
-                });
+                return errorResponse(res, 400, 'Missing inviteId');
             }
 
             const invite = await ProjectInviteRepository.revokeInvite(normalizedInviteId);
             if (!invite) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Invite not found',
-                });
+                return errorResponse(res, 404, 'Invite not found');
             }
 
             return res.status(200).json({
@@ -143,10 +114,7 @@ class InviteController {
                 message: 'Invite revoked',
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Revoke invite failed',
-            });
+            return errorResponse(res, 400, 'Revoke invite failed');
         }
     }
 
@@ -155,26 +123,17 @@ class InviteController {
             const { projectId } = req.body || {};
             const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
             if (!normalizedProjectId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId',
-                });
+                return errorResponse(res, 400, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only project admins can view invites',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             const invites = await ProjectInviteRepository.listByProject(normalizedProjectId);
@@ -184,10 +143,7 @@ class InviteController {
                 data: invites,
             });
         } catch (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to load invites',
-            });
+            return errorResponse(res, 500, 'Failed to load invites');
         }
     }
 }

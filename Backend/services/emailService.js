@@ -72,8 +72,7 @@ async function sendEmail(to, subject, message) {
         return { success: true, messageId: info.messageId };
     } catch (err) {
         const errorMessage = err.message || String(err);
-        console.error('[Email] Lỗi gửi:', errorMessage);
-        if (err.response) console.error('[Email] Response:', err.response);
+        console.error('[Email] Lỗi gửi.');
         return { success: false, error: errorMessage };
     }
 }
@@ -107,8 +106,6 @@ async function sendResetCodeEmail(toEmail, code) {
 
     // Không có SMTP hoặc lỗi gửi: log và throw để API trả lỗi rõ ràng
     console.log('--- Email không gửi được ---');
-    console.log('To:', toEmail);
-    console.log('Mã xác nhận:', code);
     console.log('Lỗi:', result.error);
     console.log('--------------------------------');
     throw new Error(result.error || 'Không gửi được email. Kiểm tra SMTP trong .env (Gmail cần App Password).');

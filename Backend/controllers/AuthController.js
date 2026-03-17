@@ -1,6 +1,8 @@
 const UserService = require('../services/UserService');
 const UserRepository = require('../repositories/UserRepository');
 const emailService = require('../services/emailService');
+const { logSecurityEvent } = require('../utils/securityLog');
+const { errorResponse } = require('../utils/response');
 const {
     signAccessToken,
     signRefreshToken,
@@ -51,10 +53,7 @@ class AuthController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Register failed',
-            });
+            return errorResponse(res, 400, 'Register failed');
         }
     }
 
@@ -83,10 +82,7 @@ class AuthController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Login failed',
-            });
+            return errorResponse(res, 400, 'Login failed');
         }
     }
 
@@ -97,27 +93,24 @@ class AuthController {
             const refreshToken = tokenFromBody || tokenFromCookie;
 
             if (!refreshToken) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing refresh token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const payload = verifyToken(refreshToken);
+            if (!payload?.id) {
+                logSecurityEvent('auth.refresh.invalid_payload', { token: 'present' });
+                return errorResponse(res, 401, 'Unauthorized');
+            }
             const user = await UserRepository.findUserByRefreshToken(refreshToken);
             if (!user) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Refresh token not found',
-                });
+                logSecurityEvent('auth.refresh.invalid', { token: 'present' });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             if (user.isBlocked) {
                 await UserRepository.revokeAllRefreshTokens(user._id);
-                return res.status(403).json({
-                    success: false,
-                    message: 'User account is blocked',
-                });
+                logSecurityEvent('auth.refresh.blocked', { userId: user._id, email: user.email });
+                return errorResponse(res, 403, 'Unauthorized');
             }
 
             await UserRepository.removeExpiredRefreshTokens(user._id);
@@ -128,10 +121,8 @@ class AuthController {
             );
             if (!activeTokenUser) {
                 await UserRepository.revokeAllRefreshTokens(user._id);
-                return res.status(401).json({
-                    success: false,
-                    message: 'Refresh token revoked',
-                });
+                logSecurityEvent('auth.refresh.revoked', { userId: user._id, email: user.email });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const newAccessToken = signAccessToken({
@@ -158,10 +149,8 @@ class AuthController {
                 message: 'Refresh token success',
             });
         } catch (error) {
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid or expired refresh token',
-            });
+            logSecurityEvent('auth.refresh.failed', { reason: error?.message || 'unknown' });
+            return errorResponse(res, 401, 'Unauthorized');
         }
     }
 
@@ -175,6 +164,7 @@ class AuthController {
                 const user = await UserRepository.findUserByRefreshToken(refreshToken);
                 if (user) {
                     await UserRepository.revokeRefreshToken(user._id, refreshToken);
+                    logSecurityEvent('auth.logout', { userId: user._id, email: user.email });
                 }
             }
 
@@ -186,10 +176,7 @@ class AuthController {
                 message: 'Logout success',
             });
         } catch (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Logout failed',
-            });
+            return errorResponse(res, 500, 'Logout failed');
         }
     }
 
@@ -203,12 +190,9 @@ class AuthController {
             });
         } catch (error) {
             if (error.message === 'Account is blocked.') {
-                return res.status(403).json({ success: false, message: error.message });
+                return errorResponse(res, 403, 'Unauthorized');
             }
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Request failed',
-            });
+            return errorResponse(res, 400, 'Request failed');
         }
     }
 
@@ -225,10 +209,7 @@ class AuthController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Invalid or expired code',
-            });
+            return errorResponse(res, 400, 'Invalid or expired code');
         }
     }
 
@@ -241,10 +222,7 @@ class AuthController {
                 message: 'Password has been reset. You can log in with your new password.',
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Reset failed',
-            });
+            return errorResponse(res, 400, 'Reset failed');
         }
     }
 
@@ -261,10 +239,7 @@ class AuthController {
                 message: 'Password has been reset. You can log in with your new password.',
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Reset failed',
-            });
+            return errorResponse(res, 400, 'Reset failed');
         }
     }
 
@@ -275,11 +250,13 @@ class AuthController {
         const result = req.authResult;
         if (!result?.user) {
             const message = result?.error?.message || 'Google authentication failed';
+            logSecurityEvent('auth.google.failed', { reason: message });
             return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, message));
         }
 
         const { user, isNew } = result;
         if (user.isBlocked) {
+            logSecurityEvent('auth.google.blocked', { userId: user._id, email: user.email });
             return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, 'Account is blocked'));
         }
 
@@ -296,7 +273,7 @@ class AuthController {
 
         if (isNew) {
             emailService.sendWelcomeEmail(user.email, user.fullName).catch((err) =>
-                console.error('[Auth] Welcome email failed:', err.message)
+                console.error('[Auth] Welcome email failed')
             );
         }
 

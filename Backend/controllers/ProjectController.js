@@ -1,32 +1,42 @@
 const Project = require('../models/Project');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
+const { normalizeString } = require('../utils/sanitize');
+const { errorResponse } = require('../utils/response');
+
+const getNormalizedProjectId = (req) => normalizeString(req.body?.projectId);
+
+const requireUserId = (req, res) => {
+    const userId = req.user?.id;
+    if (!userId) {
+        errorResponse(res, 401, 'Unauthorized');
+        return null;
+    }
+    return userId;
+};
 
 class ProjectController {
     async createProject(req, res) {
         try {
             const { name, description, industry, coverImageUrl } = req.body || {};
-            if (!name) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Project name is required',
-                });
+            const normalizedName = normalizeString(name);
+            const normalizedDescription = normalizeString(description);
+            const normalizedIndustry = normalizeString(industry);
+            const normalizedCoverImageUrl = normalizeString(coverImageUrl);
+
+            if (!normalizedName) {
+                return errorResponse(res, 400, 'Project name is required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
-            }
+            const userId = requireUserId(req, res);
+            if (!userId) return;
 
             const project = await Project.create({
                 ownerId: userId,
-                name,
-                description: description || '',
-                industry: industry || '',
-                coverImageUrl: coverImageUrl || '',
+                name: normalizedName,
+                description: normalizedDescription,
+                industry: normalizedIndustry,
+                coverImageUrl: normalizedCoverImageUrl,
                 createdAt: new Date(),
                 updatedAt: new Date(),
             });
@@ -51,22 +61,14 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Create project failed',
-            });
+            return errorResponse(res, 400, 'Create project failed');
         }
     }
 
     async getMyProjects(req, res) {
         try {
-            const userId = req.user?.id;
-            if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
-            }
+            const userId = requireUserId(req, res);
+            if (!userId) return;
 
             const memberships = await ProjectMemberRepository.getProjectsByUser(userId);
             const projectIds = memberships.map((membership) => membership.projectId);
@@ -97,38 +99,25 @@ class ProjectController {
                 data,
             });
         } catch (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to load projects',
-            });
+            return errorResponse(res, 500, 'Failed to load projects');
         }
     }
 
     async getProjectMembers(req, res) {
         try {
-            const { projectId } = req.body || {};
-            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            const normalizedProjectId = getNormalizedProjectId(req);
             if (!normalizedProjectId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId',
-                });
+                return errorResponse(res, 400, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only project members can view member list',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
@@ -138,47 +127,35 @@ class ProjectController {
                 data: members,
             });
         } catch (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to load project members',
-            });
+            return errorResponse(res, 500, 'Failed to load project members');
         }
     }
 
     async updateProject(req, res) {
         try {
             const { projectId, name, description, industry, coverImageUrl } = req.body || {};
-            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            const normalizedProjectId = getNormalizedProjectId(req);
             if (!normalizedProjectId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId',
-                });
+                return errorResponse(res, 400, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only project admins can update project',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             const updateFields = {
                 updatedAt: new Date(),
             };
-            if (name !== undefined) updateFields.name = name;
-            if (description !== undefined) updateFields.description = description;
-            if (industry !== undefined) updateFields.industry = industry;
-            if (coverImageUrl !== undefined) updateFields.coverImageUrl = coverImageUrl;
+            if (name !== undefined) updateFields.name = normalizeString(name);
+            if (description !== undefined) updateFields.description = normalizeString(description);
+            if (industry !== undefined) updateFields.industry = normalizeString(industry);
+            if (coverImageUrl !== undefined) updateFields.coverImageUrl = normalizeString(coverImageUrl);
 
             const project = await Project.findOneAndUpdate(
                 { publicId: normalizedProjectId },
@@ -187,10 +164,7 @@ class ProjectController {
             );
 
             if (!project) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Project not found',
-                });
+                return errorResponse(res, 404, 'Project not found');
             }
 
             return res.status(200).json({
@@ -205,45 +179,29 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Update project failed',
-            });
+            return errorResponse(res, 400, 'Update project failed');
         }
     }
 
     async deleteProject(req, res) {
         try {
-            const { projectId } = req.body || {};
-            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            const normalizedProjectId = getNormalizedProjectId(req);
             if (!normalizedProjectId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId',
-                });
+                return errorResponse(res, 400, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const project = await Project.findOne({ publicId: normalizedProjectId });
             if (!project) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Project not found',
-                });
+                return errorResponse(res, 404, 'Project not found');
             }
 
             if (project.ownerId !== userId) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only project owner can delete project',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             await Project.deleteOne({ publicId: normalizedProjectId });
@@ -255,47 +213,32 @@ class ProjectController {
                 message: 'Project deleted',
             });
         } catch (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Delete project failed',
-            });
+            return errorResponse(res, 500, 'Delete project failed');
         }
     }
 
     async updateMemberRole(req, res) {
         try {
             const { projectId, targetUserId, role } = req.body || {};
-            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
-            const normalizedTargetUserId = typeof targetUserId === 'string' ? targetUserId.trim() : '';
-            const normalizedRole = typeof role === 'string' ? role.trim() : '';
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedTargetUserId = normalizeString(targetUserId);
+            const normalizedRole = normalizeString(role);
             if (!normalizedProjectId || !normalizedTargetUserId || !normalizedRole) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId, targetUserId or role',
-                });
+                return errorResponse(res, 400, 'Missing projectId, targetUserId or role');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only project admins can update roles',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             if (normalizedTargetUserId === userId) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Admins cannot change their own role',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             const targetMember = await ProjectMemberRepository.findMember(
@@ -303,19 +246,13 @@ class ProjectController {
                 normalizedTargetUserId
             );
             if (!targetMember) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Member not found',
-                });
+                return errorResponse(res, 404, 'Member not found');
             }
 
             if (targetMember.role === 'admin' && role !== 'admin') {
                 const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
-                    return res.status(403).json({
-                        success: false,
-                        message: 'Cannot downgrade the last admin',
-                    });
+                    return errorResponse(res, 403, 'Forbidden');
                 }
             }
 
@@ -335,46 +272,31 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return res.status(400).json({
-                success: false,
-                message: error.message || 'Update member role failed',
-            });
+            return errorResponse(res, 400, 'Update member role failed');
         }
     }
 
     async removeMember(req, res) {
         try {
             const { projectId, targetUserId } = req.body || {};
-            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
-            const normalizedTargetUserId = typeof targetUserId === 'string' ? targetUserId.trim() : '';
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedTargetUserId = normalizeString(targetUserId);
             if (!normalizedProjectId || !normalizedTargetUserId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Missing projectId or targetUserId',
-                });
+                return errorResponse(res, 400, 'Missing projectId or targetUserId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Missing access token',
-                });
+                return errorResponse(res, 401, 'Unauthorized');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Only project admins can remove members',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             if (normalizedTargetUserId === userId) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Admins cannot remove themselves',
-                });
+                return errorResponse(res, 403, 'Forbidden');
             }
 
             const targetMember = await ProjectMemberRepository.findMember(
@@ -382,19 +304,13 @@ class ProjectController {
                 normalizedTargetUserId
             );
             if (!targetMember) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Member not found',
-                });
+                return errorResponse(res, 404, 'Member not found');
             }
 
             if (targetMember.role === 'admin') {
                 const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
-                    return res.status(403).json({
-                        success: false,
-                        message: 'Cannot remove the last admin',
-                    });
+                    return errorResponse(res, 403, 'Forbidden');
                 }
             }
 
@@ -405,10 +321,7 @@ class ProjectController {
                 message: 'Member removed',
             });
         } catch (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Remove member failed',
-            });
+            return errorResponse(res, 500, 'Remove member failed');
         }
     }
 }

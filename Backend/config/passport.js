@@ -11,7 +11,7 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const BASE_URL = process.env.BACKEND_URL || process.env.BASE_URL || 'http://localhost:3000';
 
 if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-    console.warn('[Passport] GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET missing. Google login disabled.');
+    console.warn('[Passport] Google OAuth is not configured.');
 }
 
 passport.use(
