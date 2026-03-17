@@ -6,10 +6,16 @@ const { errorResponse } = require('../utils/response');
 
 const getNormalizedProjectId = (req) => normalizeString(req.body?.projectId);
 
+const badRequest = (res, message) => errorResponse(res, 400, message);
+const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
+const forbidden = (res) => errorResponse(res, 403, 'Forbidden');
+const notFound = (res, message) => errorResponse(res, 404, message);
+const serverError = (res, message) => errorResponse(res, 500, message);
+
 const requireUserId = (req, res) => {
     const userId = req.user?.id;
     if (!userId) {
-        errorResponse(res, 401, 'Unauthorized');
+        unauthorized(res);
         return null;
     }
     return userId;
@@ -25,7 +31,7 @@ class ProjectController {
             const normalizedCoverImageUrl = normalizeString(coverImageUrl);
 
             if (!normalizedName) {
-                return errorResponse(res, 400, 'Project name is required');
+                return badRequest(res, 'Project name is required');
             }
 
             const userId = requireUserId(req, res);
@@ -61,7 +67,7 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return errorResponse(res, 400, 'Create project failed');
+            return badRequest(res, 'Create project failed');
         }
     }
 
@@ -99,7 +105,7 @@ class ProjectController {
                 data,
             });
         } catch (error) {
-            return errorResponse(res, 500, 'Failed to load projects');
+            return serverError(res, 'Failed to load projects');
         }
     }
 
@@ -107,17 +113,17 @@ class ProjectController {
         try {
             const normalizedProjectId = getNormalizedProjectId(req);
             if (!normalizedProjectId) {
-                return errorResponse(res, 400, 'Missing projectId');
+                return badRequest(res, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return errorResponse(res, 401, 'Unauthorized');
+                return unauthorized(res);
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member) {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
@@ -127,7 +133,7 @@ class ProjectController {
                 data: members,
             });
         } catch (error) {
-            return errorResponse(res, 500, 'Failed to load project members');
+            return serverError(res, 'Failed to load project members');
         }
     }
 
@@ -136,17 +142,17 @@ class ProjectController {
             const { projectId, name, description, industry, coverImageUrl } = req.body || {};
             const normalizedProjectId = getNormalizedProjectId(req);
             if (!normalizedProjectId) {
-                return errorResponse(res, 400, 'Missing projectId');
+                return badRequest(res, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return errorResponse(res, 401, 'Unauthorized');
+                return unauthorized(res);
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             const updateFields = {
@@ -164,7 +170,7 @@ class ProjectController {
             );
 
             if (!project) {
-                return errorResponse(res, 404, 'Project not found');
+                return notFound(res, 'Project not found');
             }
 
             return res.status(200).json({
@@ -179,7 +185,7 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return errorResponse(res, 400, 'Update project failed');
+            return badRequest(res, 'Update project failed');
         }
     }
 
@@ -187,21 +193,21 @@ class ProjectController {
         try {
             const normalizedProjectId = getNormalizedProjectId(req);
             if (!normalizedProjectId) {
-                return errorResponse(res, 400, 'Missing projectId');
+                return badRequest(res, 'Missing projectId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return errorResponse(res, 401, 'Unauthorized');
+                return unauthorized(res);
             }
 
             const project = await Project.findOne({ publicId: normalizedProjectId });
             if (!project) {
-                return errorResponse(res, 404, 'Project not found');
+                return notFound(res, 'Project not found');
             }
 
             if (project.ownerId !== userId) {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             await Project.deleteOne({ publicId: normalizedProjectId });
@@ -213,7 +219,7 @@ class ProjectController {
                 message: 'Project deleted',
             });
         } catch (error) {
-            return errorResponse(res, 500, 'Delete project failed');
+            return serverError(res, 'Delete project failed');
         }
     }
 
@@ -224,21 +230,21 @@ class ProjectController {
             const normalizedTargetUserId = normalizeString(targetUserId);
             const normalizedRole = normalizeString(role);
             if (!normalizedProjectId || !normalizedTargetUserId || !normalizedRole) {
-                return errorResponse(res, 400, 'Missing projectId, targetUserId or role');
+                return badRequest(res, 'Missing projectId, targetUserId or role');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return errorResponse(res, 401, 'Unauthorized');
+                return unauthorized(res);
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             if (normalizedTargetUserId === userId) {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             const targetMember = await ProjectMemberRepository.findMember(
@@ -246,13 +252,13 @@ class ProjectController {
                 normalizedTargetUserId
             );
             if (!targetMember) {
-                return errorResponse(res, 404, 'Member not found');
+                return notFound(res, 'Member not found');
             }
 
             if (targetMember.role === 'admin' && role !== 'admin') {
                 const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
-                    return errorResponse(res, 403, 'Forbidden');
+                    return forbidden(res);
                 }
             }
 
@@ -272,7 +278,7 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return errorResponse(res, 400, 'Update member role failed');
+            return badRequest(res, 'Update member role failed');
         }
     }
 
@@ -282,21 +288,21 @@ class ProjectController {
             const normalizedProjectId = normalizeString(projectId);
             const normalizedTargetUserId = normalizeString(targetUserId);
             if (!normalizedProjectId || !normalizedTargetUserId) {
-                return errorResponse(res, 400, 'Missing projectId or targetUserId');
+                return badRequest(res, 'Missing projectId or targetUserId');
             }
 
             const userId = req.user?.id;
             if (!userId) {
-                return errorResponse(res, 401, 'Unauthorized');
+                return unauthorized(res);
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             if (normalizedTargetUserId === userId) {
-                return errorResponse(res, 403, 'Forbidden');
+                return forbidden(res);
             }
 
             const targetMember = await ProjectMemberRepository.findMember(
@@ -304,7 +310,7 @@ class ProjectController {
                 normalizedTargetUserId
             );
             if (!targetMember) {
-                return errorResponse(res, 404, 'Member not found');
+                return notFound(res, 'Member not found');
             }
 
             if (targetMember.role === 'admin') {
@@ -321,7 +327,7 @@ class ProjectController {
                 message: 'Member removed',
             });
         } catch (error) {
-            return errorResponse(res, 500, 'Remove member failed');
+            return serverError(res, 'Remove member failed');
         }
     }
 }

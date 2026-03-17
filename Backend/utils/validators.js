@@ -17,7 +17,7 @@ const validateObjectId = (value) => {
 const validateGoogleId = (googleId) => {
     const normalized = normalizeString(googleId);
     if (!normalized) return '';
-    return /^[0-9]+$/.test(normalized) ? normalized : '';
+    return /^\d+$/.test(normalized) ? normalized : '';
 };
 
 const validateResetCode = (code) => {
