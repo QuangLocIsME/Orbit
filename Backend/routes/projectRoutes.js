@@ -1,5 +1,6 @@
 const express = require('express');
 const ProjectController = require('../controllers/ProjectController');
+const PackageController = require('../controllers/PackageController');
 const { authenticate } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
@@ -11,5 +12,9 @@ router.post('/update', authenticate, (req, res) => ProjectController.updateProje
 router.post('/delete', authenticate, (req, res) => ProjectController.deleteProject(req, res));
 router.post('/members/update-role', authenticate, (req, res) => ProjectController.updateMemberRole(req, res));
 router.post('/members/remove', authenticate, (req, res) => ProjectController.removeMember(req, res));
+
+// Package (UC-PKG-001: Create New Package)
+router.post('/packages/create', authenticate, (req, res) => PackageController.createPackage(req, res));
+router.post('/packages/list', authenticate, (req, res) => PackageController.getPackagesByProject(req, res));
 
 module.exports = router;
