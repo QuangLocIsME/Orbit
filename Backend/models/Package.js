@@ -22,6 +22,7 @@ const PackageSchema = new mongoose.Schema({
     teamMemberIds: [{ type: String }],
     documentIds: [{ type: String }],
     taskIds: [{ type: String }],
+    archivedAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });

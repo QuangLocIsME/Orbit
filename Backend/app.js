@@ -12,6 +12,7 @@ const emailRoutes = require('./routes/emailRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const projectRoutes = require('./routes/projectRoutes');
+const packageRoutes = require('./routes/packageRoutes');
 const connectDB = require('./config/database');
 
 const app = express();
@@ -53,6 +54,7 @@ app.use('/api', emailRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/projects/packages', packageRoutes);
 
 app.listen(3000, () => {
     console.log('Server is running on port 3000');
