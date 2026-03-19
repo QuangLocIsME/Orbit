@@ -25,7 +25,7 @@ const authenticate = async (req, res, next) => {
             });
         }
 
-        if (user.isBlocked || user.isActive === false) {
+        if (user.isBlocked) {
             return res.status(403).json({
                 success: false,
                 message: 'User account is blocked',

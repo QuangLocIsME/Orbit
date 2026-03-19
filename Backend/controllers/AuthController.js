@@ -168,8 +168,18 @@ class AuthController {
                 }
             }
 
-            res.clearCookie('accessToken');
-            res.clearCookie('refreshToken');
+            const isProduction = process.env.IS_PRODUCTION === 'true';
+
+            res.clearCookie('accessToken', {
+                httpOnly: true,
+                secure: isProduction,
+                sameSite: 'lax',
+            });
+            res.clearCookie('refreshToken', {
+                httpOnly: true,
+                secure: isProduction,
+                sameSite: 'lax',
+            });
 
             return res.status(200).json({
                 success: true,
