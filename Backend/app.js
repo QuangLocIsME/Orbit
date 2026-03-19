@@ -16,6 +16,7 @@ const emailRoutes = require('./routes/emailRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const projectRoutes = require('./routes/projectRoutes');
+const packageRoutes = require('./routes/packageRoutes');
 const connectDB = require('./config/database');
 
 const app = express();
@@ -48,6 +49,7 @@ app.use('/api/email', emailRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/projects/packages', packageRoutes);
 
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError) {
