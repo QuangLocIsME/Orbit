@@ -9,7 +9,8 @@ const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
 const forbidden = (res, message) => errorResponse(res, 403, message || 'Forbidden');
 const notFound = (res, message) => errorResponse(res, 404, message || 'Not found');
-const serverError = (res, message) => errorResponse(res, 500, message || 'Internal server error');
+const serverError = (res, message) =>
+    errorResponse(res, 500, message || 'Internal server error');
 
 function parseDueDate(dueDate) {
     if (dueDate === undefined || dueDate === null) return null;
@@ -17,6 +18,50 @@ function parseDueDate(dueDate) {
     const date = dueDate instanceof Date ? dueDate : new Date(dueDate);
     if (Number.isNaN(date.getTime())) return null;
     return date;
+}
+
+function getUserIdOr401(req, res) {
+    const userId = req.user?.id;
+    if (!userId) {
+        unauthorized(res);
+        return null;
+    }
+    return userId;
+}
+
+async function getAcceptedMemberOr403(projectId, userId, res, message) {
+    const member = await ProjectMemberRepository.findMember(projectId, userId);
+    if (!member || member.status !== 'accepted') {
+        forbidden(res, message);
+        return null;
+    }
+    return member;
+}
+
+function requireNotViewerOr403(member, res, message) {
+    if (member.role === 'viewer') {
+        forbidden(res, message);
+        return false;
+    }
+    return true;
+}
+
+async function getProjectOr404(projectId, res) {
+    const project = await ProjectRepository.findByPublicId(projectId);
+    if (!project) {
+        notFound(res, 'Project not found');
+        return null;
+    }
+    return project;
+}
+
+async function getPackageOr404(projectId, packageId, res) {
+    const pkg = await PackageRepository.findByPublicIdInProject(packageId, projectId);
+    if (!pkg) {
+        notFound(res, 'Package not found');
+        return null;
+    }
+    return pkg;
 }
 
 class PackageController {
@@ -41,22 +86,27 @@ class PackageController {
                 return badRequest(res, 'projectId and name are required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const project = await ProjectRepository.findByPublicId(normalizedProjectId);
-            if (!project) return notFound(res, 'Project not found');
+            const project = await getProjectOr404(normalizedProjectId, res);
+            if (!project) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can create packages'
             );
-            if (!member || member.status !== 'accepted') {
-                return forbidden(res, 'Only project members can create packages');
-            }
-            if (member.role === 'viewer') {
-                return forbidden(res, 'Viewers do not have package management permission');
-            }
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
 
             const existing = await PackageRepository.findByProjectIdAndName(
                 normalizedProjectId,
@@ -125,16 +175,16 @@ class PackageController {
             const normalizedProjectId = normalizeString(projectId);
             if (!normalizedProjectId) return badRequest(res, 'projectId is required');
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can view packages'
             );
-            if (!member || member.status !== 'accepted') {
-                return forbidden(res, 'Only project members can view packages');
-            }
+            if (!member) return;
 
             const scope =
                 listType === 'archived' ? 'archived' : listType === 'all' ? 'all' : 'active';
@@ -168,25 +218,27 @@ class PackageController {
                 return badRequest(res, 'projectId and packageId are required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can archive packages'
             );
-            if (!member || member.status !== 'accepted') {
-                return forbidden(res, 'Only project members can archive packages');
-            }
-            if (member.role === 'viewer') {
-                return forbidden(res, 'Viewers do not have package management permission');
-            }
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
 
-            const pkg = await PackageRepository.findByPublicIdInProject(
-                normalizedPackageId,
-                normalizedProjectId
-            );
-            if (!pkg) return notFound(res, 'Package not found');
+            const pkg = await getPackageOr404(normalizedProjectId, normalizedPackageId, res);
+            if (!pkg) return;
 
             if (pkg.status === 'Archived') {
                 return badRequest(res, 'Package is already archived');
@@ -229,25 +281,27 @@ class PackageController {
                 return badRequest(res, 'projectId and packageId are required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can delete packages'
             );
-            if (!member || member.status !== 'accepted') {
-                return forbidden(res, 'Only project members can delete packages');
-            }
-            if (member.role === 'viewer') {
-                return forbidden(res, 'Viewers do not have package management permission');
-            }
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
 
-            const pkg = await PackageRepository.findByPublicIdInProject(
-                normalizedPackageId,
-                normalizedProjectId
-            );
-            if (!pkg) return notFound(res, 'Package not found');
+            const pkg = await getPackageOr404(normalizedProjectId, normalizedPackageId, res);
+            if (!pkg) return;
 
             if (pkg.status !== 'Archived') {
                 return badRequest(
