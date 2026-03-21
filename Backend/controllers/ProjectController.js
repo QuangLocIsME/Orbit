@@ -11,6 +11,8 @@ const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
 const forbidden = (res) => errorResponse(res, 403, 'Forbidden');
 const notFound = (res, message) => errorResponse(res, 404, message);
 const serverError = (res, message) => errorResponse(res, 500, message);
+const handleBadRequest = (res, message) => badRequest(res, message);
+const handleServerError = (res, message) => serverError(res, message);
 
 const requireUserId = (req, res) => {
     const userId = req.user?.id;
@@ -67,7 +69,7 @@ class ProjectController {
                 },
             });
         } catch (error) {
-            return badRequest(res, 'Create project failed');
+            return handleBadRequest(res, 'Create project failed');
         }
     }
 
@@ -105,7 +107,7 @@ class ProjectController {
                 data,
             });
         } catch (error) {
-            return serverError(res, 'Failed to load projects');
+            return handleServerError(res, 'Failed to load projects');
         }
     }
 
@@ -133,7 +135,7 @@ class ProjectController {
                 data: members,
             });
         } catch (error) {
-            return serverError(res, 'Failed to load project members');
+            return handleServerError(res, 'Failed to load project members');
         }
     }
 
@@ -327,7 +329,7 @@ class ProjectController {
                 message: 'Member removed',
             });
         } catch (error) {
-            return serverError(res, 'Remove member failed');
+            return handleServerError(res, 'Remove member failed');
         }
     }
 }

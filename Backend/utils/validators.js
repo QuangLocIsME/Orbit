@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const validateEmail = (email) => {
     const normalized = normalizeEmail(email);
     if (!normalized) return '';
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
     return emailRegex.test(normalized) ? normalized : '';
 };
 

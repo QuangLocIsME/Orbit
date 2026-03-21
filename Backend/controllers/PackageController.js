@@ -107,6 +107,12 @@ class PackageController {
                 )
             )
                 return;
+            if (member?.status !== 'accepted') {
+                return forbidden(res, 'Only project members can create packages');
+            }
+            if (member?.role === 'viewer') {
+                return forbidden(res, 'Viewers do not have package management permission');
+            }
 
             const existing = await PackageRepository.findByProjectIdAndName(
                 normalizedProjectId,
@@ -122,8 +128,8 @@ class PackageController {
             const packageDoc = await PackageRepository.create({
                 projectId: normalizedProjectId,
                 name: normalizedName,
-                description: description != null ? normalizeString(description) : '',
-                packageType: type != null ? normalizeString(type) : '',
+                description: normalizeString(description ?? ''),
+                packageType: normalizeString(type ?? ''),
                 status: 'Draft',
                 dueDate: parseDueDate(dueDate),
                 creatorId: userId,
@@ -185,9 +191,15 @@ class PackageController {
                 'Only project members can view packages'
             );
             if (!member) return;
+            if (member?.status !== 'accepted') {
+                return forbidden(res, 'Only project members can view packages');
+            }
 
-            const scope =
-                listType === 'archived' ? 'archived' : listType === 'all' ? 'all' : 'active';
+            const scope = listType === 'archived'
+                ? 'archived'
+                : listType === 'all'
+                    ? 'all'
+                    : 'active';
 
             const packages = await PackageRepository.listByProjectIdSorted(
                 normalizedProjectId,
@@ -318,6 +330,11 @@ class PackageController {
                     return badRequest(res, 'teamMemberIds must be an array');
                 }
                 updateFields.teamMemberIds = teamMemberIds;
+            if (member?.status !== 'accepted') {
+                return forbidden(res, 'Only project members can archive packages');
+            }
+            if (member?.role === 'viewer') {
+                return forbidden(res, 'Viewers do not have package management permission');
             }
 
             const updated = await PackageRepository.updateByPublicIdInProject(
@@ -454,6 +471,12 @@ class PackageController {
                 )
             )
                 return;
+            if (member?.status !== 'accepted') {
+                return forbidden(res, 'Only project members can delete packages');
+            }
+            if (member?.role === 'viewer') {
+                return forbidden(res, 'Viewers do not have package management permission');
+            }
 
             const pkg = await getPackageOr404(normalizedProjectId, normalizedPackageId, res);
             if (!pkg) return;
