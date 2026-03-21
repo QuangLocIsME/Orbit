@@ -25,6 +25,23 @@ class PackageRepository {
         return await Package.deleteOne({ publicId: packagePublicId, projectId });
     }
 
+    async updateByPublicIdInProject(packagePublicId, projectId, updateFields) {
+        return await Package.findOneAndUpdate(
+            { publicId: packagePublicId, projectId },
+            { ...updateFields, updatedAt: new Date() },
+            { returnDocument: 'after' }
+        );
+    }
+
+    /** Trùng tên với package khác trong cùng project (dùng khi đổi tên) */
+    async findAnotherByProjectIdAndName(projectId, name, excludePublicId) {
+        return await Package.findOne({
+            projectId,
+            name,
+            publicId: { $ne: excludePublicId },
+        });
+    }
+
     /**
      * scope: 'active' | 'archived' | 'all'
      * - active: Draft + Active (exclude Archived)
