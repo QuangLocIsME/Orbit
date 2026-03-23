@@ -12,6 +12,10 @@ router.post('/list', authenticate, (req, res) =>
     PackageController.listPackages(req, res)
 );
 
+router.post('/update', authenticate, (req, res) =>
+    PackageController.updatePackage(req, res)
+);
+
 router.post('/archive', authenticate, (req, res) =>
     PackageController.archivePackage(req, res)
 );

@@ -9,7 +9,8 @@ const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
 const forbidden = (res, message) => errorResponse(res, 403, message || 'Forbidden');
 const notFound = (res, message) => errorResponse(res, 404, message || 'Not found');
-const serverError = (res, message) => errorResponse(res, 500, message || 'Internal server error');
+const serverError = (res, message) =>
+    errorResponse(res, 500, message || 'Internal server error');
 
 function parseDueDate(dueDate) {
     if (dueDate === undefined || dueDate === null) return null;
@@ -17,6 +18,50 @@ function parseDueDate(dueDate) {
     const date = dueDate instanceof Date ? dueDate : new Date(dueDate);
     if (Number.isNaN(date.getTime())) return null;
     return date;
+}
+
+function getUserIdOr401(req, res) {
+    const userId = req.user?.id;
+    if (!userId) {
+        unauthorized(res);
+        return null;
+    }
+    return userId;
+}
+
+async function getAcceptedMemberOr403(projectId, userId, res, message) {
+    const member = await ProjectMemberRepository.findMember(projectId, userId);
+    if (!member || member.status !== 'accepted') {
+        forbidden(res, message);
+        return null;
+    }
+    return member;
+}
+
+function requireNotViewerOr403(member, res, message) {
+    if (member.role === 'viewer') {
+        forbidden(res, message);
+        return false;
+    }
+    return true;
+}
+
+async function getProjectOr404(projectId, res) {
+    const project = await ProjectRepository.findByPublicId(projectId);
+    if (!project) {
+        notFound(res, 'Project not found');
+        return null;
+    }
+    return project;
+}
+
+async function getPackageOr404(projectId, packageId, res) {
+    const pkg = await PackageRepository.findByPublicIdInProject(packageId, projectId);
+    if (!pkg) {
+        notFound(res, 'Package not found');
+        return null;
+    }
+    return pkg;
 }
 
 class PackageController {
@@ -41,16 +86,27 @@ class PackageController {
                 return badRequest(res, 'projectId and name are required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const project = await ProjectRepository.findByPublicId(normalizedProjectId);
-            if (!project) return notFound(res, 'Project not found');
+            const project = await getProjectOr404(normalizedProjectId, res);
+            if (!project) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can create packages'
             );
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
             if (member?.status !== 'accepted') {
                 return forbidden(res, 'Only project members can create packages');
             }
@@ -125,13 +181,16 @@ class PackageController {
             const normalizedProjectId = normalizeString(projectId);
             if (!normalizedProjectId) return badRequest(res, 'projectId is required');
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can view packages'
             );
+            if (!member) return;
             if (member?.status !== 'accepted') {
                 return forbidden(res, 'Only project members can view packages');
             }
@@ -158,6 +217,166 @@ class PackageController {
     }
 
     /**
+     * Cập nhật thông tin package (Draft/Active). Package Archived không sửa được.
+     */
+    async updatePackage(req, res) {
+        try {
+            const {
+                projectId,
+                packageId,
+                name,
+                description,
+                type,
+                dueDate,
+                teamMemberIds,
+            } = req.body || {};
+
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedPackageId = normalizeString(packageId);
+
+            if (!normalizedProjectId || !normalizedPackageId) {
+                return badRequest(res, 'projectId and packageId are required');
+            }
+
+            const hasUpdate =
+                name !== undefined ||
+                description !== undefined ||
+                type !== undefined ||
+                dueDate !== undefined ||
+                teamMemberIds !== undefined;
+            if (!hasUpdate) {
+                return badRequest(
+                    res,
+                    'Provide at least one field to update: name, description, type, dueDate, teamMemberIds'
+                );
+            }
+
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
+
+            const member = await getAcceptedMemberOr403(
+                normalizedProjectId,
+                userId,
+                res,
+                'Only project members can update packages'
+            );
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
+
+            const pkg = await getPackageOr404(normalizedProjectId, normalizedPackageId, res);
+            if (!pkg) return;
+
+            if (pkg.status === 'Archived') {
+                return badRequest(
+                    res,
+                    'Archived packages cannot be updated. Reactivate or use a non-archived package.'
+                );
+            }
+
+            const updateFields = {};
+
+            if (name !== undefined) {
+                const nextName = normalizeString(name);
+                if (!nextName) {
+                    return badRequest(res, 'name cannot be empty');
+                }
+                if (nextName !== pkg.name) {
+                    const duplicate = await PackageRepository.findAnotherByProjectIdAndName(
+                        normalizedProjectId,
+                        nextName,
+                        normalizedPackageId
+                    );
+                    if (duplicate) {
+                        return badRequest(
+                            res,
+                            'A package with this name already exists in the project. Please use a unique name.'
+                        );
+                    }
+                }
+                updateFields.name = nextName;
+            }
+
+            if (description !== undefined) {
+                updateFields.description =
+                    description === null ? '' : normalizeString(description);
+            }
+
+            if (type !== undefined) {
+                updateFields.packageType =
+                    type === null ? '' : normalizeString(type);
+            }
+
+            if (dueDate !== undefined) {
+                if (dueDate === null || dueDate === '') {
+                    updateFields.dueDate = null;
+                } else {
+                    const d = parseDueDate(dueDate);
+                    if (!d) {
+                        return badRequest(res, 'dueDate is invalid');
+                    }
+                    updateFields.dueDate = d;
+                }
+            }
+
+            if (teamMemberIds !== undefined) {
+                if (!Array.isArray(teamMemberIds)) {
+                    return badRequest(res, 'teamMemberIds must be an array');
+                }
+                updateFields.teamMemberIds = teamMemberIds;
+            if (member?.status !== 'accepted') {
+                return forbidden(res, 'Only project members can archive packages');
+            }
+            if (member?.role === 'viewer') {
+                return forbidden(res, 'Viewers do not have package management permission');
+            }
+
+            const updated = await PackageRepository.updateByPublicIdInProject(
+                normalizedPackageId,
+                normalizedProjectId,
+                updateFields
+            );
+
+            if (!updated) {
+                return notFound(res, 'Package not found');
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: 'Package updated',
+                data: {
+                    publicId: updated.publicId,
+                    projectId: updated.projectId,
+                    name: updated.name,
+                    description: updated.description,
+                    packageType: updated.packageType,
+                    status: updated.status,
+                    dueDate: updated.dueDate,
+                    creatorId: updated.creatorId,
+                    teamMemberIds: updated.teamMemberIds,
+                    archivedAt: updated.archivedAt || null,
+                    createdAt: updated.createdAt,
+                    updatedAt: updated.updatedAt,
+                },
+            });
+        } catch (error) {
+            if (error && error.code === 11000) {
+                return badRequest(
+                    res,
+                    'A package with this name already exists in the project. Please use a unique name.'
+                );
+            }
+            return serverError(res, error.message || 'Update package failed');
+        }
+    }
+
+    /**
      * UC-PKG-002: Archive Package
      * Draft/Active -> Archived
      */
@@ -171,25 +390,27 @@ class PackageController {
                 return badRequest(res, 'projectId and packageId are required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can archive packages'
             );
-            if (member?.status !== 'accepted') {
-                return forbidden(res, 'Only project members can archive packages');
-            }
-            if (member?.role === 'viewer') {
-                return forbidden(res, 'Viewers do not have package management permission');
-            }
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
 
-            const pkg = await PackageRepository.findByPublicIdInProject(
-                normalizedPackageId,
-                normalizedProjectId
-            );
-            if (!pkg) return notFound(res, 'Package not found');
+            const pkg = await getPackageOr404(normalizedProjectId, normalizedPackageId, res);
+            if (!pkg) return;
 
             if (pkg.status === 'Archived') {
                 return badRequest(res, 'Package is already archived');
@@ -232,13 +453,24 @@ class PackageController {
                 return badRequest(res, 'projectId and packageId are required');
             }
 
-            const userId = req.user?.id;
-            if (!userId) return unauthorized(res);
+            const userId = getUserIdOr401(req, res);
+            if (!userId) return;
 
-            const member = await ProjectMemberRepository.findMember(
+            const member = await getAcceptedMemberOr403(
                 normalizedProjectId,
-                userId
+                userId,
+                res,
+                'Only project members can delete packages'
             );
+            if (!member) return;
+            if (
+                !requireNotViewerOr403(
+                    member,
+                    res,
+                    'Viewers do not have package management permission'
+                )
+            )
+                return;
             if (member?.status !== 'accepted') {
                 return forbidden(res, 'Only project members can delete packages');
             }
@@ -246,11 +478,8 @@ class PackageController {
                 return forbidden(res, 'Viewers do not have package management permission');
             }
 
-            const pkg = await PackageRepository.findByPublicIdInProject(
-                normalizedPackageId,
-                normalizedProjectId
-            );
-            if (!pkg) return notFound(res, 'Package not found');
+            const pkg = await getPackageOr404(normalizedProjectId, normalizedPackageId, res);
+            if (!pkg) return;
 
             if (pkg.status !== 'Archived') {
                 return badRequest(
