@@ -62,6 +62,11 @@ interface ProjectsManagerProps {
   initialProjects: Project[];
 }
 
+const PROJECTS_CACHE_KEY = 'orbit:projects:me';
+const FOLDERS_CACHE_KEY = 'orbit:folders:me';
+const PROJECTS_CACHE_TTL_MS = 30_000;
+const FOLDERS_CACHE_TTL_MS = 45_000;
+
 // Folder colors matching the design
 const FOLDER_COLORS = [
   { id: 'blue', bg: 'bg-blue-100', icon: 'text-blue-500', border: 'border-blue-200' },
@@ -592,6 +597,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
+  const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const sensors = useSensors(
@@ -655,8 +662,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         throw new Error(payload?.message || 'Create folder failed');
       }
 
-      const updatedProjects = await loadProjects();
-      await loadFolders(updatedProjects);
+      const updatedProjects = await loadProjects(false, { force: true });
+      await loadFolders(updatedProjects, { force: true });
       return folderData;
     })();
 
@@ -679,11 +686,38 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
   const handleProjectCreated = async (project: CreatedProjectPayload) => {
     upsertProject(mapCreatedProjectToUiProject(project));
-    const updatedProjects = await loadProjects();
-    await loadFolders(updatedProjects);
+    const updatedProjects = await loadProjects(false, { force: true });
+    await loadFolders(updatedProjects, { force: true });
   };
 
-  const loadProjects = useCallback(async (showLoading = false): Promise<Project[]> => {
+  const loadProjects = useCallback(async (
+    showLoading = false,
+    options?: { force?: boolean }
+  ): Promise<Project[]> => {
+    const shouldForce = options?.force === true;
+
+    if (!shouldForce && projectsCacheRef.current && projectsCacheRef.current.expiresAt > Date.now()) {
+      const cached = projectsCacheRef.current.data;
+      setProjects(cached);
+      return cached;
+    }
+
+    if (!shouldForce && typeof window !== 'undefined') {
+      try {
+        const raw = sessionStorage.getItem(PROJECTS_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
+          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
+            projectsCacheRef.current = parsed;
+            setProjects(parsed.data);
+            return parsed.data;
+          }
+        }
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     if (showLoading) {
       setIsProjectsLoading(true);
     }
@@ -704,6 +738,16 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
       const payload = await response.json();
       const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
       const nextProjects = apiProjects.map(mapApiProjectToUiProject);
+      const cacheValue = {
+        data: nextProjects,
+        expiresAt: Date.now() + PROJECTS_CACHE_TTL_MS,
+      };
+
+      projectsCacheRef.current = cacheValue;
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheValue));
+      }
+
       setProjects(nextProjects);
       return nextProjects;
     } catch {
@@ -715,7 +759,33 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     }
   }, []);
 
-  const loadFolders = useCallback(async (projectsSource: Project[]) => {
+  const loadFolders = useCallback(async (
+    projectsSource: Project[],
+    options?: { force?: boolean }
+  ) => {
+    const shouldForce = options?.force === true;
+
+    if (!shouldForce && foldersCacheRef.current && foldersCacheRef.current.expiresAt > Date.now()) {
+      setFolders(foldersCacheRef.current.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+      return;
+    }
+
+    if (!shouldForce && typeof window !== 'undefined') {
+      try {
+        const raw = sessionStorage.getItem(FOLDERS_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { data: ApiFolder[]; expiresAt: number };
+          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
+            foldersCacheRef.current = parsed;
+            setFolders(parsed.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+            return;
+          }
+        }
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+
     try {
       const response = await fetch('/api/folders/me', {
         method: 'GET',
@@ -731,6 +801,16 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
       const payload = await response.json();
       const apiFolders: ApiFolder[] = Array.isArray(payload?.data) ? payload.data : [];
+      const cacheValue = {
+        data: apiFolders,
+        expiresAt: Date.now() + FOLDERS_CACHE_TTL_MS,
+      };
+
+      foldersCacheRef.current = cacheValue;
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(FOLDERS_CACHE_KEY, JSON.stringify(cacheValue));
+      }
+
       setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
     } catch {
       // keep fallback folders if API fails
@@ -756,8 +836,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         return;
       }
 
-      const updatedProjects = await loadProjects();
-      await loadFolders(updatedProjects);
+      const updatedProjects = await loadProjects(false, { force: true });
+      await loadFolders(updatedProjects, { force: true });
     } finally {
       setIsMovingProject(false);
     }

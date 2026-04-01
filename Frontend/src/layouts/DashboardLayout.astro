@@ -14,15 +14,21 @@ const { title, pageTitle = 'Home' } = Astro.props;
 ---
 
 <BaseLayout title={title}>
-  <div class="flex h-screen flex-col overflow-hidden">
+  <div class="flex h-screen flex-col overflow-hidden" transition:animate="none">
     <!-- Top Navigation Bar -->
-    <TopBar client:load currentPage={pageTitle} currentPath={Astro.url.pathname} />
-    
-    <div class="flex flex-1 overflow-hidden">
-      <Sidebar client:load currentPath={Astro.url.pathname} />
-      <div class="flex flex-1 flex-col overflow-hidden">
-        <Header pageTitle={pageTitle} />
-        <main class="flex-1 overflow-y-auto bg-background">
+    <div transition:persist transition:animate="none">
+      <TopBar client:load currentPage={pageTitle} currentPath={Astro.url.pathname} />
+    </div>
+
+    <div class="flex flex-1 overflow-hidden" transition:animate="none">
+      <aside transition:persist transition:animate="none">
+        <Sidebar client:only="react" currentPath={Astro.url.pathname} />
+      </aside>
+      <div class="flex flex-1 flex-col overflow-hidden" transition:animate="none">
+        <header transition:persist transition:animate="none">
+          <Header pageTitle={pageTitle} />
+        </header>
+        <main class="orbit-main-scroll flex-1 overflow-y-auto bg-background" transition:animate="none">
           <slot />
         </main>
       </div>
