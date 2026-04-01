@@ -6,6 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
     console.info('[Env] Google OAuth:', process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? 'configured' : 'NOT configured (add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET to .env)');
 }
 
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -17,9 +18,12 @@ const profileRoutes = require('./routes/profileRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const projectRoutes = require('./routes/projectRoutes');
 const packageRoutes = require('./routes/packageRoutes');
+const wsRoutes = require('./routes/wsRoutes');
 const connectDB = require('./config/database');
+const { attachSocket } = require('./services/socketService');
 
 const app = express();
+const httpServer = http.createServer(app);
 
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -43,6 +47,7 @@ app.use(cookieParser());
 app.use(limiter);
 
 connectDB();
+attachSocket(httpServer);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/email', emailRoutes);
@@ -50,6 +55,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects/packages', packageRoutes);
+app.use('/api/ws', wsRoutes);
 
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError) {
@@ -64,8 +70,9 @@ app.use((err, req, res, next) => {
     });
 });
 
-app.listen(3000, () => {
-    console.log('Server is running on port 3000');
+const PORT = process.env.PORT || 3000;
+httpServer.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
 
-module.exports = app;
+module.exports = { app, httpServer };

@@ -384,7 +384,14 @@ export default function AuthForm({ mode }: AuthFormProps) {
         data = await login(formData.email, formData.password);
       }
 
-      localStorage.setItem('orbit_user', JSON.stringify(data.data));
+      const rawUser = data?.data || {};
+      const safeUser = {
+        id: rawUser.id,
+        fullName: rawUser.fullName,
+        email: rawUser.email,
+        avatar: rawUser.avatar ?? null,
+      };
+      localStorage.setItem('orbit_user', JSON.stringify(safeUser));
       window.location.href = '/home';
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'An error occurred. Please try again.';

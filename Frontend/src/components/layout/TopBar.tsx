@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { NotificationBell } from '@/components/ui/NotificationBell';
 
 interface OpenProject {
   id: string;
@@ -61,7 +62,7 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
     
     // If closing current project, navigate to home
     if (projectId === currentProjectSlug) {
-      window.location.href = '/';
+      window.location.href = '/home';
     }
   };
 
@@ -74,7 +75,7 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
       {/* Left side - Logo and sidebar toggle */}
       <div className="flex items-center gap-2">
         {/* ORBIT Logo */}
-        <a href="/" className="flex items-center">
+        <a href="/home" className="flex items-center">
           <svg width="28" height="24" viewBox="0 0 29 25" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M15.0464 21.9802C20.5435 21.9802 24.9997 17.5239 24.9997 12.0269C24.9997 6.52984 20.5435 2.07361 15.0464 2.07361C9.54937 2.07361 5.09314 6.52984 5.09314 12.0269C5.09314 17.5239 9.54937 21.9802 15.0464 21.9802Z" stroke="#1F4CB1" strokeWidth="4.1472"/>
             <path d="M16.5772 16.0603C23.718 11.9375 28.4215 6.71548 27.0826 4.39653C25.7438 2.07758 18.8696 3.53988 11.7288 7.66266C4.58789 11.7854 -0.115579 17.0075 1.22327 19.3265C2.56211 21.6454 9.43628 20.1831 16.5772 16.0603Z" stroke="#C1C7CD" strokeWidth="1.99066" strokeLinecap="round"/>
@@ -148,15 +149,18 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
         <div className="flex-1" />
       )}
 
-      {/* Right side - X close icon */}
-      <button 
-        className="flex h-7 w-7 items-center justify-center rounded text-[#4A5565] transition-colors hover:bg-gray-100"
-        aria-label="Close"
-      >
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+      {/* Right side — notification bell + close */}
+      <div className="flex items-center gap-1">
+        <NotificationBell />
+        <button
+          className="flex h-7 w-7 items-center justify-center rounded text-[#4A5565] transition-colors hover:bg-gray-100"
+          aria-label="Close"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

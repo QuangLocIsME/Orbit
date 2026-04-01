@@ -4,9 +4,29 @@ export interface User {
   id: string;
   fullName: string;
   email: string;
-  role?: string;
   avatar?: string | null;
-  createdAt: string;
+}
+
+function sanitizeStoredUser(raw: unknown): User | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const candidate = raw as Record<string, unknown>;
+
+  if (
+    typeof candidate.id !== 'string' ||
+    typeof candidate.fullName !== 'string' ||
+    typeof candidate.email !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id,
+    fullName: candidate.fullName,
+    email: candidate.email,
+    avatar: typeof candidate.avatar === 'string' || candidate.avatar === null
+      ? (candidate.avatar as string | null)
+      : null,
+  };
 }
 
 // Check if user is authenticated (token lives in httpOnly cookie — check user data in localStorage)
@@ -21,7 +41,12 @@ export function getCurrentUser(): User | null {
   const userStr = localStorage.getItem('orbit_user');
   if (!userStr) return null;
   try {
-    return JSON.parse(userStr) as User;
+    const parsed = JSON.parse(userStr);
+    const sanitized = sanitizeStoredUser(parsed);
+    if (!sanitized) return null;
+    // self-heal older payloads that still contain extra fields
+    localStorage.setItem('orbit_user', JSON.stringify(sanitized));
+    return sanitized;
   } catch {
     return null;
   }
@@ -75,8 +100,10 @@ export async function syncCurrentUser(): Promise<User | null> {
     if (!res.ok) return null;
     const { data } = await res.json();
     if (data) {
-      localStorage.setItem('orbit_user', JSON.stringify(data));
-      return data as User;
+      const sanitized = sanitizeStoredUser(data);
+      if (!sanitized) return null;
+      localStorage.setItem('orbit_user', JSON.stringify(sanitized));
+      return sanitized;
     }
     return null;
   } catch {

@@ -22,7 +22,7 @@ export default defineConfig({
   vite: {
     plugins: [tailwindcss()],
     optimizeDeps: {
-      include: ['react', 'react-dom', 'react-dom/client'],
+      include: ['react', 'react-dom', 'react-dom/client', 'socket.io-client'],
     },
     server: {
       proxy: {

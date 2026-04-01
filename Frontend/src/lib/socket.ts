@@ -1,0 +1,144 @@
+/**
+ * ORBIT Socket.io client — singleton connection manager.
+ *
+ * Usage:
+ *   import { getSocket, disconnectSocket } from '@/lib/socket';
+ *   const socket = getSocket();               // connects (once) and returns socket
+ *   socket.on('notification:new', handler);
+ *   disconnectSocket();                       // call on logout
+ */
+
+import { io, type Socket } from 'socket.io-client';
+
+// Server-emitted events (typed for intellisense)
+export interface ServerToClientEvents {
+  'user:online': (data: { userId: string }) => void;
+  'user:offline': (data: { userId: string }) => void;
+  'notification:new': (data: Notification) => void;
+  'project:updated': (data: { projectId: string; changes: Record<string, unknown> }) => void;
+  'project:member:joined': (data: { projectId: string; userId: string; fullName: string }) => void;
+  'project:member:left': (data: { projectId: string; userId: string }) => void;
+  'package:updated': (data: { packageId: string; projectId: string; changes: Record<string, unknown> }) => void;
+  'task:assigned': (data: { taskId: string; projectId: string; assignedTo: string; title: string }) => void;
+  'task:completed': (data: { taskId: string; projectId: string; completedBy: string }) => void;
+}
+
+// Client-emitted events
+export interface ClientToServerEvents {
+  'project:join': (data: { projectId: string }) => void;
+  'project:leave': (data: { projectId: string }) => void;
+  'package:join': (data: { packageId: string }) => void;
+  'package:leave': (data: { packageId: string }) => void;
+  'ping': (cb: (data: { ts: number }) => void) => void;
+}
+
+export interface Notification {
+  id: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  message?: string;
+  link?: string;
+  createdAt: string;
+  read: boolean;
+}
+
+export type OrbitSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+
+// ── Singleton ─────────────────────────────────────────────────────────────────
+let socket: OrbitSocket | null = null;
+
+const BACKEND_WS_URL =
+  (typeof import.meta !== 'undefined' && (import.meta.env?.PUBLIC_BACKEND_WS_URL as string | undefined)) ||
+  'http://localhost:3000';
+
+/**
+ * Get (or lazily create) the singleton socket connection.
+ * Safe to call multiple times — returns the same socket.
+ */
+export function getSocket(): OrbitSocket {
+  if (socket && socket.connected) return socket;
+
+  if (socket) {
+    // Re-connect if it was previously disconnected
+    socket.connect();
+    return socket;
+  }
+
+  socket = io(BACKEND_WS_URL, {
+    // Cookies are sent automatically because of `withCredentials`
+    withCredentials: true,
+    transports: ['websocket', 'polling'],
+    // Don't auto-connect — we call connect() manually after we know user is authed
+    autoConnect: true,
+  }) as OrbitSocket;
+
+  socket.on('connect', () => {
+    console.debug('[WS] Connected', socket?.id);
+  });
+
+  socket.on('connect_error', (err) => {
+    // NO_TOKEN / INVALID_TOKEN → user is not logged in, silently ignore
+    if (err.message === 'NO_TOKEN' || err.message === 'INVALID_TOKEN') {
+      console.debug('[WS] Not authenticated — socket disabled');
+      socket?.disconnect();
+    } else {
+      console.warn('[WS] Connection error:', err.message);
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.debug('[WS] Disconnected:', reason);
+  });
+
+  return socket;
+}
+
+/**
+ * Disconnect and destroy the singleton (call on logout).
+ */
+export function disconnectSocket(): void {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+}
+
+/**
+ * Join a project room to receive project-scoped events.
+ */
+export function joinProject(projectId: string): void {
+  getSocket().emit('project:join', { projectId });
+}
+
+/**
+ * Leave a project room.
+ */
+export function leaveProject(projectId: string): void {
+  getSocket().emit('project:leave', { projectId });
+}
+
+/**
+ * Join a package room.
+ */
+export function joinPackage(packageId: string): void {
+  getSocket().emit('package:join', { packageId });
+}
+
+/**
+ * Leave a package room.
+ */
+export function leavePackage(packageId: string): void {
+  getSocket().emit('package:leave', { packageId });
+}
+
+/**
+ * Measure round-trip latency (ms).
+ */
+export function measureLatency(): Promise<number> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    getSocket().emit('ping', () => {
+      resolve(Date.now() - start);
+    });
+  });
+}

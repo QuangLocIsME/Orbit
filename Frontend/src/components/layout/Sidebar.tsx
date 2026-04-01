@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 
 let cachedAuthUser: User | null = null;
 import { cn } from '../../../lib/utils';
-import { syncCurrentUser, signOut, type User } from '../../lib/auth';
+import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
 import { Skeleton } from '../ui/skeleton';
 import type { Project } from '../../types';
 
