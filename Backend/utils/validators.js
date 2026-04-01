@@ -9,7 +9,14 @@ const validateEmail = (email) => {
 };
 
 const validateObjectId = (value) => {
-    const normalized = normalizeString(value);
+    const candidate =
+        typeof value === 'string'
+            ? value
+            : value && typeof value.toString === 'function'
+              ? value.toString()
+              : '';
+
+    const normalized = normalizeString(candidate);
     if (!normalized) return '';
     return mongoose.Types.ObjectId.isValid(normalized) ? normalized : '';
 };

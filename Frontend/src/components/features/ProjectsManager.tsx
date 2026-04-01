@@ -583,6 +583,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [isHydrated, setIsHydrated] = useState(false);
   const [folders, setFolders] = useState<Folder[]>(initialFolders);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
+  const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -655,8 +657,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         throw new Error(payload?.message || 'Create folder failed');
       }
 
-      const updatedProjects = await loadProjects();
-      await loadFolders(updatedProjects);
+      const updatedProjects = await loadProjects(false, { force: true });
+      await loadFolders(updatedProjects, { force: true });
       return folderData;
     })();
 
@@ -679,11 +681,22 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
   const handleProjectCreated = async (project: CreatedProjectPayload) => {
     upsertProject(mapCreatedProjectToUiProject(project));
-    const updatedProjects = await loadProjects();
-    await loadFolders(updatedProjects);
+    const updatedProjects = await loadProjects(false, { force: true });
+    await loadFolders(updatedProjects, { force: true });
   };
 
-  const loadProjects = useCallback(async (showLoading = false): Promise<Project[]> => {
+  const loadProjects = useCallback(async (
+    showLoading = false,
+    options?: { force?: boolean }
+  ): Promise<Project[]> => {
+    const shouldForce = options?.force === true;
+
+    if (!shouldForce && projectsCacheRef.current && projectsCacheRef.current.expiresAt > Date.now()) {
+      const cachedProjects = projectsCacheRef.current.data;
+      setProjects(cachedProjects);
+      return cachedProjects;
+    }
+
     if (showLoading) {
       setIsProjectsLoading(true);
     }
@@ -704,6 +717,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
       const payload = await response.json();
       const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
       const nextProjects = apiProjects.map(mapApiProjectToUiProject);
+      projectsCacheRef.current = {
+        data: nextProjects,
+        expiresAt: Date.now() + 30_000,
+      };
       setProjects(nextProjects);
       return nextProjects;
     } catch {
@@ -715,7 +732,18 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     }
   }, []);
 
-  const loadFolders = useCallback(async (projectsSource: Project[]) => {
+  const loadFolders = useCallback(async (
+    projectsSource: Project[],
+    options?: { force?: boolean }
+  ) => {
+    const shouldForce = options?.force === true;
+
+    if (!shouldForce && foldersCacheRef.current && foldersCacheRef.current.expiresAt > Date.now()) {
+      const cachedFolders = foldersCacheRef.current.data;
+      setFolders(cachedFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+      return;
+    }
+
     try {
       const response = await fetch('/api/folders/me', {
         method: 'GET',
@@ -731,6 +759,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
       const payload = await response.json();
       const apiFolders: ApiFolder[] = Array.isArray(payload?.data) ? payload.data : [];
+      foldersCacheRef.current = {
+        data: apiFolders,
+        expiresAt: Date.now() + 60_000,
+      };
       setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
     } catch {
       // keep fallback folders if API fails
@@ -756,8 +788,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         return;
       }
 
-      const updatedProjects = await loadProjects();
-      await loadFolders(updatedProjects);
+      const updatedProjects = await loadProjects(false, { force: true });
+      await loadFolders(updatedProjects, { force: true });
     } finally {
       setIsMovingProject(false);
     }
