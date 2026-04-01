@@ -62,6 +62,11 @@ interface ProjectsManagerProps {
   initialProjects: Project[];
 }
 
+const PROJECTS_CACHE_KEY = 'orbit:projects:me';
+const FOLDERS_CACHE_KEY = 'orbit:folders:me';
+const PROJECTS_CACHE_TTL_MS = 30_000;
+const FOLDERS_CACHE_TTL_MS = 45_000;
+
 // Folder colors matching the design
 const FOLDER_COLORS = [
   { id: 'blue', bg: 'bg-blue-100', icon: 'text-blue-500', border: 'border-blue-200' },
@@ -594,6 +599,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
+  const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const sensors = useSensors(

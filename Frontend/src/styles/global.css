@@ -174,3 +174,43 @@ input.error:focus, textarea.error:focus {
   border-color: oklch(0.577 0.245 27) !important;
   box-shadow: 0 0 0 2px oklch(0.577 0.245 27 / 0.15);
 }
+
+/* Native-like motion tuning */
+:root {
+  --orbit-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --orbit-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --orbit-fast: 180ms;
+  --orbit-medium: 260ms;
+}
+
+.orbit-main-scroll {
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+}
+
+.orbit-sidebar-shell {
+  transition: width var(--orbit-medium) var(--orbit-ease-out),
+              transform var(--orbit-medium) var(--orbit-ease-out),
+              opacity var(--orbit-fast) var(--orbit-ease-in-out);
+  will-change: width, transform;
+}
+
+.orbit-nav-item {
+  transition: background-color var(--orbit-fast) var(--orbit-ease-in-out),
+              color var(--orbit-fast) var(--orbit-ease-in-out),
+              box-shadow var(--orbit-fast) var(--orbit-ease-in-out),
+              transform var(--orbit-fast) var(--orbit-ease-out);
+}
+
+.orbit-nav-item:active {
+  transform: scale(0.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-main-scroll,
+  .orbit-sidebar-shell,
+  .orbit-nav-item {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

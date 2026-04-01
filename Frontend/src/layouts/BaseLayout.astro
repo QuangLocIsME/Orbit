@@ -1,4 +1,6 @@
 ---
+import { ClientRouter } from 'astro:transitions';
+
 interface Props {
   title?: string;
   description?: string;
@@ -21,6 +23,7 @@ const {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>{title}</title>
+    <ClientRouter />
     <!-- Dark mode: apply class before first paint to prevent flash -->
     <script is:inline>
       (function () {
@@ -40,7 +43,7 @@ const {
       })();
     </script>
   </head>
-  <body class="min-h-screen font-sans">
+  <body class="min-h-screen font-sans" transition:animate="none">
     <slot />
   </body>
 </html>

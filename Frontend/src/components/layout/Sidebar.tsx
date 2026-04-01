@@ -10,6 +10,9 @@ interface SidebarProps {
   currentPath: string;
 }
 
+let sidebarUserCache: User | null = null;
+let sidebarCollapsedCache = false;
+
 const projects = projectsData as Project[];
 
 const mainNavItems = [
@@ -53,8 +56,13 @@ const IconMap: Record<string, React.FC<{ className?: string }>> = {
 };
 
 export default function Sidebar({ currentPath }: SidebarProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(sidebarCollapsedCache);
+  const [activePath, setActivePath] = useState(() =>
+    typeof window === 'undefined' ? currentPath : window.location.pathname
+  );
+  const [authUser, setAuthUser] = useState<User | null>(() =>
+    typeof window === 'undefined' ? null : getCurrentUser()
+  );
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
@@ -65,15 +73,21 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Show cached/sanitized localStorage user immediately, then refresh from backend
+  // Show cached user immediately (module + localStorage), then refresh from backend
   useEffect(() => {
-    const cached = getCurrentUser();
-    if (cached) {
-      setAuthUser(cached);
+    if (sidebarUserCache) {
+      setAuthUser(sidebarUserCache);
+    } else {
+      const cached = getCurrentUser();
+      if (cached) {
+        sidebarUserCache = cached;
+        setAuthUser(cached);
+      }
     }
 
     syncCurrentUser().then((user) => {
       if (user) {
+        sidebarUserCache = user;
         setAuthUser(user);
       }
     });
@@ -109,16 +123,34 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   // Listen for sidebar toggle from TopBar
   useEffect(() => {
     const handleToggle = () => {
-      setIsCollapsed(prev => !prev);
+      setIsCollapsed(prev => {
+        const next = !prev;
+        sidebarCollapsedCache = next;
+        return next;
+      });
     };
     window.addEventListener('toggle-sidebar', handleToggle);
     return () => window.removeEventListener('toggle-sidebar', handleToggle);
   }, []);
 
-  const displayName = authUser?.fullName || '';
+  // Keep active path in sync when using client router transitions
+  useEffect(() => {
+    const syncPath = () => setActivePath(window.location.pathname);
+
+    syncPath();
+    window.addEventListener('popstate', syncPath);
+    document.addEventListener('astro:page-load', syncPath as EventListener);
+
+    return () => {
+      window.removeEventListener('popstate', syncPath);
+      document.removeEventListener('astro:page-load', syncPath as EventListener);
+    };
+  }, []);
+
+  const displayName = authUser?.fullName || 'Workspace';
   const displayInitials = displayName
     ? displayName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
-    : '?';
+    : 'W';
 
   // FAVORITES shows only projects with isFavorite: true
   const favorites = projects.filter(p => p.isFavorite === true);
@@ -128,7 +160,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'flex h-full flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-300',
+        'orbit-sidebar-shell flex h-full flex-col border-r border-sidebar-border bg-sidebar',
         isCollapsed ? 'w-16' : 'w-64'
       )}
     >
@@ -146,7 +178,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
               {displayInitials}
             </div>
-            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName || 'Workspace'}</span>
+            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
           </div>
           {!isCollapsed && (
             <svg
@@ -310,16 +342,16 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         <ul className="space-y-1">
           {mainNavItems.map((item) => {
             const Icon = IconMap[item.icon];
-            const isActive = currentPath === item.href || (item.href !== '/home' && currentPath.startsWith(item.href));
+            const isActive = activePath === item.href || (item.href !== '/home' && activePath.startsWith(item.href));
 
             return (
               <li key={item.href}>
                 <a
                   href={item.href}
                   className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150',
+                    'orbit-nav-item relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
                     isActive
-                      ? 'bg-white dark:bg-zinc-700 text-foreground shadow-sm'
+                      ? 'bg-white dark:bg-zinc-700 text-foreground shadow-sm ring-1 ring-indigo-100 dark:ring-indigo-500/20'
                       : 'text-muted-foreground hover:bg-white/60 dark:hover:bg-zinc-700/60 hover:text-foreground active:bg-white dark:active:bg-zinc-700 active:shadow-sm'
                   )}
                 >
