@@ -2,25 +2,26 @@ import { Skeleton } from '../skeleton';
 
 export function DashboardSkeleton() {
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-8">
-      {/* Greeting */}
-      <div className="space-y-2">
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-4 w-40" />
+    // Matches HomeDashboard's outer wrapper: space-y-8 py-6 px-6 lg:px-[80px] xl:px-[160px]
+    <div className="space-y-8 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+      {/* Welcome row — flex row with greeting on left, New Project button on right */}
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-7 w-56" />
+        <Skeleton className="h-9 w-32 rounded-lg" />
       </div>
 
-      {/* Search bar */}
-      <Skeleton className="h-10 w-full max-w-md rounded-xl" />
+      {/* Search bar — matches max-w-2xl container */}
+      <Skeleton className="h-12 w-full max-w-2xl rounded-xl" />
 
       {/* Recent Projects */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-5 w-36" />
           <Skeleton className="h-4 w-16" />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-xl border bg-card p-0 overflow-hidden space-y-0">
+            <div key={i} className="rounded-xl border bg-card overflow-hidden">
               <Skeleton className="h-36 w-full rounded-none" />
               <div className="p-4 space-y-2">
                 <Skeleton className="h-4 w-3/4" />
