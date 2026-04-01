@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { io, type Socket } from 'socket.io-client';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
+import type { CreatedProjectPayload } from './CreateProjectModal';
 import { ProjectsSkeleton } from '@/components/ui/skeletons';
 
 // Types
@@ -11,6 +13,13 @@ interface Folder {
   name: string;
   color: string;
   projectCount: number;
+  description?: string;
+}
+
+interface ApiFolder {
+  publicId: string;
+  name: string;
+  color?: string;
   description?: string;
 }
 
@@ -28,7 +37,7 @@ interface Project {
   status?: string;
   projectType?: string;
   isFavorite?: boolean;
-  folderId?: string;
+  folderId?: string | null;
 }
 
 interface ApiProject {
@@ -37,6 +46,7 @@ interface ApiProject {
   description?: string;
   industry?: string;
   coverImageUrl?: string;
+  folderId?: string | null;
   role?: string;
   status?: string;
 }
@@ -136,7 +146,30 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     status: project.status === 'accepted' ? 'active' : 'planning',
     projectType: (project.industry || 'software').toLowerCase(),
     isFavorite: false,
+    folderId: project.folderId ?? null,
   };
+}
+
+function mapApiFolderToUiFolder(folder: ApiFolder, projects: Project[]): Folder {
+  return {
+    id: folder.publicId,
+    name: folder.name,
+    color: folder.color || 'blue',
+    description: folder.description || '',
+    projectCount: projects.filter((project) => project.folderId === folder.publicId).length,
+  };
+}
+
+function mapCreatedProjectToUiProject(project: CreatedProjectPayload): Project {
+  return mapApiProjectToUiProject({
+    publicId: project.publicId,
+    name: project.name,
+    description: project.description,
+    industry: project.industry,
+    coverImageUrl: project.coverImageUrl,
+    role: project.role,
+    status: project.status,
+  });
 }
 
 // Folder Icon Component
@@ -285,13 +318,37 @@ function CreateFolderModal({
 }
 
 // Folder Card Component
-function FolderCard({ folder, onClick }: { folder: Folder; onClick: () => void }) {
+function FolderCard({
+  folder,
+  onClick,
+  onDropProject,
+}: {
+  folder: Folder;
+  onClick: () => void;
+  onDropProject: (projectId: string, folderId: string) => void;
+}) {
   const colorConfig = FOLDER_COLORS.find(c => c.id === folder.color) || FOLDER_COLORS[0];
+  const [isDragOver, setIsDragOver] = useState(false);
 
   return (
     <button
       onClick={onClick}
-      className="group flex w-full items-center gap-3 rounded-xl border border-gray-100 bg-white p-4 text-left transition-all hover:border-gray-200 hover:shadow-sm"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        const projectId = e.dataTransfer.getData('application/x-orbit-project-id');
+        if (!projectId) return;
+        onDropProject(projectId, folder.id);
+      }}
+      className={cn(
+        'group flex w-full items-center gap-3 rounded-xl border bg-white p-4 text-left transition-all hover:border-gray-200 hover:shadow-sm',
+        isDragOver ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'
+      )}
     >
       <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', colorConfig.bg)}>
         <FolderIcon className={cn('h-5 w-5', colorConfig.icon)} />
@@ -313,6 +370,11 @@ function ProjectListItem({ project }: { project: Project }) {
   return (
     <a
       href={`/projects/${project.slug}`}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('application/x-orbit-project-id', project.id);
+      }}
       className="group flex items-center gap-4 rounded-xl border border-gray-100 bg-white p-4 transition-all hover:border-gray-200 hover:shadow-sm"
     >
       {/* Type Icon */}
@@ -383,6 +445,11 @@ function ProjectGridCard({ project }: { project: Project }) {
   return (
     <a
       href={`/projects/${project.slug}`}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('application/x-orbit-project-id', project.id);
+      }}
       className="group block overflow-hidden rounded-xl border border-gray-100 bg-white transition-all hover:shadow-lg"
     >
       {/* Image - show real image if available, fallback to gradient */}
@@ -505,7 +572,9 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [isMovingProject, setIsMovingProject] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   // Get projects for current folder using folderId from project data
   const getProjectsForFolder = (folderId: string) => {
@@ -543,16 +612,129 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     .slice(0, 4);
 
   // Handle create folder
-  const handleCreateFolder = (folderData: { name: string; description: string; color: string }) => {
-    const newFolder: Folder = {
-      id: `folder-${Date.now()}`,
-      name: folderData.name,
-      description: folderData.description,
-      color: folderData.color,
-      projectCount: 0,
-    };
-    setFolders([...folders, newFolder]);
+  const handleCreateFolder = async (folderData: { name: string; description: string; color: string }) => {
+    try {
+      const response = await fetch('/api/folders/create', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(folderData),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const updatedProjects = await loadProjects();
+      await loadFolders(updatedProjects);
+    } catch {
+      // ignore, keep optimistic ui untouched
+    }
   };
+
+  const upsertProject = useCallback((nextProject: Project) => {
+    setProjects((prev) => {
+      const exists = prev.some((item) => item.id === nextProject.id);
+      if (exists) {
+        return prev.map((item) => (item.id === nextProject.id ? { ...item, ...nextProject } : item));
+      }
+      return [nextProject, ...prev];
+    });
+  }, []);
+
+  const handleProjectCreated = async (project: CreatedProjectPayload) => {
+    upsertProject(mapCreatedProjectToUiProject(project));
+    const updatedProjects = await loadProjects();
+    await loadFolders(updatedProjects);
+  };
+
+  const loadProjects = useCallback(async (showLoading = false): Promise<Project[]> => {
+    if (showLoading) {
+      setIsProjectsLoading(true);
+    }
+
+    try {
+      const response = await fetch('/api/projects/me', {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const payload = await response.json();
+      const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
+      const nextProjects = apiProjects.map(mapApiProjectToUiProject);
+      setProjects(nextProjects);
+      return nextProjects;
+    } catch {
+      return [];
+    } finally {
+      if (showLoading) {
+        setIsProjectsLoading(false);
+      }
+    }
+  }, []);
+
+  const loadFolders = useCallback(async (projectsSource: Project[]) => {
+    try {
+      const response = await fetch('/api/folders/me', {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      const apiFolders: ApiFolder[] = Array.isArray(payload?.data) ? payload.data : [];
+      setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+    } catch {
+      // keep fallback folders if API fails
+    }
+  }, []);
+
+  const handleDropProjectToFolder = async (projectId: string, folderId: string) => {
+    if (isMovingProject) return;
+    setIsMovingProject(true);
+
+    try {
+      const response = await fetch('/api/projects/move-folder', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ projectId, folderId }),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const updatedProjects = await loadProjects();
+      await loadFolders(updatedProjects);
+    } finally {
+      setIsMovingProject(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!projects.length) return;
+    loadFolders(projects);
+  }, [loadFolders, projects]);
 
   // Close filter menu on outside click
   useEffect(() => {
@@ -568,41 +750,57 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   useEffect(() => {
     let mounted = true;
 
-    const loadProjects = async () => {
-      try {
-        const response = await fetch('/api/projects/me', {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            Accept: 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          return;
-        }
-
-        const payload = await response.json();
-        const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
-        if (mounted) {
-          setProjects(apiProjects.map(mapApiProjectToUiProject));
-        }
-      } catch {
-        // keep initial fallback data if API call fails
-      } finally {
-        if (mounted) {
-          setIsProjectsLoading(false);
-        }
-      }
+    const run = async () => {
+      if (!mounted) return;
+      const loadedProjects = await loadProjects(true);
+      if (!mounted) return;
+      await loadFolders(loadedProjects);
     };
 
-    loadProjects();
+    run();
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [loadFolders, loadProjects]);
 
   useEffect(() => { setIsHydrated(true); }, []);
+
+  useEffect(() => {
+    const socket = io('http://localhost:3000', {
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+    });
+
+    socketRef.current = socket;
+
+    const handleCreated = (payload: { project?: CreatedProjectPayload; data?: CreatedProjectPayload } | CreatedProjectPayload) => {
+      const incoming = 'publicId' in payload
+        ? payload
+        : payload.project || payload.data;
+
+      if (!incoming?.publicId) return;
+      upsertProject(mapCreatedProjectToUiProject(incoming));
+    };
+
+    const handleUpdated = (payload: { project?: CreatedProjectPayload; data?: CreatedProjectPayload } | CreatedProjectPayload) => {
+      const incoming = 'publicId' in payload
+        ? payload
+        : payload.project || payload.data;
+
+      if (!incoming?.publicId) return;
+      upsertProject(mapCreatedProjectToUiProject(incoming));
+    };
+
+    socket.on('project:created', handleCreated);
+    socket.on('project:updated', handleUpdated);
+
+    return () => {
+      socket.off('project:created', handleCreated);
+      socket.off('project:updated', handleUpdated);
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [upsertProject]);
 
   if (!isHydrated || isProjectsLoading) return <ProjectsSkeleton />;
 
@@ -610,7 +808,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
-        <NewProjectButton />
+        <NewProjectButton onProjectCreated={handleProjectCreated} />
 
         <button
           onClick={() => setShowFolderModal(true)}
@@ -731,6 +929,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
                     key={folder.id}
                     folder={folder}
                     onClick={() => setCurrentFolder(folder)}
+                    onDropProject={handleDropProjectToFolder}
                   />
                 ))}
               </div>

@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
+import { toast } from 'sonner';
+import { fetchWithAuth } from '../../lib/auth';
 
 interface IndustryOption {
   id: string;
@@ -253,15 +255,27 @@ const colorOptions = [
 interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onProjectCreated?: (project: CreatedProjectPayload) => void;
 }
 
-export default function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps) {
+export interface CreatedProjectPayload {
+  publicId: string;
+  name: string;
+  description?: string;
+  industry?: string;
+  coverImageUrl?: string;
+  role?: string;
+  status?: string;
+}
+
+export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }: CreateProjectModalProps) {
   const [projectName, setProjectName] = useState('');
   const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null);
   const [coverImageUrl, setCoverImageUrl] = useState('');
   const [showMoreIndustries, setShowMoreIndustries] = useState(false);
   const [showCustomIndustry, setShowCustomIndustry] = useState(false);
   const [customIndustries, setCustomIndustries] = useState<IndustryOption[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Custom industry form state
   const [customName, setCustomName] = useState('');
@@ -270,10 +284,57 @@ export default function CreateProjectModal({ isOpen, onClose }: CreateProjectMod
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log({ projectName, selectedIndustry, coverImageUrl });
-    onClose();
+    if (isSubmitting) return;
+
+    const trimmedName = projectName.trim();
+    if (!trimmedName) return;
+
+    const selectedIndustryName = allIndustries.find((industry) => industry.id === selectedIndustry)?.name;
+
+    const requestPromise = (async () => {
+      setIsSubmitting(true);
+      try {
+        const response = await fetchWithAuth('/api/projects/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            name: trimmedName,
+            description: '',
+            industry: selectedIndustryName || null,
+            coverImageUrl: coverImageUrl.trim() || null,
+          }),
+        });
+
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok || !payload?.success || !payload?.data) {
+          throw new Error(payload?.message || 'Create project failed');
+        }
+
+        const createdProject = payload.data as CreatedProjectPayload;
+        onProjectCreated?.(createdProject);
+
+        onClose();
+        setProjectName('');
+        setSelectedIndustry(null);
+        setCoverImageUrl('');
+
+        return createdProject;
+      } finally {
+        setIsSubmitting(false);
+      }
+    })();
+
+    await toast.promise(requestPromise, {
+      loading: 'Creating project...',
+      success: (data) => `${data.name} đã được tạo thành công`,
+      error: (error) => error?.message || 'Không thể tạo project',
+    });
   };
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -331,7 +392,7 @@ export default function CreateProjectModal({ isOpen, onClose }: CreateProjectMod
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+        <form id="create-project-form" onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
           {/* Project Name */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
@@ -513,8 +574,9 @@ export default function CreateProjectModal({ isOpen, onClose }: CreateProjectMod
           </button>
           <button
             type="submit"
-            onClick={handleSubmit}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
+            form="create-project-form"
+            disabled={isSubmitting || !projectName.trim()}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -528,7 +590,11 @@ export default function CreateProjectModal({ isOpen, onClose }: CreateProjectMod
 }
 
 // Wrapper component for Astro pages
-export function NewProjectButton() {
+interface NewProjectButtonProps {
+  onProjectCreated?: (project: CreatedProjectPayload) => void;
+}
+
+export function NewProjectButton({ onProjectCreated }: NewProjectButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -542,7 +608,11 @@ export function NewProjectButton() {
         </svg>
         New Project
       </button>
-      <CreateProjectModal isOpen={isOpen} onClose={() => setIsOpen(false)} />
+      <CreateProjectModal
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        onProjectCreated={onProjectCreated}
+      />
     </>
   );
 }

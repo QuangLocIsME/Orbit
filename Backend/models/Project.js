@@ -13,6 +13,7 @@ const ProjectSchema = new mongoose.Schema({
     description: { type: String, default: '', trim: true },
     industry: { type: String, default: '', trim: true },
     coverImageUrl: { type: String, default: '', trim: true },
+    folderId: { type: String, default: null, index: true },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });

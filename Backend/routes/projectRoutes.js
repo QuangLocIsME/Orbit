@@ -8,6 +8,7 @@ router.get('/me', authenticate, (req, res) => ProjectController.getMyProjects(re
 router.post('/create', authenticate, (req, res) => ProjectController.createProject(req, res));
 router.post('/member-list', authenticate, (req, res) => ProjectController.getProjectMembers(req, res));
 router.post('/update', authenticate, (req, res) => ProjectController.updateProject(req, res));
+router.post('/move-folder', authenticate, (req, res) => ProjectController.moveProjectToFolder(req, res));
 router.post('/delete', authenticate, (req, res) => ProjectController.deleteProject(req, res));
 router.post('/members/update-role', authenticate, (req, res) => ProjectController.updateMemberRole(req, res));
 router.post('/members/remove', authenticate, (req, res) => ProjectController.removeMember(req, res));

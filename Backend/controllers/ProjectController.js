@@ -1,4 +1,5 @@
 const Project = require('../models/Project');
+const Folder = require('../models/Folder');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const { normalizeString } = require('../utils/sanitize');
@@ -66,6 +67,7 @@ class ProjectController {
                     description: project.description,
                     industry: project.industry,
                     coverImageUrl: project.coverImageUrl,
+                    folderId: project.folderId,
                 },
             });
         } catch (error) {
@@ -97,6 +99,7 @@ class ProjectController {
                     description: project.description,
                     industry: project.industry,
                     coverImageUrl: project.coverImageUrl,
+                    folderId: project.folderId,
                     role: membership?.role || 'member',
                     status: membership?.status || 'accepted',
                 };
@@ -222,6 +225,61 @@ class ProjectController {
             });
         } catch (error) {
             return serverError(res, 'Delete project failed');
+        }
+    }
+
+    async moveProjectToFolder(req, res) {
+        try {
+            const { projectId, folderId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFolderId = folderId === null ? null : normalizeString(folderId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member) {
+                return forbidden(res);
+            }
+
+            if (normalizedFolderId) {
+                const folder = await Folder.findOne({
+                    publicId: normalizedFolderId,
+                    ownerId: userId,
+                });
+
+                if (!folder) {
+                    return notFound(res, 'Folder not found');
+                }
+            }
+
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                {
+                    folderId: normalizedFolderId,
+                    updatedAt: new Date(),
+                },
+                { returnDocument: 'after' }
+            );
+
+            if (!project) {
+                return notFound(res, 'Project not found');
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: 'Project moved',
+                data: {
+                    publicId: project.publicId,
+                    folderId: project.folderId,
+                },
+            });
+        } catch (error) {
+            return badRequest(res, 'Move project failed');
         }
     }
 

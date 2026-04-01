@@ -3,6 +3,7 @@ import BaseLayout from './BaseLayout.astro';
 import Sidebar from '../components/layout/Sidebar';
 import Header from '../components/layout/Header.astro';
 import TopBar from '../components/layout/TopBar';
+import { Toaster } from '../components/ui/sonner';
 
 interface Props {
   title?: string;
@@ -27,4 +28,5 @@ const { title, pageTitle = 'Home' } = Astro.props;
       </div>
     </div>
   </div>
+  <Toaster client:load />
 </BaseLayout>

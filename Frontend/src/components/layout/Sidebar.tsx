@@ -1,9 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-
-let cachedAuthUser: User | null = null;
 import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
-import { Skeleton } from '../ui/skeleton';
 import type { Project } from '../../types';
 
 // Import mock data
@@ -57,8 +54,9 @@ const IconMap: Record<string, React.FC<{ className?: string }>> = {
 
 export default function Sidebar({ currentPath }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [authUser, setAuthUser] = useState<User | null>(cachedAuthUser);
-  const [isUserLoading, setIsUserLoading] = useState(!cachedAuthUser);
+  const [authUser, setAuthUser] = useState<User | null>(() =>
+    typeof window === 'undefined' ? null : getCurrentUser()
+  );
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
@@ -69,14 +67,18 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Fetch confirmed user info from backend on mount — never trust stale localStorage
+  // Show cached/sanitized localStorage user immediately, then refresh from backend
   useEffect(() => {
-    syncCurrentUser()
-      .then((user) => {
-        if (user) setAuthUser(user);
-        setIsUserLoading(false);
-      })
-      .catch(() => setIsUserLoading(false));
+    const cached = getCurrentUser();
+    if (cached) {
+      setAuthUser(cached);
+    }
+
+    syncCurrentUser().then((user) => {
+      if (user) {
+        setAuthUser(user);
+      }
+    });
   }, []);
 
   // Apply theme to <html> element
@@ -143,21 +145,12 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         >
           {/* Expanded state */}
           <div className={cn('flex items-center gap-3', isCollapsed && 'hidden')}>
-            {isUserLoading ? (
-              <>
-                <Skeleton className="h-8 w-8 rounded-full flex-shrink-0" />
-                <Skeleton className="h-4 w-24" />
-              </>
-            ) : (
-              <>
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
-                  {displayInitials}
-                </div>
-                <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
-              </>
-            )}
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
+              {displayInitials}
+            </div>
+            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName || 'Workspace'}</span>
           </div>
-          {!isCollapsed && !isUserLoading && (
+          {!isCollapsed && (
             <svg
               className={cn('h-4 w-4 text-muted-foreground transition-transform flex-shrink-0', isUserMenuOpen && 'rotate-180')}
               fill="none"
@@ -170,13 +163,9 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
           {/* Collapsed state */}
           {isCollapsed && (
-            isUserLoading ? (
-              <Skeleton className="h-8 w-8 rounded-full" />
-            ) : (
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
-                {displayInitials}
-              </div>
-            )
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
+              {displayInitials}
+            </div>
           )}
         </button>
 
@@ -422,10 +411,10 @@ export default function Sidebar({ currentPath }: SidebarProps) {
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-xs text-muted-foreground">Role</p>
-                          <p className="text-sm font-medium capitalize">{authUser?.role || 'user'}</p>
+                          <p className="text-xs text-muted-foreground">User ID</p>
+                          <p className="text-sm font-medium">{authUser?.id || ''}</p>
                         </div>
-                        <button className="text-xs text-indigo-600 hover:underline">Change</button>
+                        <button className="text-xs text-indigo-600 hover:underline">View</button>
                       </div>
                     </div>
                   </div>
