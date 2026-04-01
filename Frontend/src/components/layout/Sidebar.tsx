@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+
+let cachedAuthUser: User | null = null;
 import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, type User } from '../../lib/auth';
 import { Skeleton } from '../ui/skeleton';
@@ -55,9 +57,8 @@ const IconMap: Record<string, React.FC<{ className?: string }>> = {
 
 export default function Sidebar({ currentPath }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  // Start null — never read stale localStorage to avoid flash of wrong name
-  const [authUser, setAuthUser] = useState<User | null>(null);
-  const [isUserLoading, setIsUserLoading] = useState(true);
+  const [authUser, setAuthUser] = useState<User | null>(cachedAuthUser);
+  const [isUserLoading, setIsUserLoading] = useState(!cachedAuthUser);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
@@ -127,7 +128,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'flex h-full flex-col border-r border-sidebar-border bg-sidebar transition-all duration-300',
+        'flex h-full flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-300',
         isCollapsed ? 'w-16' : 'w-64'
       )}
     >

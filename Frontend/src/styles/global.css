@@ -121,8 +121,13 @@
   * {
     @apply border-border;
   }
+  html,
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground;
+  }
+
+  body {
+    @apply antialiased;
   }
 }
 

@@ -31,6 +31,16 @@ interface Project {
   folderId?: string;
 }
 
+interface ApiProject {
+  publicId: string;
+  name: string;
+  description?: string;
+  industry?: string;
+  coverImageUrl?: string;
+  role?: string;
+  status?: string;
+}
+
 interface ProjectsManagerProps {
   initialFolders: Folder[];
   initialProjects: Project[];
@@ -97,9 +107,36 @@ function formatRelativeTime(dateString: string): string {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 60) return `${diffMins} minutes ago`;
+  if (diffMins < 60) return `${Math.max(diffMins, 0)} minutes ago`;
   if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
   return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+}
+
+function toSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+function mapApiProjectToUiProject(project: ApiProject): Project {
+  return {
+    id: project.publicId,
+    name: project.name,
+    slug: toSlug(project.name || project.publicId),
+    thumbnail: project.coverImageUrl || '',
+    lastVisited: new Date().toISOString(),
+    category: 'shared',
+    description: project.description || '',
+    progress: 0,
+    teamMembers: 0,
+    issues: 0,
+    status: project.status === 'accepted' ? 'active' : 'planning',
+    projectType: (project.industry || 'software').toLowerCase(),
+    isFavorite: false,
+  };
 }
 
 // Folder Icon Component
@@ -461,6 +498,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [isHydrated, setIsHydrated] = useState(false);
   const [folders, setFolders] = useState<Folder[]>(initialFolders);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -527,9 +565,46 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProjects = async () => {
+      try {
+        const response = await fetch('/api/projects/me', {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = await response.json();
+        const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
+        if (mounted) {
+          setProjects(apiProjects.map(mapApiProjectToUiProject));
+        }
+      } catch {
+        // keep initial fallback data if API call fails
+      } finally {
+        if (mounted) {
+          setIsProjectsLoading(false);
+        }
+      }
+    };
+
+    loadProjects();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   useEffect(() => { setIsHydrated(true); }, []);
 
-  if (!isHydrated) return <ProjectsSkeleton />;
+  if (!isHydrated || isProjectsLoading) return <ProjectsSkeleton />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
