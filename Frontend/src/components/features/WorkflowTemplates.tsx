@@ -1,6 +1,7 @@
 // WorkflowTemplates v1.0.6
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { TableSkeleton } from '@/components/ui/skeletons';
 import { TemplateSearch } from './TemplateSearch';
 import { WorkflowEditor, type StageData } from './workflow-editor';
 
@@ -690,6 +691,7 @@ function CreateWorkflowForm({ onClose, onSave }: { onClose: () => void; onSave: 
 }
 
 export function WorkflowTemplates({ templates, allTags }: WorkflowTemplatesProps) {
+  const [isHydrated, setIsHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState<'my' | 'library'>('my');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -755,6 +757,10 @@ export function WorkflowTemplates({ templates, allTags }: WorkflowTemplatesProps
     setMyTemplates(prev => [newTemplate, ...prev]);
     setShowCreateForm(false);
   };
+
+  useEffect(() => { setIsHydrated(true); }, []);
+
+  if (!isHydrated) return <TableSkeleton rows={6} cols={4} />;
 
   if (showCreateForm) {
     return <CreateWorkflowForm onClose={() => setShowCreateForm(false)} onSave={handleSaveTemplate} />;

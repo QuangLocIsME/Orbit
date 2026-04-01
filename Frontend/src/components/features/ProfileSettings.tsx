@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { SettingsSkeleton } from '@/components/ui/skeletons';
 
 const TABS = [
   { id: 'profile', label: 'Profile' },
@@ -11,6 +12,7 @@ const TABS = [
 ];
 
 export default function ProfileSettings() {
+  const [isHydrated, setIsHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState('profile');
   const [name, setName] = useState('Thao Duyen');
   const [email, setEmail] = useState('thaoduyen@example.com');
@@ -24,6 +26,10 @@ export default function ProfileSettings() {
     await new Promise(resolve => setTimeout(resolve, 1000));
     setIsSaving(false);
   };
+
+  useEffect(() => { setIsHydrated(true); }, []);
+
+  if (!isHydrated) return <SettingsSkeleton />;
 
   return (
     <div className="min-h-full bg-background">

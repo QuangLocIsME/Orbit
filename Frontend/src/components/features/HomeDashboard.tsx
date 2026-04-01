@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
+import { DashboardSkeleton } from '@/components/ui/skeletons';
 
 // Types
 interface Project {
@@ -138,12 +139,30 @@ function formatRelativeTime(dateString: string): string {
 }
 
 // Main component
-export default function HomeDashboard({ projects, events, tasks, userName }: HomeDashboardProps) {
+export default function HomeDashboard({ projects, events, tasks }: Omit<HomeDashboardProps, 'userName'> & { userName?: string }) {
+  // Sync init from localStorage to avoid flash of wrong name
+  const [displayUserName, setDisplayUserName] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const u = localStorage.getItem('orbit_user');
+      return u ? (JSON.parse(u).fullName || '') : '';
+    } catch { return ''; }
+  });
+  const [isHydrated, setIsHydrated] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [completedTasks, setCompletedTasks] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsHydrated(true);
+    // Keep in sync if user info was refreshed
+    const u = localStorage.getItem('orbit_user');
+    if (u) {
+      try { setDisplayUserName(JSON.parse(u).fullName || ''); } catch { /* ignore */ }
+    }
+  }, []);
 
   // Sort projects - prioritize Metro Station and Office Complex first, then by last visited
   const recentProjects = [...projects]
@@ -252,11 +271,15 @@ export default function HomeDashboard({ projects, events, tasks, userName }: Hom
     }
   };
 
+  if (!isHydrated) return <DashboardSkeleton />;
+
   return (
     <div className="space-y-8 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       {/* Welcome Section */}
       <div className="flex items-center justify-between">
-        <h1 className="text-[24px] font-normal text-[#101828]">Welcome back</h1>
+        <h1 className="text-[24px] font-normal text-[#101828]">
+          Welcome back{displayUserName ? `, ${displayUserName.split(' ')[0]}` : ''}
+        </h1>
         <NewProjectButton />
       </div>
 

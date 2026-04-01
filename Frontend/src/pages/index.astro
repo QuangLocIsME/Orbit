@@ -1,27 +1,9 @@
 ---
-// Dashboard Home v1.0.47
-import DashboardLayout from '@/layouts/DashboardLayout.astro';
-import HomeDashboard from '@/components/features/HomeDashboard';
-
-import projectsData from '@/data/projects.json';
-import eventsData from '@/data/events.json';
-import tasksData from '@/data/tasks.json';
-import userData from '@/data/user.json';
-
-import type { Project, Event, Task } from '@/types';
-
-const projects = projectsData as Project[];
-const events = eventsData as Event[];
-const tasks = tasksData as Task[];
-const user = userData;
+// Landing Page v1.0.1
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import LandingPage from '@/components/landing/LandingPage';
 ---
 
-<DashboardLayout title="Home - ORBIT" pageTitle="Home">
-  <HomeDashboard 
-    client:load 
-    projects={projects} 
-    events={events} 
-    tasks={tasks} 
-    userName={user.name} 
-  />
-</DashboardLayout>
+<BaseLayout title="ORBIT - Modern BIM Collaboration Platform">
+  <LandingPage client:load />
+</BaseLayout>

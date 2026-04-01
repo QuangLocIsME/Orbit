@@ -1,28 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../../lib/utils';
-import { getCurrentUser, signOut, type User } from '../../lib/auth';
+import { getCurrentUser, syncCurrentUser, signOut, type User } from '../../lib/auth';
 import type { Project } from '../../types';
 
 // Import mock data
 import projectsData from '../../data/projects.json';
-import userData from '../../data/user.json';
 
 interface SidebarProps {
   currentPath: string;
 }
 
 const projects = projectsData as Project[];
-const user = userData;
-
-// Mock accounts for switch account feature
-const mockAccounts = [
-  { id: 1, name: 'Thao Duyen', email: 'thaoduyen@example.com', initials: 'TD', color: 'bg-indigo-600', isActive: true },
-  { id: 2, name: 'Work Account', email: 'work@company.com', initials: 'WA', color: 'bg-emerald-600', isActive: false },
-  { id: 3, name: 'Personal', email: 'personal@gmail.com', initials: 'PE', color: 'bg-orange-500', isActive: false },
-];
 
 const mainNavItems = [
-  { title: 'Home', href: '/', icon: 'home' },
+  { title: 'Home', href: '/home', icon: 'home' },
   { title: 'Projects', href: '/projects', icon: 'folder' },
   { title: 'Workflow Templates', href: '/templates', icon: 'template' },
   { title: 'Trash', href: '/trash', icon: 'trash' },
@@ -63,21 +54,43 @@ const IconMap: Record<string, React.FC<{ className?: string }>> = {
 
 export default function Sidebar({ currentPath }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [authUser, setAuthUser] = useState<User | null>(null);
+  // Synchronous init from localStorage avoids flash of wrong user name
+  const [authUser, setAuthUser] = useState<User | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return getCurrentUser();
+  });
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
-  const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>('system');
+  const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
+    if (typeof window === 'undefined') return 'system';
+    return (localStorage.getItem('orbit-theme') as 'light' | 'dark' | 'system') || 'system';
+  });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');
-  const [accounts, setAccounts] = useState(mockAccounts);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
+  // Sync user info from backend on mount (keeps localStorage fresh)
   useEffect(() => {
-    const loggedInUser = getCurrentUser();
-    if (loggedInUser) {
-      setAuthUser(loggedInUser);
-    }
+    syncCurrentUser().then((user) => {
+      if (user) setAuthUser(user);
+    });
   }, []);
+
+  // Apply theme to <html> element
+  useEffect(() => {
+    const root = document.documentElement;
+    if (currentTheme === 'dark') {
+      root.classList.add('dark');
+    } else if (currentTheme === 'light') {
+      root.classList.remove('dark');
+    } else {
+      // system
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (prefersDark) root.classList.add('dark');
+      else root.classList.remove('dark');
+    }
+    localStorage.setItem('orbit-theme', currentTheme);
+  }, [currentTheme]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -99,9 +112,11 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     return () => window.removeEventListener('toggle-sidebar', handleToggle);
   }, []);
 
-  // Display name: prefer authenticated user, fallback to mock data
-  const displayName = authUser?.fullName || user.name;
-  const displayInitials = displayName.split(' ').map(n => n[0]).join('').toUpperCase();
+  // Display name from real user — no mock fallback
+  const displayName = authUser?.fullName || '';
+  const displayInitials = displayName
+    ? displayName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+    : '?';
 
   // FAVORITES shows only projects with isFavorite: true
   const favorites = projects.filter(p => p.isFavorite === true);
@@ -245,46 +260,28 @@ export default function Sidebar({ currentPath }: SidebarProps) {
               </button>
             </div>
 
-            {/* Switch Account Section */}
-            <div className="py-1 border-b border-gray-100">
-              <p className="px-4 py-1 text-xs font-medium text-muted-foreground uppercase">Switch account</p>
-              {accounts.map((account) => (
-                <button
-                  key={account.id}
-                  onClick={() => {
-                    setAccounts(accounts.map(a => ({ ...a, isActive: a.id === account.id })));
-                  }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-gray-50"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={cn("flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium text-white", account.color)}>
-                      {account.initials}
-                    </div>
-                    <div className="text-left">
-                      <p className="text-sm font-medium text-foreground">{account.name}</p>
-                      <p className="text-xs text-muted-foreground">{account.email}</p>
-                    </div>
+            {/* Current Account */}
+            {authUser && (
+              <div className="py-1 border-b border-gray-100">
+                <p className="px-4 py-1 text-xs font-medium text-muted-foreground uppercase">Logged in as</p>
+                <div className="flex items-center gap-3 px-4 py-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
+                    {displayInitials}
                   </div>
-                  {account.isActive && (
-                    <svg className="h-4 w-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </button>
-              ))}
-              <button className="flex w-full items-center gap-3 px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-gray-50 hover:text-foreground">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-gray-300">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  <div className="text-left min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{authUser.fullName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{authUser.email}</p>
+                  </div>
+                  <svg className="h-4 w-4 text-indigo-600 shrink-0 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <span>Add account</span>
-              </button>
-            </div>
+              </div>
+            )}
 
             {/* Logout */}
             <div className="pt-1">
-              <button 
+              <button
                 onClick={() => signOut()}
                 className="flex w-full items-center justify-between px-4 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
               >
@@ -308,7 +305,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         <ul className="space-y-1">
           {mainNavItems.map((item) => {
             const Icon = IconMap[item.icon];
-            const isActive = currentPath === item.href;
+            const isActive = currentPath === item.href || (item.href !== '/home' && currentPath.startsWith(item.href));
             
             return (
               <li key={item.href}>

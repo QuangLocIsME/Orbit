@@ -1,6 +1,7 @@
 const express = require('express');
 const passport = require('passport');
 const AuthController = require('../controllers/AuthController');
+const { authenticate } = require('../middlewares/authMiddleware');
 const {
     loginLimiter,
     forgotPasswordLimiter,
@@ -27,6 +28,7 @@ router.get('/google/callback', (req, res, next) => {
     })(req, res, next);
 }, (req, res) => AuthController.googleCallback(req, res));
 
+router.get('/me', authenticate, (req, res) => AuthController.getMe(req, res));
 router.post('/register', (req, res) => AuthController.register(req, res));
 router.post('/login', loginLimiter, (req, res) => AuthController.login(req, res));
 router.post('/refresh-token', loginLimiter, (req, res) => AuthController.refreshToken(req, res));

@@ -148,7 +148,7 @@ export default function LandingPage() {
       <header className="sticky top-0 z-50 border-b border-[#F9FAFB] bg-white px-4 sm:px-6 lg:px-[300px]">
         <div className="mx-auto flex h-16 max-w-[1292px] items-center justify-between px-4 sm:px-6 lg:px-0">
           {/* Logo */}
-          <a href="/landing" className="flex items-center">
+          <a href="/" className="flex items-center">
             <OrbitLogoFull />
           </a>
 
@@ -987,7 +987,7 @@ export default function LandingPage() {
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
             {/* Logo & Description */}
             <div className="lg:col-span-2">
-              <a href="/landing" className="flex items-center">
+              <a href="/" className="flex items-center">
                 <OrbitLogoFull />
               </a>
               <p className="mt-4 max-w-xs text-sm leading-5 text-[#616874]">

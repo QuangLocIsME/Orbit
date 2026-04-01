@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { TableSkeleton } from '@/components/ui/skeletons';
 
 interface TrashItem {
   id: string;
@@ -152,6 +153,7 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
 }
 
 export function TrashManager({ initialItems }: TrashManagerProps) {
+  const [isHydrated, setIsHydrated] = useState(false);
   const [items, setItems] = useState<TrashItem[]>(initialItems);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -278,6 +280,10 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
       }
     });
   };
+
+  useEffect(() => { setIsHydrated(true); }, []);
+
+  if (!isHydrated) return <TableSkeleton rows={8} cols={5} />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

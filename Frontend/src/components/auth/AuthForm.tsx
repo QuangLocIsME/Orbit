@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { login, register } from '@/modules/auth/service/auth-service.js';
+import { apiUrl } from '@/config/api.js';
 
 // Types
 interface FormData {
@@ -369,49 +371,32 @@ export default function AuthForm({ mode }: AuthFormProps) {
     setErrors({});
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      const userData = {
-        id: Date.now().toString(),
-        fullName: formData.fullName || formData.email.split('@')[0],
-        email: formData.email,
-        createdAt: new Date().toISOString()
-      };
-      
-      localStorage.setItem('orbit_user', JSON.stringify(userData));
-      localStorage.setItem('orbit_auth_token', `demo_token_${Date.now()}`);
-      
-      window.location.href = '/';
-    } catch {
-      setErrors({ general: 'An error occurred. Please try again.' });
+      let data;
+      if (isRegister) {
+        data = await register({
+          fullName: formData.fullName!,
+          email: formData.email,
+          password: formData.password,
+          confirmPassword: formData.confirmPassword!,
+          agree: agreedToTerms,
+        });
+      } else {
+        data = await login(formData.email, formData.password);
+      }
+
+      localStorage.setItem('orbit_user', JSON.stringify(data.data));
+      window.location.href = '/home';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'An error occurred. Please try again.';
+      setErrors({ general: message });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handle Google sign-in
-  const handleGoogleSignIn = async () => {
-    setIsLoading(true);
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const userData = {
-        id: Date.now().toString(),
-        fullName: 'Google User',
-        email: 'user@gmail.com',
-        createdAt: new Date().toISOString()
-      };
-      
-      localStorage.setItem('orbit_user', JSON.stringify(userData));
-      localStorage.setItem('orbit_auth_token', `google_token_${Date.now()}`);
-      
-      window.location.href = '/';
-    } catch {
-      setErrors({ general: 'Google sign-in failed. Please try again.' });
-    } finally {
-      setIsLoading(false);
-    }
+  // Handle Google sign-in — redirect đến backend OAuth (dùng PUBLIC_API_URL từ .env)
+  const handleGoogleSignIn = () => {
+    window.location.href = apiUrl('/auth/google');
   };
 
   const passwordStrength = isRegister ? getPasswordStrength(formData.password) : null;
@@ -477,14 +462,14 @@ export default function AuthForm({ mode }: AuthFormProps) {
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-[#F9FAFB] bg-white px-4 sm:px-6 lg:px-[205px]">
         <div className="mx-auto flex h-16 max-w-[1292px] items-center justify-between">
-          <a href="/landing" className="flex items-center">
+          <a href="/" className="flex items-center">
             <OrbitLogo />
           </a>
           
           <nav className="hidden items-center gap-8 md:flex">
-            <a href="/landing#features" className="text-sm text-[#616874] hover:text-[#111827]">Features</a>
-            <a href="/landing#solutions" className="text-sm text-[#616874] hover:text-[#111827]">Solutions</a>
-            <a href="/landing#pricing" className="text-sm text-[#616874] hover:text-[#111827]">Pricing</a>
+            <a href="/#features" className="text-sm text-[#616874] hover:text-[#111827]">Features</a>
+            <a href="/#solutions" className="text-sm text-[#616874] hover:text-[#111827]">Solutions</a>
+            <a href="/#pricing" className="text-sm text-[#616874] hover:text-[#111827]">Pricing</a>
           </nav>
           
           <div className="flex items-center gap-3">
@@ -550,7 +535,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
               <div className={cn(isTransitioning ? "opacity-0" : "opacity-100", "transition-opacity duration-300")}>
                 {/* Back button */}
                 <a 
-                  href="/landing" 
+                  href="/" 
                   className="mb-8 flex w-fit items-center gap-2 text-sm text-[#616874] hover:text-[#111827]"
                 >
                   <BackIcon />

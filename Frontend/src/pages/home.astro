@@ -1,0 +1,26 @@
+---
+// Dashboard Home v1.0.48
+export const prerender = false;
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import HomeDashboard from '@/components/features/HomeDashboard';
+
+import projectsData from '@/data/projects.json';
+import eventsData from '@/data/events.json';
+import tasksData from '@/data/tasks.json';
+
+import type { Project, Event, Task } from '@/types';
+
+const projects = projectsData as Project[];
+const events = eventsData as Event[];
+const tasks = tasksData as Task[];
+---
+
+<DashboardLayout title="Home - ORBIT" pageTitle="Home">
+  <HomeDashboard
+    client:load
+    projects={projects}
+    events={events}
+    tasks={tasks}
+    userName=""
+  />
+</DashboardLayout>

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { PackagesSkeleton } from '@/components/ui/skeletons';
 import { 
   Search, 
   LayoutGrid, 
@@ -110,6 +111,7 @@ const availableMembers = [
 ];
 
 export default function PackagesManager({ packages }: PackagesManagerProps) {
+  const [isHydrated, setIsHydrated] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -169,6 +171,10 @@ export default function PackagesManager({ packages }: PackagesManagerProps) {
         : [...prev.teamMembers, memberId]
     }));
   };
+
+  useEffect(() => { setIsHydrated(true); }, []);
+
+  if (!isHydrated) return <PackagesSkeleton />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

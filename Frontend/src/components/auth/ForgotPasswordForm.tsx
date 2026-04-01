@@ -159,14 +159,14 @@ export default function ForgotPasswordForm() {
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-[#F9FAFB] bg-white px-4 sm:px-6 lg:px-[205px]">
         <div className="mx-auto flex h-16 max-w-[1292px] items-center justify-between">
-          <a href="/landing" className="flex items-center">
+          <a href="/" className="flex items-center">
             <OrbitLogo />
           </a>
           
           <nav className="hidden items-center gap-8 md:flex">
-            <a href="/landing#features" className="text-sm text-[#616874] hover:text-[#111827]">Features</a>
-            <a href="/landing#pricing" className="text-sm text-[#616874] hover:text-[#111827]">Pricing</a>
-            <a href="/landing#about" className="text-sm text-[#616874] hover:text-[#111827]">About</a>
+            <a href="/#features" className="text-sm text-[#616874] hover:text-[#111827]">Features</a>
+            <a href="/#pricing" className="text-sm text-[#616874] hover:text-[#111827]">Pricing</a>
+            <a href="/#about" className="text-sm text-[#616874] hover:text-[#111827]">About</a>
           </nav>
           
           <div className="flex items-center gap-3">

@@ -48,9 +48,8 @@ const UserSchema = new mongoose.Schema({
     resetPasswordTokenExpiresAt: { type: Date, default: null },
 });
 
-UserSchema.pre('save', function (next) {
+UserSchema.pre('save', async function () {
     this.updatedAt = new Date();
-    next();
 });
 
 const User = mongoose.model('User', UserSchema);

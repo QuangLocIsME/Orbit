@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
+import { ProjectsSkeleton } from '@/components/ui/skeletons';
 
 // Types
 interface Folder {
@@ -457,6 +458,7 @@ function ProjectGridCard({ project }: { project: Project }) {
 
 // Main Projects Manager Component
 export default function ProjectsManager({ initialFolders, initialProjects }: ProjectsManagerProps) {
+  const [isHydrated, setIsHydrated] = useState(false);
   const [folders, setFolders] = useState<Folder[]>(initialFolders);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
   const [searchQuery, setSearchQuery] = useState('');
@@ -524,6 +526,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => { setIsHydrated(true); }, []);
+
+  if (!isHydrated) return <ProjectsSkeleton />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
