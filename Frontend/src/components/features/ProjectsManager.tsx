@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
 import type { CreatedProjectPayload } from './CreateProjectModal';
@@ -609,11 +610,11 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
       if (bIndex !== -1) return 1;
       return 0;
     })
-    .slice(0, 4);
+;
 
   // Handle create folder
   const handleCreateFolder = async (folderData: { name: string; description: string; color: string }) => {
-    try {
+    const requestPromise = (async () => {
       const response = await fetch('/api/folders/create', {
         method: 'POST',
         credentials: 'include',
@@ -625,14 +626,20 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
       });
 
       if (!response.ok) {
-        return;
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || 'Create folder failed');
       }
 
       const updatedProjects = await loadProjects();
       await loadFolders(updatedProjects);
-    } catch {
-      // ignore, keep optimistic ui untouched
-    }
+      return folderData;
+    })();
+
+    await toast.promise(requestPromise, {
+      loading: 'Creating folder...',
+      success: (data) => `${data.name} đã được tạo thành công`,
+      error: (err) => err?.message || 'Không thể tạo folder',
+    });
   };
 
   const upsertProject = useCallback((nextProject: Project) => {
@@ -923,7 +930,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
           <section>
             <h2 className="mb-4 text-sm font-medium text-gray-900">Folders</h2>
             {filteredFolders.length > 0 ? (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]">
                 {filteredFolders.map((folder) => (
                   <FolderCard
                     key={folder.id}
@@ -947,7 +954,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
             {priorityProjects.length > 0 ? (
               <div className={cn(
                 viewMode === 'grid'
-                  ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                  ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
                   : 'space-y-3'
               )}>
                 {priorityProjects.map((project) => (
@@ -972,7 +979,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
           {currentFolderProjects.length > 0 ? (
             <div className={cn(
               viewMode === 'grid'
-                ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
                 : 'space-y-3'
             )}>
               {currentFolderProjects.map((project) => (
