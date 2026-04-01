@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').resolve(__dirname, '.env') });
 
 if (process.env.NODE_ENV !== 'production') {
     console.info('[Env] SMTP_HOST:', process.env.SMTP_HOST ? '[set]' : '[missing]');
