@@ -54,9 +54,7 @@ const IconMap: Record<string, React.FC<{ className?: string }>> = {
 
 export default function Sidebar({ currentPath }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [authUser, setAuthUser] = useState<User | null>(() =>
-    typeof window === 'undefined' ? null : getCurrentUser()
-  );
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
