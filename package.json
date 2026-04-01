@@ -1,4 +1,16 @@
 {
   "name": "orbit",
-  "private": true
+  "version": "1.0.0",
+  "private": true,
+  "description": "Orbit monorepo launcher",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix Frontend\" \"npm run dev --prefix Backend\"",
+    "frontend:dev": "npm run dev --prefix Frontend",
+    "backend:dev": "npm run dev --prefix Backend",
+    "build": "npm run build --prefix Frontend",
+    "start": "npm run start --prefix Backend"
+  },
+  "dependencies": {
+    "concurrently": "^9.0.1"
+  }
 }
