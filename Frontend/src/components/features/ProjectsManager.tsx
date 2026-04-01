@@ -588,6 +588,8 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [isHydrated, setIsHydrated] = useState(false);
   const [folders, setFolders] = useState<Folder[]>(initialFolders);
   const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
+  const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -697,25 +699,9 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     const shouldForce = options?.force === true;
 
     if (!shouldForce && projectsCacheRef.current && projectsCacheRef.current.expiresAt > Date.now()) {
-      const cached = projectsCacheRef.current.data;
-      setProjects(cached);
-      return cached;
-    }
-
-    if (!shouldForce && typeof window !== 'undefined') {
-      try {
-        const raw = sessionStorage.getItem(PROJECTS_CACHE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
-          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
-            projectsCacheRef.current = parsed;
-            setProjects(parsed.data);
-            return parsed.data;
-          }
-        }
-      } catch {
-        // ignore cache parse errors
-      }
+      const cachedProjects = projectsCacheRef.current.data;
+      setProjects(cachedProjects);
+      return cachedProjects;
     }
 
     if (showLoading) {
@@ -738,16 +724,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
       const payload = await response.json();
       const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
       const nextProjects = apiProjects.map(mapApiProjectToUiProject);
-      const cacheValue = {
+      projectsCacheRef.current = {
         data: nextProjects,
-        expiresAt: Date.now() + PROJECTS_CACHE_TTL_MS,
+        expiresAt: Date.now() + 30_000,
       };
-
-      projectsCacheRef.current = cacheValue;
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheValue));
-      }
-
       setProjects(nextProjects);
       return nextProjects;
     } catch {
@@ -766,24 +746,9 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     const shouldForce = options?.force === true;
 
     if (!shouldForce && foldersCacheRef.current && foldersCacheRef.current.expiresAt > Date.now()) {
-      setFolders(foldersCacheRef.current.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+      const cachedFolders = foldersCacheRef.current.data;
+      setFolders(cachedFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
       return;
-    }
-
-    if (!shouldForce && typeof window !== 'undefined') {
-      try {
-        const raw = sessionStorage.getItem(FOLDERS_CACHE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { data: ApiFolder[]; expiresAt: number };
-          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
-            foldersCacheRef.current = parsed;
-            setFolders(parsed.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
-            return;
-          }
-        }
-      } catch {
-        // ignore cache parse errors
-      }
     }
 
     try {
@@ -801,16 +766,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
       const payload = await response.json();
       const apiFolders: ApiFolder[] = Array.isArray(payload?.data) ? payload.data : [];
-      const cacheValue = {
+      foldersCacheRef.current = {
         data: apiFolders,
-        expiresAt: Date.now() + FOLDERS_CACHE_TTL_MS,
+        expiresAt: Date.now() + 60_000,
       };
-
-      foldersCacheRef.current = cacheValue;
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(FOLDERS_CACHE_KEY, JSON.stringify(cacheValue));
-      }
-
       setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
     } catch {
       // keep fallback folders if API fails
