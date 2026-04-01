@@ -61,7 +61,7 @@ class UserService {
             throw new Error('Email or password is incorrect.');
         }
 
-        if (user.isBlocked === false) {
+        if (user.isBlocked === true) {
             logSecurityEvent('auth.login.blocked', { userId: user._id, email: user.email });
             throw new Error('User account is blocked.');
         }

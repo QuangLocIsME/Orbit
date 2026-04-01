@@ -29,7 +29,17 @@ class PackageRepository {
         return await Package.findOneAndUpdate(
             { publicId: packagePublicId, projectId },
             { ...updateFields, updatedAt: new Date() },
-            { returnDocument: 'after' }
+            { new: true }
+        );
+    }
+
+    async addDocumentIdToPackage(packagePublicId, projectId, documentPublicId) {
+        await Package.updateOne(
+            { publicId: packagePublicId, projectId },
+            {
+                $addToSet: { documentIds: documentPublicId },
+                $set: { updatedAt: new Date() },
+            }
         );
     }
 

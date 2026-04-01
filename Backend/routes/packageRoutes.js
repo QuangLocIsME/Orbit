@@ -1,6 +1,7 @@
 const express = require('express');
 const PackageController = require('../controllers/PackageController');
 const { authenticate } = require('../middlewares/authMiddleware');
+const { packageUpload } = require('../middlewares/packageUploadMiddleware');
 
 const router = express.Router();
 
@@ -22,6 +23,17 @@ router.post('/archive', authenticate, (req, res) =>
 
 router.post('/delete', authenticate, (req, res) =>
     PackageController.deletePackage(req, res)
+);
+
+router.post(
+    '/upload',
+    authenticate,
+    packageUpload,
+    (req, res) => PackageController.uploadPackageDocument(req, res)
+);
+
+router.get('/upload-jobs/:jobId', authenticate, (req, res) =>
+    PackageController.getUploadJobStatus(req, res)
 );
 
 module.exports = router;
