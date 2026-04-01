@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 
 export default function HeaderActions() {
+  // Use the same key as BaseLayout and Sidebar ('orbit-theme'), default to light
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -19,21 +20,21 @@ export default function HeaderActions() {
 
   const unreadCount = notifications.filter(n => n.unread).length;
 
-  // Toggle theme
+  // Toggle between light and dark — always an explicit choice, never "system"
   const toggleTheme = () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
     document.documentElement.classList.toggle('dark', newTheme === 'dark');
-    localStorage.setItem('theme', newTheme);
+    localStorage.setItem('orbit-theme', newTheme);
   };
 
-  // Load theme on mount
+  // Read saved theme on mount — default is light when nothing is saved
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
-    setTheme(initialTheme);
-    document.documentElement.classList.toggle('dark', initialTheme === 'dark');
+    const saved = localStorage.getItem('orbit-theme') as 'light' | 'dark' | 'system' | null;
+    // 'system' was a valid value from the Sidebar picker; treat it as light default here
+    const initial: 'light' | 'dark' = saved === 'dark' ? 'dark' : 'light';
+    setTheme(initial);
+    document.documentElement.classList.toggle('dark', initial === 'dark');
   }, []);
 
   // Close dropdowns when clicking outside
