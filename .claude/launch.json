@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Frontend (Astro)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:\\Users\\ADMIN\\Documents\\Project\\Orbit\\Frontend\\node_modules\\astro\\bin\\astro.mjs",
+        "dev",
+        "--root",
+        "C:\\Users\\ADMIN\\Documents\\Project\\Orbit\\Frontend"
+      ],
+      "port": 4321
+    },
+    {
+      "name": "Backend (Express)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\ADMIN\\Documents\\Project\\Orbit\\Backend\\app.js"],
+      "port": 3000
+    }
+  ]
+}
