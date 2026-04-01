@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { motion } from 'framer-motion';
+import { DndContext, DragOverlay, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, rectSortingStrategy, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { snapCenterToCursor } from '@dnd-kit/modifiers';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
@@ -38,7 +43,7 @@ interface Project {
   status?: string;
   projectType?: string;
   isFavorite?: boolean;
-  folderId?: string | null;
+  folderIds?: string[];
 }
 
 interface ApiProject {
@@ -147,7 +152,7 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     status: project.status === 'accepted' ? 'active' : 'planning',
     projectType: (project.industry || 'software').toLowerCase(),
     isFavorite: false,
-    folderId: project.folderId ?? null,
+    folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
   };
 }
 
@@ -157,7 +162,7 @@ function mapApiFolderToUiFolder(folder: ApiFolder, projects: Project[]): Folder 
     name: folder.name,
     color: folder.color || 'blue',
     description: folder.description || '',
-    projectCount: projects.filter((project) => project.folderId === folder.publicId).length,
+    projectCount: projects.filter((project) => (project.folderIds || []).includes(folder.publicId)).length,
   };
 }
 
@@ -322,33 +327,23 @@ function CreateFolderModal({
 function FolderCard({
   folder,
   onClick,
-  onDropProject,
 }: {
   folder: Folder;
   onClick: () => void;
-  onDropProject: (projectId: string, folderId: string) => void;
 }) {
   const colorConfig = FOLDER_COLORS.find(c => c.id === folder.color) || FOLDER_COLORS[0];
-  const [isDragOver, setIsDragOver] = useState(false);
+  const { setNodeRef, isOver } = useDroppable({
+    id: `folder:${folder.id}`,
+    data: { type: 'folder', folderId: folder.id },
+  });
 
   return (
     <button
+      ref={setNodeRef}
       onClick={onClick}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragOver(true);
-      }}
-      onDragLeave={() => setIsDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setIsDragOver(false);
-        const projectId = e.dataTransfer.getData('application/x-orbit-project-id');
-        if (!projectId) return;
-        onDropProject(projectId, folder.id);
-      }}
       className={cn(
         'group flex w-full items-center gap-3 rounded-xl border bg-white p-4 text-left transition-all hover:border-gray-200 hover:shadow-sm',
-        isDragOver ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'
+        isOver ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'
       )}
     >
       <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', colorConfig.bg)}>
@@ -363,20 +358,31 @@ function FolderCard({
 }
 
 // Project List Item Component (for list view)
-function ProjectListItem({ project }: { project: Project }) {
+function ProjectListItem({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
+    id: `project:${project.id}`,
+    data: { type: 'project', projectId: project.id },
+  });
   const type = TYPE_CONFIG[project.projectType || 'software'] || TYPE_CONFIG.software;
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
   return (
-    <a
+    <motion.a
+      ref={setNodeRef}
       href={`/projects/${project.slug}`}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('application/x-orbit-project-id', project.id);
+      {...attributes}
+      {...listeners}
+      layout
+      transition={{ type: 'spring', stiffness: 140, damping: 24, mass: 1.1 }}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition: transition ? transition.replace(/\d+(\.\d+)?ms/g, '260ms') : undefined,
       }}
-      className="group flex items-center gap-4 rounded-xl border border-gray-100 bg-white p-4 transition-all hover:border-gray-200 hover:shadow-sm"
+      className={cn(
+        'group flex items-center gap-4 rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200',
+        (isDragging || isSortableDragging) && 'scale-[0.98] opacity-80 pointer-events-none'
+      )}
     >
       {/* Type Icon */}
       <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-xl', type.bg)}>
@@ -433,25 +439,36 @@ function ProjectListItem({ project }: { project: Project }) {
       <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-medium', status.bg, status.text)}>
         {project.status}
       </span>
-    </a>
+    </motion.a>
   );
 }
 
 // Project Grid Card Component (for grid view)
-function ProjectGridCard({ project }: { project: Project }) {
+function ProjectGridCard({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
+    id: `project:${project.id}`,
+    data: { type: 'project', projectId: project.id },
+  });
   const type = TYPE_CONFIG[project.projectType || 'software'] || TYPE_CONFIG.software;
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
   return (
-    <a
+    <motion.a
+      ref={setNodeRef}
       href={`/projects/${project.slug}`}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('application/x-orbit-project-id', project.id);
+      {...attributes}
+      {...listeners}
+      layout
+      transition={{ type: 'spring', stiffness: 150, damping: 26, mass: 1.05 }}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
       }}
-      className="group block overflow-hidden rounded-xl border border-gray-100 bg-white transition-all hover:shadow-lg"
+      className={cn(
+        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200',
+        (isDragging || isSortableDragging) && 'scale-[0.98] opacity-40 pointer-events-none'
+      )}
     >
       {/* Image - show real image if available, fallback to gradient */}
       <div className="relative h-36 overflow-hidden">
@@ -520,7 +537,7 @@ function ProjectGridCard({ project }: { project: Project }) {
       </div>
 
       {/* Content */}
-      <div className="p-4">
+      <div className="flex flex-1 flex-col p-4">
         <h3 className="mb-1 font-medium text-gray-900 line-clamp-1">{project.name}</h3>
         <p className="mb-3 text-xs text-gray-500 line-clamp-1">{project.description}</p>
 
@@ -557,7 +574,7 @@ function ProjectGridCard({ project }: { project: Project }) {
           </span>
         </div>
       </div>
-    </a>
+    </motion.a>
   );
 }
 
@@ -574,12 +591,20 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [isMovingProject, setIsMovingProject] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    })
+  );
 
   // Get projects for current folder using folderId from project data
   const getProjectsForFolder = (folderId: string) => {
-    return projects.filter(p => p.folderId === folderId);
+    return projects.filter(p => (p.folderIds || []).includes(folderId));
   };
 
   // Filter folders by search
@@ -738,6 +763,36 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     }
   };
 
+  const handleDragStart = (event: DragStartEvent) => {
+    const id = String(event.active.id);
+    if (!id.startsWith('project:')) return;
+    setActiveProjectId(id.replace('project:', ''));
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const activeId = String(event.active.id);
+    const overId = event.over ? String(event.over.id) : null;
+    setActiveProjectId(null);
+
+    if (!activeId.startsWith('project:')) return;
+    const draggedProjectId = activeId.replace('project:', '');
+
+    if (overId?.startsWith('folder:')) {
+      const folderId = overId.replace('folder:', '');
+      await handleDropProjectToFolder(draggedProjectId, folderId);
+      return;
+    }
+
+    if (overId?.startsWith('project:') && overId !== activeId) {
+      const activeIndex = projects.findIndex((p) => p.id === draggedProjectId);
+      const overProjectId = overId.replace('project:', '');
+      const overIndex = projects.findIndex((p) => p.id === overProjectId);
+      if (activeIndex >= 0 && overIndex >= 0) {
+        setProjects((prev) => arrayMove(prev, activeIndex, overIndex));
+      }
+    }
+  };
+
   useEffect(() => {
     if (!projects.length) return;
     loadFolders(projects);
@@ -811,7 +866,17 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
   if (!isHydrated || isProjectsLoading) return <ProjectsSkeleton />;
 
+  const activeProject = activeProjectId
+    ? projects.find((project) => project.id === activeProjectId) || null
+    : null;
+
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -936,7 +1001,6 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
                     key={folder.id}
                     folder={folder}
                     onClick={() => setCurrentFolder(folder)}
-                    onDropProject={handleDropProjectToFolder}
                   />
                 ))}
               </div>
@@ -952,6 +1016,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
           <section>
             <h2 className="mb-4 text-sm font-medium text-gray-900">Priority Projects</h2>
             {priorityProjects.length > 0 ? (
+              <SortableContext
+                items={priorityProjects.map((project) => `project:${project.id}`)}
+                strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+              >
               <div className={cn(
                 viewMode === 'grid'
                   ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
@@ -959,10 +1027,11 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
               )}>
                 {priorityProjects.map((project) => (
                   viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} />
-                    : <ProjectListItem key={project.id} project={project} />
+                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
                 ))}
               </div>
+              </SortableContext>
             ) : (
               <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-8 text-center">
                 <svg className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -977,6 +1046,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         /* Folder Detail View */
         <section>
           {currentFolderProjects.length > 0 ? (
+            <SortableContext
+              items={currentFolderProjects.map((project) => `project:${project.id}`)}
+              strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+            >
             <div className={cn(
               viewMode === 'grid'
                 ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
@@ -984,10 +1057,11 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
             )}>
               {currentFolderProjects.map((project) => (
                 viewMode === 'grid'
-                  ? <ProjectGridCard key={project.id} project={project} />
-                  : <ProjectListItem key={project.id} project={project} />
+                  ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                  : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
               ))}
             </div>
+            </SortableContext>
           ) : (
             /* Empty Folder State */
             <div className="flex flex-col items-center justify-center py-16">
@@ -1010,7 +1084,29 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         onClose={() => setShowFolderModal(false)}
         onCreateFolder={handleCreateFolder}
       />
+
+      <DragOverlay
+        modifiers={[snapCenterToCursor]}
+        dropAnimation={{
+          duration: 320,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        }}
+      >
+        {activeProject ? (
+          viewMode === 'grid' ? (
+            <div className="w-[280px] opacity-80">
+              <ProjectGridCard project={activeProject} />
+            </div>
+          ) : (
+            <div className="w-full max-w-[760px] opacity-80">
+              <ProjectListItem project={activeProject} />
+            </div>
+          )
+        ) : null}
+      </DragOverlay>
+
     </div>
+    </DndContext>
   );
 }
 

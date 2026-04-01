@@ -99,7 +99,7 @@ class ProjectController {
                     description: project.description,
                     industry: project.industry,
                     coverImageUrl: project.coverImageUrl,
-                    folderId: project.folderId,
+                    folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
                     role: membership?.role || 'member',
                     status: membership?.status || 'accepted',
                 };
@@ -232,10 +232,10 @@ class ProjectController {
         try {
             const { projectId, folderId } = req.body || {};
             const normalizedProjectId = normalizeString(projectId);
-            const normalizedFolderId = folderId === null ? null : normalizeString(folderId);
+            const normalizedFolderId = normalizeString(folderId);
 
-            if (!normalizedProjectId) {
-                return badRequest(res, 'Missing projectId');
+            if (!normalizedProjectId || !normalizedFolderId) {
+                return badRequest(res, 'Missing projectId or folderId');
             }
 
             const userId = requireUserId(req, res);
@@ -246,21 +246,67 @@ class ProjectController {
                 return forbidden(res);
             }
 
-            if (normalizedFolderId) {
-                const folder = await Folder.findOne({
-                    publicId: normalizedFolderId,
-                    ownerId: userId,
-                });
+            const folder = await Folder.findOne({
+                publicId: normalizedFolderId,
+                ownerId: userId,
+            });
 
-                if (!folder) {
-                    return notFound(res, 'Folder not found');
-                }
+            if (!folder) {
+                return notFound(res, 'Folder not found');
+            }
+
+            const project = await Project.findOne({ publicId: normalizedProjectId });
+            if (!project) {
+                return notFound(res, 'Project not found');
+            }
+
+            const nextFolderIds = Array.isArray(project.folderIds)
+                ? project.folderIds
+                : [];
+
+            if (!nextFolderIds.includes(normalizedFolderId)) {
+                nextFolderIds.push(normalizedFolderId);
+            }
+
+            project.folderIds = nextFolderIds;
+            project.updatedAt = new Date();
+            await project.save();
+
+            return res.status(200).json({
+                success: true,
+                message: 'Project moved',
+                data: {
+                    publicId: project.publicId,
+                    folderIds: project.folderIds,
+                },
+            });
+        } catch (error) {
+            return badRequest(res, 'Move project failed');
+        }
+    }
+
+    async removeProjectFromFolder(req, res) {
+        try {
+            const { projectId, folderId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFolderId = normalizeString(folderId);
+
+            if (!normalizedProjectId || !normalizedFolderId) {
+                return badRequest(res, 'Missing projectId or folderId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member) {
+                return forbidden(res);
             }
 
             const project = await Project.findOneAndUpdate(
                 { publicId: normalizedProjectId },
                 {
-                    folderId: normalizedFolderId,
+                    $pull: { folderIds: normalizedFolderId },
                     updatedAt: new Date(),
                 },
                 { returnDocument: 'after' }
@@ -272,14 +318,14 @@ class ProjectController {
 
             return res.status(200).json({
                 success: true,
-                message: 'Project moved',
+                message: 'Project removed from folder',
                 data: {
                     publicId: project.publicId,
-                    folderId: project.folderId,
+                    folderIds: project.folderIds,
                 },
             });
         } catch (error) {
-            return badRequest(res, 'Move project failed');
+            return badRequest(res, 'Remove from folder failed');
         }
     }
 
