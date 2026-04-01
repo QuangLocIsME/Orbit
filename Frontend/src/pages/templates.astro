@@ -1,0 +1,15 @@
+---
+// Workflow Templates Page v1.0.2
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import WorkflowTemplates from '@/components/features/WorkflowTemplates';
+
+import templatesData from '@/data/templates.json';
+---
+
+<DashboardLayout title="Workflow Templates - ORBIT" pageTitle="Workflow">
+  <WorkflowTemplates 
+    client:load 
+    templates={templatesData.templates} 
+    allTags={templatesData.tags} 
+  />
+</DashboardLayout>

@@ -1,0 +1,8 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AuthForm from '../components/auth/AuthForm';
+---
+
+<BaseLayout title="Log in - ORBIT" description="Sign in to your ORBIT account">
+  <AuthForm mode="login" client:load />
+</BaseLayout>

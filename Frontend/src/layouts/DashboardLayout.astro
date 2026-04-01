@@ -1,0 +1,30 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Sidebar from '../components/layout/Sidebar';
+import Header from '../components/layout/Header.astro';
+import TopBar from '../components/layout/TopBar';
+
+interface Props {
+  title?: string;
+  pageTitle?: string;
+}
+
+const { title, pageTitle = 'Home' } = Astro.props;
+---
+
+<BaseLayout title={title}>
+  <div class="flex h-screen flex-col overflow-hidden">
+    <!-- Top Navigation Bar -->
+    <TopBar client:load currentPage={pageTitle} currentPath={Astro.url.pathname} />
+    
+    <div class="flex flex-1 overflow-hidden">
+      <Sidebar client:load currentPath={Astro.url.pathname} />
+      <div class="flex flex-1 flex-col overflow-hidden">
+        <Header pageTitle={pageTitle} />
+        <main class="flex-1 overflow-y-auto bg-background">
+          <slot />
+        </main>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
