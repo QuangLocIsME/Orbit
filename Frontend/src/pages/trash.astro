@@ -1,0 +1,10 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import TrashManager from '@/components/features/TrashManager';
+
+import trashData from '@/data/trash.json';
+---
+
+<DashboardLayout title="Trash - ORBIT" pageTitle="Trash">
+  <TrashManager client:load initialItems={trashData} />
+</DashboardLayout>

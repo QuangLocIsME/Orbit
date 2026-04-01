@@ -1,25 +1,8 @@
 ---
-import OrbitHeader from "../modules/project/component/orbit-header.jsx";
-import OrbitFooter from "../modules/project/component/orbit-footer.jsx";
-import RegisterForm from "../modules/auth/register/register-form.jsx";
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AuthForm from '../components/auth/AuthForm';
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Register — ORBIT</title>
-
-    <link rel="stylesheet" href="/src/modules/auth/register/register.css" />
-    <link rel="stylesheet" href="/src/modules/auth/login/orbit-footer.css" />
-  </head>
-
-  <body>
-    <OrbitHeader />
-
-    <main class="auth-wrapper">
-      <RegisterForm client:load />
-    </main>
-
-    <OrbitFooter />
-  </body>
-</html>
+<BaseLayout title="Create Account - ORBIT" description="Create your ORBIT account and start collaborating">
+  <AuthForm mode="register" client:load />
+</BaseLayout>

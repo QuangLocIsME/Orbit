@@ -1,0 +1,50 @@
+[
+  {
+    "id": "digital-products",
+    "name": "Digital Products",
+    "color": "blue",
+    "projectCount": 5
+  },
+  {
+    "id": "marketing-creative",
+    "name": "Marketing & Creative",
+    "color": "cyan",
+    "projectCount": 2
+  },
+  {
+    "id": "infrastructure",
+    "name": "Infrastructure Projects",
+    "color": "orange",
+    "projectCount": 5
+  },
+  {
+    "id": "research",
+    "name": "Research & Insights",
+    "color": "purple",
+    "projectCount": 2
+  },
+  {
+    "id": "finance",
+    "name": "Finance & Operations",
+    "color": "green",
+    "projectCount": 0
+  },
+  {
+    "id": "hr",
+    "name": "HR & Training",
+    "color": "pink",
+    "projectCount": 0
+  },
+  {
+    "id": "sales",
+    "name": "Sales & Partnerships",
+    "color": "red",
+    "projectCount": 0
+  },
+  {
+    "id": "archived",
+    "name": "Archived Projects",
+    "color": "gray",
+    "projectCount": 0
+  }
+]

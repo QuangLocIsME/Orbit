@@ -1,0 +1,52 @@
+---
+import PackageLayout from '@/layouts/PackageLayout.astro';
+import PackageDetailPage from '@/components/features/PackageDetailPage';
+
+import packagesData from '@/data/packages.json';
+
+interface Package {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  status: 'active' | 'completed' | 'on-hold';
+  progress: number;
+  tasksCompleted: number;
+  totalTasks: number;
+  dueDate: string;
+  lastActivity: string;
+  icon: string;
+  color: string;
+  team: any[];
+  documentsCount: number;
+  recentActivity: any[];
+  recentTasks: any[];
+}
+
+export function getStaticPaths() {
+  const packages = packagesData as Package[];
+  return packages.map(pkg => ({
+    params: { slug: pkg.slug },
+    props: { pkg }
+  }));
+}
+
+interface Props {
+  pkg: Package;
+}
+
+const { pkg } = Astro.props;
+
+// For now, hardcode to Metro Station - Phase 2 project
+const projectName = "Metro Station - Phase 2";
+const projectSlug = "metro-station-phase-2";
+---
+
+<PackageLayout 
+  title={`${pkg.name} - ORBIT`}
+  projectName={projectName}
+  projectSlug={projectSlug}
+  packageName={pkg.name}
+>
+  <PackageDetailPage pkg={pkg} projectSlug={projectSlug} client:load />
+</PackageLayout>

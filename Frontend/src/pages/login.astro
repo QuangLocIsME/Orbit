@@ -1,27 +1,8 @@
 ---
-import OrbitHeader from "../modules/project/component/orbit-header.jsx";
-import OrbitFooter from "../modules/project/component/orbit-footer.jsx";
-import LoginForm from "../modules/auth/login/login-form.jsx";
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AuthForm from '../components/auth/AuthForm';
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Login — ORBIT</title>
-
-    <link rel="stylesheet" href="/src/modules/auth/login/login.css" />
-    <link rel="stylesheet" href="/src/modules/auth/login/orbit-footer.css" />
-  </head>
-
-  <body>
-
-    <OrbitHeader />
-
-    <main>
-      <LoginForm client:load />
-    </main>
-
-    <OrbitFooter />
-
-  </body>
-</html>
+<BaseLayout title="Log in - ORBIT" description="Sign in to your ORBIT account">
+  <AuthForm mode="login" client:load />
+</BaseLayout>

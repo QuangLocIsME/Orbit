@@ -330,11 +330,6 @@ class PackageController {
                     return badRequest(res, 'teamMemberIds must be an array');
                 }
                 updateFields.teamMemberIds = teamMemberIds;
-            if (member?.status !== 'accepted') {
-                return forbidden(res, 'Only project members can archive packages');
-            }
-            if (member?.role === 'viewer') {
-                return forbidden(res, 'Viewers do not have package management permission');
             }
 
             const updated = await PackageRepository.updateByPublicIdInProject(
