@@ -26,14 +26,6 @@ interface AddMemberModalProps {
 
 const permissions = [
   {
-    id: 'owner',
-    label: 'Owner',
-    description: 'Full control over the project and all settings',
-    badgeBg: 'bg-[#FAF5FF]',
-    badgeBorder: 'border-[#E9D4FF]',
-    badgeText: 'text-[#8200DB]',
-  },
-  {
     id: 'admin',
     label: 'Admin',
     description: 'Can manage project, members, and approve changes',
@@ -48,14 +40,6 @@ const permissions = [
     badgeBg: 'bg-[#EFF6FF]',
     badgeBorder: 'border-[#BEDBFF]',
     badgeText: 'text-[#1447E6]',
-  },
-  {
-    id: 'member',
-    label: 'Member',
-    description: 'Can create and edit content, submit changes',
-    badgeBg: 'bg-[#F0FDF4]',
-    badgeBorder: 'border-[#B9F8CF]',
-    badgeText: 'text-[#008236]',
   },
   {
     id: 'viewer',
@@ -76,7 +60,7 @@ export default function AddMemberModal({
 }: AddMemberModalProps) {
   const [email, setEmail] = useState('');
   const [jobTitle, setJobTitle] = useState('');
-  const [selectedPermission, setSelectedPermission] = useState('member');
+  const [selectedPermission, setSelectedPermission] = useState('viewer');
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
 
   if (!isOpen) return null;
@@ -91,7 +75,7 @@ export default function AddMemberModal({
     // Reset form
     setEmail('');
     setJobTitle('');
-    setSelectedPermission('member');
+    setSelectedPermission('viewer');
     setSelectedTeams([]);
     onClose();
   };

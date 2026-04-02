@@ -162,6 +162,79 @@ export default function HomeDashboard({ projects, events, tasks }: Omit<HomeDash
     if (u) {
       try { setDisplayUserName(JSON.parse(u).fullName || ''); } catch { /* ignore */ }
     }
+
+    // Background prefetch — populate the cache that ProjectsManager reads so
+    // navigating to /projects hits sessionStorage instead of making a new API call.
+    let cancelled = false;
+    const PROJECTS_KEY = 'orbit:projects:me';
+    const FOLDERS_KEY  = 'orbit:folders:me';
+
+    function toSlug(name: string): string {
+      return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
+    function mapProject(p: Record<string, unknown>) {
+      return {
+        id:          p.publicId ?? p.id,
+        name:        p.name ?? '',
+        slug:        toSlug((p.name as string) || (p.publicId as string) || ''),
+        description: p.description ?? '',
+        thumbnail:   (p.thumbnailUrl ?? p.thumbnail ?? '') as string,
+        lastVisited: p.updatedAt ?? p.lastVisited ?? new Date().toISOString(),
+        category:    (p.category ?? 'private') as string,
+        progress:    (p.progress ?? 0) as number,
+        teamMembers: (p.memberCount ?? p.teamMembers ?? 0) as number,
+        issues:      (p.issueCount ?? p.issues ?? 0) as number,
+        status:      (p.status ?? 'active') as string,
+        projectType: (p.projectType ?? 'software') as string,
+        isFavorite:  Boolean(p.isFavorite),
+      };
+    }
+    function mapFolder(f: Record<string, unknown>) {
+      return {
+        id:       f.publicId ?? f.id,
+        name:     f.name ?? '',
+        projects: (f.projects ?? []) as unknown[],
+        color:    (f.color ?? '#6b7280') as string,
+      };
+    }
+
+    const existingProjects = sessionStorage.getItem(PROJECTS_KEY);
+    if (existingProjects) {
+      try {
+        const cached = JSON.parse(existingProjects);
+        if (cached.expiresAt && cached.expiresAt > Date.now()) return; // still valid
+      } catch { /* fall through */ }
+    }
+
+    (async () => {
+      try {
+        const res = await fetch('/api/projects/me', { credentials: 'include' });
+        if (!res.ok || cancelled) return;
+        const json = await res.json();
+        const raw: Record<string, unknown>[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json.data) ? json.data : [];
+        if (cancelled) return;
+        sessionStorage.setItem(PROJECTS_KEY, JSON.stringify({
+          data: raw.map(mapProject),
+          expiresAt: Date.now() + 30_000,
+        }));
+
+        const fRes = await fetch('/api/folders/me', { credentials: 'include' });
+        if (!fRes.ok || cancelled) return;
+        const fJson = await fRes.json();
+        const rawF: Record<string, unknown>[] = Array.isArray(fJson)
+          ? fJson
+          : Array.isArray(fJson.data) ? fJson.data : [];
+        if (cancelled) return;
+        sessionStorage.setItem(FOLDERS_KEY, JSON.stringify({
+          data: rawF.map(mapFolder),
+          expiresAt: Date.now() + 45_000,
+        }));
+      } catch { /* silently ignore — ProjectsManager has its own fallback */ }
+    })();
+
+    return () => { cancelled = true; };
   }, []);
 
   // Sort projects - prioritize Metro Station and Office Complex first, then by last visited

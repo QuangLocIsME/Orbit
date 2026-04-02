@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-client';
 import AddMemberModal from './AddMemberModal';
 
 interface TeamMember {
@@ -28,7 +30,7 @@ interface Team {
   members: TeamMember[];
 }
 
-const teamMembers: TeamMember[] = [
+const mockTeamMembers: TeamMember[] = [
   { id: '1', name: 'Thao Duyen', role: 'Project Owner', email: 'thao.duyen@company.com', initials: 'TD', avatarColor: 'bg-gray-200', badge: 'Owner', joinedDate: 'Jan 2024', teamsCount: 2, teams: ['Architecture', 'BIM'] },
   { id: '2', name: 'Minh Anh', role: 'Project Manager', email: 'minh.anh@orbit.vn', initials: 'MA', avatarColor: 'bg-[#EC4899]', badge: 'Admin', joinedDate: 'Jan 2024', teamsCount: 1, teams: ['Architecture'] },
   { id: '3', name: 'Hoàng Nam', role: 'Lead Architect', email: 'hoang.nam@orbit.vn', initials: 'HN', avatarColor: 'bg-[#14B8A6]', badge: 'Manager', joinedDate: 'Feb 2024', teamsCount: 1, teams: ['Architecture'] },
@@ -50,8 +52,8 @@ const teams: Team[] = [
     icon: 'architecture',
     iconColor: 'text-white',
     iconBg: 'bg-[#3B82F6]',
-    lead: teamMembers[2], // Hoàng Nam
-    members: [teamMembers[0], teamMembers[1], teamMembers[2], teamMembers[6], teamMembers[9]],
+    lead: mockTeamMembers[2], // Hoàng Nam
+    members: [mockTeamMembers[0], mockTeamMembers[1], mockTeamMembers[2], mockTeamMembers[6], mockTeamMembers[9]],
   },
   {
     id: '2',
@@ -60,8 +62,8 @@ const teams: Team[] = [
     icon: 'structural',
     iconColor: 'text-white',
     iconBg: 'bg-[#10B981]',
-    lead: teamMembers[3], // Thu Trang
-    members: [teamMembers[3], teamMembers[8]],
+    lead: mockTeamMembers[3], // Thu Trang
+    members: [mockTeamMembers[3], mockTeamMembers[8]],
   },
   {
     id: '3',
@@ -70,8 +72,8 @@ const teams: Team[] = [
     icon: 'mep',
     iconColor: 'text-white',
     iconBg: 'bg-[#F59E0B]',
-    lead: teamMembers[4], // Tuấn Kiệt
-    members: [teamMembers[4], teamMembers[7], teamMembers[10]],
+    lead: mockTeamMembers[4], // Tuấn Kiệt
+    members: [mockTeamMembers[4], mockTeamMembers[7], mockTeamMembers[10]],
   },
   {
     id: '4',
@@ -80,8 +82,8 @@ const teams: Team[] = [
     icon: 'bim',
     iconColor: 'text-white',
     iconBg: 'bg-[#F97316]',
-    lead: teamMembers[5], // Olivia Turner
-    members: [teamMembers[5]],
+    lead: mockTeamMembers[5], // Olivia Turner
+    members: [mockTeamMembers[5]],
   },
 ];
 
@@ -123,32 +125,102 @@ const TeamIcon = ({ type, className }: { type: string; className?: string }) => 
   }
 };
 
-interface TeamsTabProps {
-  projectName?: string;
+interface ApiProjectMember {
+  projectId: string;
+  userId: string;
+  role: string;
+  status: string;
+  invitedBy: string | null;
+  createdAt: string;
+  fullName?: string;
+  email?: string;
+  avatar?: string;
 }
 
-export default function TeamsTab({ projectName = 'Metro Station - Phase 2' }: TeamsTabProps) {
+interface TeamsTabProps {
+  projectId?: string;
+  projectName?: string;
+  teamMembers?: ApiProjectMember[];
+}
+
+function toInitials(input: string): string {
+  const value = input.trim();
+  if (!value) return 'U';
+  const parts = value.split(/\s+/).slice(0, 2);
+  return parts.map((part) => part.charAt(0).toUpperCase()).join('');
+}
+
+export default function TeamsTab({ projectId, projectName = 'Metro Station - Phase 2', teamMembers = [] }: TeamsTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeView, setActiveView] = useState<'members' | 'teams'>('members');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
 
+  const resolvedMembers = useMemo<TeamMember[]>(() => {
+    if (!teamMembers.length) return mockTeamMembers;
+
+    return teamMembers.map((member, index) => {
+      const roleName = member.role ? member.role.charAt(0).toUpperCase() + member.role.slice(1) : 'Viewer';
+      const normalizedBadge =
+        member.role === 'owner'
+          ? 'Owner'
+          : member.role === 'admin'
+            ? 'Admin'
+            : member.role === 'manager'
+              ? 'Manager'
+              : 'Member';
+
+      const displayName = member.fullName?.trim() || `User ${member.userId.slice(0, 6)}`;
+      const displayEmail = member.email?.trim() || `${member.userId}@orbit.local`;
+
+      return {
+        id: `${member.userId}-${index}`,
+        name: displayName,
+        role: roleName,
+        email: displayEmail,
+        initials: toInitials(displayName),
+        avatarColor: index % 2 === 0 ? 'bg-[#3B82F6]' : 'bg-[#14B8A6]',
+        badge: normalizedBadge,
+        joinedDate: member.createdAt ? new Date(member.createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'N/A',
+        teamsCount: 1,
+        teams: ['Project Team'],
+      };
+    });
+  }, [teamMembers]);
+
+  const resolvedTeams = useMemo<Team[]>(() => {
+    if (!teamMembers.length) return teams;
+
+    return [
+      {
+        id: projectId || 'project-team',
+        name: `${projectName} Team`,
+        description: 'Project members synced from server',
+        icon: 'bim',
+        iconColor: 'text-white',
+        iconBg: 'bg-[#155DFC]',
+        lead: resolvedMembers[0],
+        members: resolvedMembers,
+      },
+    ];
+  }, [teamMembers.length, projectId, projectName, resolvedMembers]);
+
   // Teams data for modal
-  const modalTeams = teams.map(t => ({
+  const modalTeams = resolvedTeams.map((t) => ({
     id: t.id,
     name: t.name,
     description: t.description,
-    color: t.iconColor === '#2B7FFF' ? 'blue' : t.iconColor === '#00BC7D' ? 'green' : t.iconColor === '#F59E0B' ? 'yellow' : 'orange',
+    color: 'blue',
     memberCount: t.members.length,
   }));
 
-  const filteredMembers = teamMembers.filter(member =>
+  const filteredMembers = resolvedMembers.filter((member) =>
     member.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     member.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
     member.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredTeams = teams.filter(team =>
+  const filteredTeams = resolvedTeams.filter((team) =>
     team.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     team.description.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -201,7 +273,7 @@ export default function TeamsTab({ projectName = 'Metro Station - Phase 2' }: Te
               )}
             >
               <span>Members</span>
-              <span className="text-[12px] text-[#6A7282]">({teamMembers.length})</span>
+              <span className="text-[12px] text-[#6A7282]">({resolvedMembers.length})</span>
             </button>
             <button
               onClick={() => setActiveView('teams')}
@@ -213,7 +285,7 @@ export default function TeamsTab({ projectName = 'Metro Station - Phase 2' }: Te
               )}
             >
               <span>Teams</span>
-              <span className="text-[12px] text-[#6A7282]">({teams.length})</span>
+              <span className="text-[12px] text-[#6A7282]">({resolvedTeams.length})</span>
             </button>
           </div>
 
@@ -439,8 +511,34 @@ export default function TeamsTab({ projectName = 'Metro Station - Phase 2' }: Te
         onClose={() => setIsAddMemberModalOpen(false)}
         projectName={projectName}
         teams={modalTeams}
-        onSubmit={(data) => {
-          console.log('New member invited:', data);
+        onSubmit={async (data) => {
+          if (!projectId) {
+            toast.error('Missing project id');
+            return;
+          }
+
+          const request = apiFetch('/api/invite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              email: data.email,
+              role: data.permission,
+            }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const payload = await res.json().catch(() => null);
+              throw new Error(payload?.message || 'Invite member failed');
+            }
+            return res.json();
+          });
+
+          await toast.promise(request, {
+            loading: 'Inviting member...',
+            success: 'Invitation sent',
+            error: (err) => err?.message || 'Invite member failed',
+          });
+
           setIsAddMemberModalOpen(false);
         }}
       />

@@ -1,20 +1,9 @@
 ---
 export const prerender = false;
 import DashboardLayout from '@/layouts/DashboardLayout.astro';
-import ProjectsManager from '@/components/features/ProjectsManager';
-
-import projectsData from '@/data/projects.json';
-import foldersData from '@/data/folders.json';
-import type { Project, Folder } from '@/types';
-
-const projects = projectsData as Project[];
-const folders = foldersData as Folder[];
+import ProjectsPageClient from '@/components/features/ProjectsPageClient';
 ---
 
 <DashboardLayout title="Projects - ORBIT" pageTitle="Project">
-  <ProjectsManager 
-    client:load 
-    initialFolders={folders} 
-    initialProjects={projects} 
-  />
+  <ProjectsPageClient client:load />
 </DashboardLayout>

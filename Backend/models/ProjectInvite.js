@@ -5,8 +5,8 @@ const ProjectInviteSchema = new mongoose.Schema({
     email: { type: String, required: true, lowercase: true, trim: true },
     role: {
         type: String,
-        enum: ['admin', 'member', 'viewer'],
-        default: 'member',
+        enum: ['admin', 'manager', 'viewer'],
+        default: 'viewer',
     },
     tokenHash: { type: String, required: true, unique: true },
     status: {

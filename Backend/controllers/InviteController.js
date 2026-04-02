@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const UserRepository = require('../repositories/UserRepository');
+const { notifyUser } = require('../services/socketService');
 const { errorResponse } = require('../utils/response');
 
 const INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
@@ -15,9 +16,24 @@ class InviteController {
             const { projectId, email, role } = req.body || {};
             const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
             const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-            const normalizedRole = typeof role === 'string' ? role.trim() : '';
+            const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : '';
             if (!normalizedProjectId || !normalizedEmail) {
                 return errorResponse(res, 400, 'Missing projectId or email');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return errorResponse(res, 401, 'Unauthorized');
+            }
+
+            const requester = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!requester || !['owner', 'admin'].includes(requester.role)) {
+                return errorResponse(res, 403, 'Forbidden');
+            }
+
+            const allowedInviteRoles = ['admin', 'manager', 'viewer'];
+            if (normalizedRole && !allowedInviteRoles.includes(normalizedRole)) {
+                return errorResponse(res, 400, 'Role must be admin, manager or viewer');
             }
 
             const token = crypto.randomBytes(32).toString('hex');
@@ -26,12 +42,25 @@ class InviteController {
             const invite = await ProjectInviteRepository.createInvite({
                 projectId: normalizedProjectId,
                 email: normalizedEmail,
-                role: normalizedRole || 'member',
+                role: normalizedRole || 'viewer',
                 tokenHash,
                 status: 'pending',
-                invitedBy: req.user?.id || 'system',
+                invitedBy: userId,
                 expiresAt: new Date(Date.now() + INVITE_EXPIRES_MS),
             });
+
+            const invitedUser = await UserRepository.findByEmail(normalizedEmail);
+            if (invitedUser?._id) {
+                notifyUser(String(invitedUser._id), 'notification:new', {
+                    id: crypto.randomUUID(),
+                    type: 'info',
+                    title: 'New project invitation',
+                    message: `You were invited to project ${normalizedProjectId} as ${invite.role}`,
+                    link: '/projects',
+                    createdAt: new Date().toISOString(),
+                    read: false,
+                });
+            }
 
             return res.status(201).json({
                 success: true,

@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-client';
 import type { Project } from '@/types';
 import PackagesManager from './PackagesManager';
 import packagesData from '@/data/packages.json';
@@ -16,6 +18,53 @@ import SettingsTab from './SettingsTab';
 
 interface ProjectDetailPageProps {
   project: Project;
+}
+
+interface ApiProjectDetail {
+  publicId: string;
+  name?: string;
+  description?: string;
+  industry?: string;
+  coverImageUrl?: string;
+  status?: string;
+}
+
+interface ApiProjectMember {
+  projectId: string;
+  userId: string;
+  role: string;
+  status: string;
+  invitedBy: string | null;
+  createdAt: string;
+}
+
+async function fetchProjectDetail(projectId: string): Promise<ApiProjectDetail | null> {
+  const response = await apiFetch('/api/projects/me', {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) return null;
+
+  const payload = await response.json();
+  const items: ApiProjectDetail[] = Array.isArray(payload?.data) ? payload.data : [];
+  return items.find((item) => item.publicId === projectId) ?? null;
+}
+
+async function fetchProjectMembers(projectId: string): Promise<ApiProjectMember[]> {
+  const response = await apiFetch('/api/projects/member-list', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ projectId }),
+  });
+
+  if (!response.ok) return [];
+
+  const payload = await response.json();
+  return Array.isArray(payload?.data) ? payload.data : [];
 }
 
 // Mock data for project details
@@ -451,6 +500,38 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 
 export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
+
+  const { data: projectDetail } = useQuery({
+    queryKey: ['project-detail', project.id],
+    queryFn: () => fetchProjectDetail(project.id),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+
+  const { data: teamMembers = [] } = useQuery({
+    queryKey: ['project-members', project.id],
+    queryFn: () => fetchProjectMembers(project.id),
+    staleTime: 20_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+
+  const effectiveProject: Project = {
+    ...project,
+    id: project.id,
+    slug: project.id,
+    name: projectDetail?.name || project.name,
+    description: projectDetail?.description ?? project.description,
+    thumbnail: projectDetail?.coverImageUrl || project.thumbnail,
+    coverImage: projectDetail?.coverImageUrl || project.coverImage,
+    status: projectDetail?.status ? (projectDetail.status === 'accepted' ? 'active' : projectDetail.status) : project.status,
+    projectType: projectDetail?.industry ? projectDetail.industry.toLowerCase() : project.projectType,
+    teamMembers: teamMembers.length || project.teamMembers,
+  };
+
   const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
   
   // Check for stored tab on mount (used when navigating back from package detail)
@@ -559,7 +640,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   };
 
   const getProjectTypeIcon = () => {
-    switch (project.projectType) {
+    switch (effectiveProject.projectType) {
       case 'software':
         return <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />;
       case 'design':
@@ -577,8 +658,8 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const projectStats = {
     documents: 48,
     versions: 124,
-    teamMembers: project.teamMembers,
-    openClashes: project.issues,
+    teamMembers: effectiveProject.teamMembers,
+    openClashes: effectiveProject.issues,
     startDate: 'Jan 15, 2024',
     deadline: 'Dec 15, 2025',
   };
@@ -587,8 +668,8 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
     <div className="min-h-screen bg-background pt-[105px]">
       {/* Project Top Bar with Navigation - Fixed */}
       <ProjectTopBar 
-        projectName={project.name} 
-        projectSlug={project.slug} 
+        projectName={effectiveProject.name} 
+        projectSlug={effectiveProject.id} 
         activeTab={activeTab}
         onTabChange={setActiveTab}
       />
@@ -597,20 +678,20 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
       {activeTab === 'overview' && (
         <div className="relative h-52 flex items-end overflow-hidden">
           {/* Background Image - Use thumbnail or coverImage */}
-          {(project.thumbnail || project.coverImage) ? (
+          {(effectiveProject.thumbnail || effectiveProject.coverImage) ? (
             <img 
-              src={project.coverImage || project.thumbnail} 
-              alt={project.name}
+              src={effectiveProject.coverImage || effectiveProject.thumbnail} 
+              alt={effectiveProject.name}
               className="absolute inset-0 w-full h-full object-cover"
             />
           ) : (
             <div className={cn(
               "absolute inset-0",
-              project.projectType === 'software' && "bg-gradient-to-r from-indigo-600 to-blue-600",
-              project.projectType === 'design' && "bg-gradient-to-r from-purple-600 to-pink-600",
-              project.projectType === 'construction' && "bg-gradient-to-r from-slate-700 to-slate-900",
-              project.projectType === 'research' && "bg-gradient-to-r from-teal-600 to-emerald-600",
-              !project.projectType && "bg-gradient-to-r from-gray-600 to-gray-800"
+              effectiveProject.projectType === 'software' && "bg-gradient-to-r from-indigo-600 to-blue-600",
+              effectiveProject.projectType === 'design' && "bg-gradient-to-r from-purple-600 to-pink-600",
+              effectiveProject.projectType === 'construction' && "bg-gradient-to-r from-slate-700 to-slate-900",
+              effectiveProject.projectType === 'research' && "bg-gradient-to-r from-teal-600 to-emerald-600",
+              !effectiveProject.projectType && "bg-gradient-to-r from-gray-600 to-gray-800"
             )}>
               {/* Background pattern overlay */}
               <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4xIj48cGF0aCBkPSJNMzYgMzRjMC0yLjIgMS44LTQgNC00czQgMS44IDQgNC0xLjggNC00IDQtNC0xLjgtNC00Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-20"></div>
@@ -623,10 +704,10 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
           <div className="relative w-full px-[300px] pb-6">
             <div className="flex items-center gap-2 text-white/80 text-sm mb-2">
               <ClockIcon className="h-4 w-4" />
-              <span>Last updated {formatRelativeTime(project.lastVisited)}</span>
+              <span>Last updated {formatRelativeTime(effectiveProject.lastVisited)}</span>
             </div>
-            <h1 className="text-3xl font-bold text-white mb-2">{project.name}</h1>
-            <p className="text-white/80">{project.description}</p>
+            <h1 className="text-3xl font-bold text-white mb-2">{effectiveProject.name}</h1>
+            <p className="text-white/80">{effectiveProject.description}</p>
           </div>
         </div>
       )}
@@ -647,9 +728,9 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</p>
             <p className={cn(
               "mt-1 inline-block rounded-full px-3 py-1 text-sm font-medium text-white capitalize",
-              getStatusColor(project.status)
+              getStatusColor(effectiveProject.status)
             )}>
-              {project.status}
+              {effectiveProject.status}
             </p>
           </div>
           <div>
@@ -658,10 +739,10 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-indigo-600 rounded-full transition-all"
-                  style={{ width: `${project.progress}%` }}
+                  style={{ width: `${effectiveProject.progress}%` }}
                 />
               </div>
-              <span className="text-sm font-medium text-foreground">{project.progress}%</span>
+              <span className="text-sm font-medium text-foreground">{effectiveProject.progress}%</span>
             </div>
           </div>
           <div>
@@ -2631,7 +2712,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
         {/* Teams Tab */}
         {activeTab === 'teams' && (
-          <TeamsTab projectName={project.name} />
+          <TeamsTab projectId={effectiveProject.id} projectName={effectiveProject.name} teamMembers={teamMembers} />
         )}
 
         {/* Extensions Tab */}
@@ -2641,7 +2722,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
         {/* Settings Tab */}
         {activeTab === 'settings' && (
-          <SettingsTab projectName={project.name} projectCode={project.id} projectDescription={project.description} />
+          <SettingsTab projectName={effectiveProject.name} projectCode={effectiveProject.id} projectDescription={effectiveProject.description} />
         )}
   
         {/* Other Tabs - Placeholder (only for tabs without content yet) */}
