@@ -7,10 +7,13 @@ import { toast } from '@/components/ui/sonner';
 import type { Project } from '@/types';
 import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
-import ProjectTopBar from '@/components/layout/ProjectTopBar';
+import packagesData from '@/data/packages.json';
+import ProjectTopBar from '../../components/layout/ProjectTopBar';
 import CreateTaskModal from './CreateTaskModal';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
 import ClashesTab from './ClashesTab';
+import UnsavedChangesDialog from 'components/ui/UnsavedChangesDialog.tsx';
+import { ClashViewerProvider, useClashViewerStore } from '@/store/clashStore';
 import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
@@ -405,7 +408,7 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
   </svg>
 );
 
-export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
+function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isFavorite, setIsFavorite] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
@@ -467,6 +470,9 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
     fetchProjectOverviewData();
     return () => { cancelled = true; };
   }, [project.publicId]);
+  const [pendingTabSwitch, setPendingTabSwitch] = useState<string | null>(null);
+  const clashStore = useClashViewerStore();
+  const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
   
   // Check for stored tab on mount (used when navigating back from package detail)
   useEffect(() => {
@@ -685,14 +691,48 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
     deadline: 'Dec 15, 2025',
   };
 
+  const handleTabChange = (nextTab: string) => {
+    if (activeTab === 'clashes' && nextTab !== 'clashes' && clashStore.hasAnyUnsavedSceneChanges()) {
+      setPendingTabSwitch(nextTab);
+      return;
+    }
+    setActiveTab(nextTab);
+  };
+
   return (
     <div className="min-h-screen bg-background pt-[105px]">
+      <UnsavedChangesDialog
+        open={pendingTabSwitch !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) setPendingTabSwitch(null);
+        }}
+        title="Unsaved position changes"
+        description="You have unsaved object positions on the Clashes tab. Save them, discard them, or stay on Clashes."
+        onSave={async () => {
+          if (pendingTabSwitch === null) return;
+          const next = pendingTabSwitch;
+          clashStore.saveAllDirtyScenes();
+          setActiveTab(next);
+          setPendingTabSwitch(null);
+        }}
+        onDiscard={() => {
+          if (pendingTabSwitch === null) return;
+          const next = pendingTabSwitch;
+          clashStore.discardAllDirtyScenes();
+          setActiveTab(next);
+          setPendingTabSwitch(null);
+        }}
+        saveLabel="Save positions"
+        discardLabel="Discard"
+        cancelLabel="Stay on Clashes"
+      />
+
       {/* Project Top Bar with Navigation - Fixed */}
       <ProjectTopBar
         projectName={project.name}
         projectSlug={project.publicId}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
       />
 
       {/* Hero Section - Only show on Overview tab */}
@@ -2498,7 +2538,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
         {/* Clashes Tab */}
         {activeTab === 'clashes' && (
-          <ClashesTab />
+          <ClashesTab projectSlug={project.slug} />
         )}
 
         {/* Teams Tab */}
@@ -2589,4 +2629,10 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   );
 }
 
-
+export default function ProjectDetailPage(props: ProjectDetailPageProps) {
+  return (
+    <ClashViewerProvider projectSlug={props.project.slug}>
+      <ProjectDetailPageContent {...props} />
+    </ClashViewerProvider>
+  );
+}

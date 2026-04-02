@@ -29,15 +29,38 @@ const { attachSocket } = require('./services/socketService');
 const app = express();
 const httpServer = http.createServer(app);
 
+/** Global limiter — áp dụng cho auth và các route nhạy cảm */
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 300,
+    limit: 500,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: {
         success: false,
         message: 'Too many requests, please try again later.',
     },
+    // Bỏ qua clash routes — chúng có limiter riêng thoải mái hơn
+    skip: (req) => req.path.includes('/clashes') || req.path.includes('/clash-detect'),
+});
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+/**
+ * Clash API limiter.
+ * Dev: tắt hoàn toàn (skip mọi request) để không block trong development.
+ * Production: 300 req / 15 min / IP.
+ */
+const clashLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: 'Too many clash detection requests, please slow down.',
+    },
+    // Trong development: bỏ qua hoàn toàn — không giới hạn
+    skip: () => !IS_PRODUCTION,
 });
 
 app.use(express.json());
@@ -63,7 +86,7 @@ app.use('/api/projects/packages', packageRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/ws', wsRoutes);
-app.use('/api', clashRoutes);
+app.use('/api', clashLimiter, clashRoutes);
 
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError) {
