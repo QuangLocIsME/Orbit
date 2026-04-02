@@ -2,7 +2,7 @@ const Project = require('../models/Project');
 const Folder = require('../models/Folder');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
-const UserRepository = require('../repositories/UserRepository');
+const { getJson, setJson, delKeys } = require('../services/cacheService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -23,6 +23,12 @@ const requireUserId = (req, res) => {
         return null;
     }
     return userId;
+};
+
+const getProjectsCacheKey = (userId) => `projects:me:${userId}`;
+const getFoldersCacheKey = (userId) => `folders:me:${userId}`;
+const invalidateUserCaches = async (userId) => {
+    await delKeys([getProjectsCacheKey(userId), getFoldersCacheKey(userId)]);
 };
 
 class ProjectController {
@@ -59,6 +65,8 @@ class ProjectController {
                 invitedBy: null,
             });
 
+            await invalidateUserCaches(userId);
+
             return res.status(201).json({
                 success: true,
                 message: 'Project created',
@@ -80,6 +88,16 @@ class ProjectController {
         try {
             const userId = requireUserId(req, res);
             if (!userId) return;
+
+            const cacheKey = getProjectsCacheKey(userId);
+            const cachedData = await getJson(cacheKey);
+            if (cachedData) {
+                return res.status(200).json({
+                    success: true,
+                    data: cachedData,
+                    cached: true,
+                });
+            }
 
             const memberships = await ProjectMemberRepository.getProjectsByUser(userId);
             const projectIds = memberships.map((membership) => membership.projectId);
@@ -105,6 +123,8 @@ class ProjectController {
                     status: membership?.status || 'accepted',
                 };
             });
+
+            await setJson(cacheKey, data, 60);
 
             return res.status(200).json({
                 success: true,
@@ -196,6 +216,8 @@ class ProjectController {
                 return notFound(res, 'Project not found');
             }
 
+            await invalidateUserCaches(userId);
+
             return res.status(200).json({
                 success: true,
                 message: 'Project updated',
@@ -236,6 +258,8 @@ class ProjectController {
             await Project.deleteOne({ publicId: normalizedProjectId });
             await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
             await ProjectInviteRepository.removeByProject(normalizedProjectId);
+
+            await invalidateUserCaches(userId);
 
             return res.status(200).json({
                 success: true,
@@ -290,6 +314,8 @@ class ProjectController {
             project.updatedAt = new Date();
             await project.save();
 
+            await invalidateUserCaches(userId);
+
             return res.status(200).json({
                 success: true,
                 message: 'Project moved',
@@ -333,6 +359,8 @@ class ProjectController {
             if (!project) {
                 return notFound(res, 'Project not found');
             }
+
+            await invalidateUserCaches(userId);
 
             return res.status(200).json({
                 success: true,

@@ -1,4 +1,5 @@
 const Folder = require('../models/Folder');
+const { getJson, setJson, delKeys } = require('../services/cacheService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -14,6 +15,12 @@ const requireUserId = (req, res) => {
         return null;
     }
     return userId;
+};
+
+const getFoldersCacheKey = (userId) => `folders:me:${userId}`;
+const getProjectsCacheKey = (userId) => `projects:me:${userId}`;
+const invalidateUserCaches = async (userId) => {
+    await delKeys([getFoldersCacheKey(userId), getProjectsCacheKey(userId)]);
 };
 
 class FolderController {
@@ -43,6 +50,8 @@ class FolderController {
                 updatedAt: new Date(),
             });
 
+            await invalidateUserCaches(userId);
+
             return res.status(201).json({
                 success: true,
                 message: 'Folder created',
@@ -65,9 +74,21 @@ class FolderController {
             const userId = requireUserId(req, res);
             if (!userId) return;
 
+            const cacheKey = getFoldersCacheKey(userId);
+            const cachedData = await getJson(cacheKey);
+            if (cachedData) {
+                return res.status(200).json({
+                    success: true,
+                    data: cachedData,
+                    cached: true,
+                });
+            }
+
             const folders = await Folder.find({ ownerId: userId })
                 .sort({ sortOrder: 1, createdAt: 1 })
                 .select('-_id publicId name description color sortOrder createdAt updatedAt');
+
+            await setJson(cacheKey, folders, 60);
 
             return res.status(200).json({
                 success: true,
@@ -122,6 +143,8 @@ class FolderController {
                 return notFound(res, 'Folder not found');
             }
 
+            await invalidateUserCaches(userId);
+
             return res.status(200).json({
                 success: true,
                 message: 'Folder updated',
@@ -153,6 +176,8 @@ class FolderController {
             if (!folder) {
                 return notFound(res, 'Folder not found');
             }
+
+            await invalidateUserCaches(userId);
 
             return res.status(200).json({
                 success: true,

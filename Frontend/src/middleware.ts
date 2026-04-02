@@ -6,7 +6,16 @@ const PUBLIC_PATHS = new Set([
   '/login',
   '/register',
   '/forgot-password',
+  '/forget-password',
   '/landing',
+]);
+
+// Routes that authenticated users should not access
+const GUEST_ONLY_PATHS = new Set([
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/forget-password',
 ]);
 
 const PUBLIC_PREFIXES = ['/auth/', '/api/', '/_astro/', '/favicon', '/_image'];
@@ -14,16 +23,26 @@ const PUBLIC_PREFIXES = ['/auth/', '/api/', '/_astro/', '/favicon', '/_image'];
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url;
 
-  // Always allow public paths and prefixes (assets, API proxy, etc.)
-  if (
-    PUBLIC_PATHS.has(pathname) ||
-    PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
-  ) {
+  const accessToken = context.cookies.get('accessToken')?.value;
+  const refreshToken = context.cookies.get('refreshToken')?.value;
+
+  // Static/public prefixes should always pass through
+  if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
     return next();
   }
 
-  const accessToken = context.cookies.get('accessToken')?.value;
-  const refreshToken = context.cookies.get('refreshToken')?.value;
+  // Guest-only pages: if valid auth cookie exists, redirect away
+  if (GUEST_ONLY_PATHS.has(pathname)) {
+    if (accessToken || refreshToken) {
+      return context.redirect('/home');
+    }
+    return next();
+  }
+
+  // Other public pages still accessible for everyone
+  if (PUBLIC_PATHS.has(pathname)) {
+    return next();
+  }
 
   // No tokens at all → redirect to login
   if (!accessToken && !refreshToken) {
@@ -50,8 +69,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
       return context.redirect('/login');
     }
 
+    const isGuestOnlyPage = GUEST_ONLY_PATHS.has(pathname);
+    const response = isGuestOnlyPage ? context.redirect('/home') : await next();
+
     // Forward the new Set-Cookie headers so the browser gets the new tokens
-    const response = await next();
     const setCookie = refreshRes.headers.get('set-cookie');
     if (setCookie) {
       // set-cookie may have multiple values joined; split on ", " only between directives

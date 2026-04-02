@@ -625,6 +625,11 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
 // Main Projects Manager Component
 export default function ProjectsManager({ initialFolders = [], initialProjects = [] }: ProjectsManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
+  const [folders, setFolders] = useState<Folder[]>(initialFolders);
+  const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
+  const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
+  const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -762,6 +767,90 @@ export default function ProjectsManager({ initialFolders = [], initialProjects =
     upsertProject(mapCreatedProjectToUiProject(project));
     await Promise.all([refetchProjects(), refetchFolders()]);
   };
+
+  const loadProjects = useCallback(async (
+    showLoading = false,
+    options?: { force?: boolean }
+  ): Promise<Project[]> => {
+    const shouldForce = options?.force === true;
+
+    if (!shouldForce && projectsCacheRef.current && projectsCacheRef.current.expiresAt > Date.now()) {
+      const cachedProjects = projectsCacheRef.current.data;
+      setProjects(cachedProjects);
+      return cachedProjects;
+    }
+
+    if (showLoading) {
+      setIsProjectsLoading(true);
+    }
+
+    try {
+      const response = await fetch('/api/projects/me', {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const payload = await response.json();
+      const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
+      const nextProjects = apiProjects.map(mapApiProjectToUiProject);
+      projectsCacheRef.current = {
+        data: nextProjects,
+        expiresAt: Date.now() + 30_000,
+      };
+      setProjects(nextProjects);
+      return nextProjects;
+    } catch {
+      return [];
+    } finally {
+      if (showLoading) {
+        setIsProjectsLoading(false);
+      }
+    }
+  }, []);
+
+  const loadFolders = useCallback(async (
+    projectsSource: Project[],
+    options?: { force?: boolean }
+  ) => {
+    const shouldForce = options?.force === true;
+
+    if (!shouldForce && foldersCacheRef.current && foldersCacheRef.current.expiresAt > Date.now()) {
+      const cachedFolders = foldersCacheRef.current.data;
+      setFolders(cachedFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/folders/me', {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      const apiFolders: ApiFolder[] = Array.isArray(payload?.data) ? payload.data : [];
+      foldersCacheRef.current = {
+        data: apiFolders,
+        expiresAt: Date.now() + 60_000,
+      };
+      setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+    } catch {
+      // keep fallback folders if API fails
+    }
+  }, []);
 
   const handleDropProjectToFolder = async (projectId: string, folderId: string) => {
     if (isMovingProject) return;
