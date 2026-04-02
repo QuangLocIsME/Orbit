@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { io, type Socket } from 'socket.io-client';
 import { motion } from 'framer-motion';
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
@@ -53,19 +54,18 @@ interface ApiProject {
   industry?: string;
   coverImageUrl?: string;
   folderId?: string | null;
+  folderIds?: string[];
   role?: string;
   status?: string;
 }
 
 interface ProjectsManagerProps {
-  initialFolders: Folder[];
-  initialProjects: Project[];
+  initialFolders?: Folder[];
+  initialProjects?: Project[];
 }
 
-const PROJECTS_CACHE_KEY = 'orbit:projects:me';
-const FOLDERS_CACHE_KEY = 'orbit:folders:me';
-const PROJECTS_CACHE_TTL_MS = 30_000;
-const FOLDERS_CACHE_TTL_MS = 45_000;
+const PROJECTS_QUERY_KEY = ['projects', 'me'] as const;
+const FOLDERS_QUERY_KEY = ['folders', 'me'] as const;
 
 // Folder colors matching the design
 const FOLDER_COLORS = [
@@ -143,6 +143,12 @@ function toSlug(value: string): string {
 }
 
 function mapApiProjectToUiProject(project: ApiProject): Project {
+  const folderIds = Array.isArray(project.folderIds)
+    ? project.folderIds
+    : project.folderId
+      ? [project.folderId]
+      : [];
+
   return {
     id: project.publicId,
     name: project.name,
@@ -157,7 +163,7 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     status: project.status === 'accepted' ? 'active' : 'planning',
     projectType: (project.industry || 'software').toLowerCase(),
     isFavorite: false,
-    folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
+    folderIds,
   };
 }
 
@@ -181,6 +187,37 @@ function mapCreatedProjectToUiProject(project: CreatedProjectPayload): Project {
     role: project.role,
     status: project.status,
   });
+}
+
+async function fetchProjects(): Promise<Project[]> {
+  const response = await fetch('/api/projects/me', {
+    method: 'GET',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error('Load projects failed');
+  }
+
+  const payload = await response.json();
+  const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
+  return apiProjects.map(mapApiProjectToUiProject);
+}
+
+async function fetchFolders(): Promise<ApiFolder[]> {
+  const response = await fetch('/api/folders/me', {
+    method: 'GET',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error('Load folders failed');
+  }
+
+  const payload = await response.json();
+  return Array.isArray(payload?.data) ? payload.data : [];
 }
 
 // Folder Icon Component
@@ -375,7 +412,8 @@ function ProjectListItem({ project, isDragging = false }: { project: Project; is
   return (
     <motion.a
       ref={setNodeRef}
-      href={`/projects/${project.slug}`}
+      href={`/projects/${project.id}`}
+      onClick={() => { localStorage.setItem(`orbit-pname-${project.id}`, project.name); }}
       {...attributes}
       {...listeners}
       layout
@@ -461,7 +499,8 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
   return (
     <motion.a
       ref={setNodeRef}
-      href={`/projects/${project.slug}`}
+      href={`/projects/${project.id}`}
+      onClick={() => { localStorage.setItem(`orbit-pname-${project.id}`, project.name); }}
       {...attributes}
       {...listeners}
       layout
@@ -584,11 +623,8 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
 }
 
 // Main Projects Manager Component
-export default function ProjectsManager({ initialFolders, initialProjects }: ProjectsManagerProps) {
+export default function ProjectsManager({ initialFolders = [], initialProjects = [] }: ProjectsManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
-  const [folders, setFolders] = useState<Folder[]>(initialFolders);
-  const [projects, setProjects] = useState<Project[]>(initialProjects);
-  const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -597,10 +633,9 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
-  const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const queryClient = useQueryClient();
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -609,14 +644,54 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     })
   );
 
-  // Get projects for current folder using folderId from project data
-  const getProjectsForFolder = (folderId: string) => {
-    return projects.filter(p => (p.folderIds || []).includes(folderId));
-  };
+  const {
+    data: projectsData = initialProjects,
+    isLoading: isProjectsLoading,
+    refetch: refetchProjects,
+  } = useQuery({
+    queryKey: PROJECTS_QUERY_KEY,
+    queryFn: fetchProjects,
+    initialData: initialProjects.length ? initialProjects : undefined,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchOnMount: true,
+  });
+
+  const {
+    data: foldersData = [],
+    isLoading: isFoldersLoading,
+    refetch: refetchFolders,
+  } = useQuery({
+    queryKey: FOLDERS_QUERY_KEY,
+    queryFn: fetchFolders,
+    initialData: initialFolders.length ? initialFolders.map((folder) => ({
+      publicId: folder.id,
+      name: folder.name,
+      color: folder.color,
+      description: folder.description,
+    })) : undefined,
+    staleTime: 45_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchOnMount: true,
+  });
+
+  const projects = projectsData;
+
+  const folders = useMemo(
+    () => foldersData.map((folder) => mapApiFolderToUiFolder(folder, projects)),
+    [foldersData, projects]
+  );
+
+  // Get projects for current folder using folderIds from project data
+  const getProjectsForFolder = (folderId: string) => projects.filter((p) => (p.folderIds || []).includes(folderId));
 
   // Filter folders by search
   const filteredFolders = folders.filter(
-    f => !searchQuery || f.name.toLowerCase().includes(searchQuery.toLowerCase())
+    (f) => !searchQuery || f.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // Get filtered projects (when viewing a folder)
@@ -662,8 +737,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         throw new Error(payload?.message || 'Create folder failed');
       }
 
-      const updatedProjects = await loadProjects(false, { force: true });
-      await loadFolders(updatedProjects, { force: true });
+      await Promise.all([refetchProjects(), refetchFolders()]);
       return folderData;
     })();
 
@@ -675,147 +749,19 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
   };
 
   const upsertProject = useCallback((nextProject: Project) => {
-    setProjects((prev) => {
+    queryClient.setQueryData<Project[]>(PROJECTS_QUERY_KEY, (prev = []) => {
       const exists = prev.some((item) => item.id === nextProject.id);
       if (exists) {
         return prev.map((item) => (item.id === nextProject.id ? { ...item, ...nextProject } : item));
       }
       return [nextProject, ...prev];
     });
-  }, []);
+  }, [queryClient]);
 
   const handleProjectCreated = async (project: CreatedProjectPayload) => {
     upsertProject(mapCreatedProjectToUiProject(project));
-    const updatedProjects = await loadProjects(false, { force: true });
-    await loadFolders(updatedProjects, { force: true });
+    await Promise.all([refetchProjects(), refetchFolders()]);
   };
-
-  const loadProjects = useCallback(async (
-    showLoading = false,
-    options?: { force?: boolean }
-  ): Promise<Project[]> => {
-    const shouldForce = options?.force === true;
-
-    if (!shouldForce && projectsCacheRef.current && projectsCacheRef.current.expiresAt > Date.now()) {
-      const cached = projectsCacheRef.current.data;
-      setProjects(cached);
-      return cached;
-    }
-
-    if (!shouldForce && typeof window !== 'undefined') {
-      try {
-        const raw = sessionStorage.getItem(PROJECTS_CACHE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
-          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
-            projectsCacheRef.current = parsed;
-            setProjects(parsed.data);
-            return parsed.data;
-          }
-        }
-      } catch {
-        // ignore cache parse errors
-      }
-    }
-
-    if (showLoading) {
-      setIsProjectsLoading(true);
-    }
-
-    try {
-      const response = await fetch('/api/projects/me', {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const payload = await response.json();
-      const apiProjects: ApiProject[] = Array.isArray(payload?.data) ? payload.data : [];
-      const nextProjects = apiProjects.map(mapApiProjectToUiProject);
-      const cacheValue = {
-        data: nextProjects,
-        expiresAt: Date.now() + PROJECTS_CACHE_TTL_MS,
-      };
-
-      projectsCacheRef.current = cacheValue;
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheValue));
-      }
-
-      setProjects(nextProjects);
-      return nextProjects;
-    } catch {
-      return [];
-    } finally {
-      if (showLoading) {
-        setIsProjectsLoading(false);
-      }
-    }
-  }, []);
-
-  const loadFolders = useCallback(async (
-    projectsSource: Project[],
-    options?: { force?: boolean }
-  ) => {
-    const shouldForce = options?.force === true;
-
-    if (!shouldForce && foldersCacheRef.current && foldersCacheRef.current.expiresAt > Date.now()) {
-      setFolders(foldersCacheRef.current.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
-      return;
-    }
-
-    if (!shouldForce && typeof window !== 'undefined') {
-      try {
-        const raw = sessionStorage.getItem(FOLDERS_CACHE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { data: ApiFolder[]; expiresAt: number };
-          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
-            foldersCacheRef.current = parsed;
-            setFolders(parsed.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
-            return;
-          }
-        }
-      } catch {
-        // ignore cache parse errors
-      }
-    }
-
-    try {
-      const response = await fetch('/api/folders/me', {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await response.json();
-      const apiFolders: ApiFolder[] = Array.isArray(payload?.data) ? payload.data : [];
-      const cacheValue = {
-        data: apiFolders,
-        expiresAt: Date.now() + FOLDERS_CACHE_TTL_MS,
-      };
-
-      foldersCacheRef.current = cacheValue;
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(FOLDERS_CACHE_KEY, JSON.stringify(cacheValue));
-      }
-
-      setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
-    } catch {
-      // keep fallback folders if API fails
-    }
-  }, []);
 
   const handleDropProjectToFolder = async (projectId: string, folderId: string) => {
     if (isMovingProject) return;
@@ -836,8 +782,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
         return;
       }
 
-      const updatedProjects = await loadProjects(false, { force: true });
-      await loadFolders(updatedProjects, { force: true });
+      await Promise.all([refetchProjects(), refetchFolders()]);
     } finally {
       setIsMovingProject(false);
     }
@@ -868,15 +813,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
       const overProjectId = overId.replace('project:', '');
       const overIndex = projects.findIndex((p) => p.id === overProjectId);
       if (activeIndex >= 0 && overIndex >= 0) {
-        setProjects((prev) => arrayMove(prev, activeIndex, overIndex));
+        queryClient.setQueryData<Project[]>(PROJECTS_QUERY_KEY, (prev = []) => arrayMove(prev, activeIndex, overIndex));
       }
     }
   };
-
-  useEffect(() => {
-    if (!projects.length) return;
-    loadFolders(projects);
-  }, [loadFolders, projects]);
 
   // Close filter menu on outside click
   useEffect(() => {
@@ -889,23 +829,10 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+
   useEffect(() => {
-    let mounted = true;
-
-    const run = async () => {
-      if (!mounted) return;
-      const loadedProjects = await loadProjects(true);
-      if (!mounted) return;
-      await loadFolders(loadedProjects);
-    };
-
-    run();
-    return () => {
-      mounted = false;
-    };
-  }, [loadFolders, loadProjects]);
-
-  useEffect(() => { setIsHydrated(true); }, []);
+    setIsHydrated(true);
+  }, []);
 
   useEffect(() => {
     const socket = io('http://localhost:3000', {
@@ -922,6 +849,7 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
 
       if (!incoming?.publicId) return;
       upsertProject(mapCreatedProjectToUiProject(incoming));
+      void refetchFolders();
     };
 
     const handleUpdated = (payload: { project?: CreatedProjectPayload; data?: CreatedProjectPayload } | CreatedProjectPayload) => {
@@ -944,7 +872,9 @@ export default function ProjectsManager({ initialFolders, initialProjects }: Pro
     };
   }, [upsertProject]);
 
-  if (!isHydrated || isProjectsLoading) return <ProjectsSkeleton />;
+  if (!isHydrated || ((isProjectsLoading || isFoldersLoading) && !projects.length && !folders.length)) {
+    return <ProjectsSkeleton />;
+  }
 
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId) || null

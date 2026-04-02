@@ -2,6 +2,7 @@ const Project = require('../models/Project');
 const Folder = require('../models/Folder');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
+const UserRepository = require('../repositories/UserRepository');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -53,7 +54,7 @@ class ProjectController {
             await ProjectMemberRepository.addMember({
                 projectId: project.publicId,
                 userId,
-                role: 'admin',
+                role: 'owner',
                 status: 'accepted',
                 invitedBy: null,
             });
@@ -133,9 +134,26 @@ class ProjectController {
 
             const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
 
+            const enrichedMembers = await Promise.all(
+                members.map(async (item) => {
+                    const profile = await UserRepository.findById(item.userId);
+                    return {
+                        projectId: item.projectId,
+                        userId: item.userId,
+                        role: item.role,
+                        status: item.status,
+                        invitedBy: item.invitedBy,
+                        createdAt: item.createdAt,
+                        fullName: profile?.fullName || null,
+                        email: profile?.email || null,
+                        avatar: profile?.avatar || null,
+                    };
+                })
+            );
+
             return res.status(200).json({
                 success: true,
-                data: members,
+                data: enrichedMembers,
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load project members');
@@ -156,7 +174,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member || !['owner', 'admin'].includes(member.role)) {
                 return forbidden(res);
             }
 
@@ -339,6 +357,11 @@ class ProjectController {
                 return badRequest(res, 'Missing projectId, targetUserId or role');
             }
 
+            const allowedRoles = ['admin', 'manager', 'viewer'];
+            if (!allowedRoles.includes(normalizedRole)) {
+                return badRequest(res, 'Role must be admin, manager or viewer');
+            }
+
             const userId = req.user?.id;
             if (!userId) {
                 return unauthorized(res);
@@ -361,7 +384,11 @@ class ProjectController {
                 return notFound(res, 'Member not found');
             }
 
-            if (targetMember.role === 'admin' && role !== 'admin') {
+            if (targetMember.role === 'owner') {
+                return forbidden(res);
+            }
+
+            if (targetMember.role === 'admin' && normalizedRole !== 'admin') {
                 const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
                     return forbidden(res);
