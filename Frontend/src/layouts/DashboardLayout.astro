@@ -14,6 +14,23 @@ const { title, pageTitle = 'Home' } = Astro.props;
 ---
 
 <BaseLayout title={title}>
+  <script>
+    import { navigate } from 'astro:transitions/client';
+    import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
+
+    // ── Auth event listeners ──────────────────────────────────────────────────
+    // Replace all hard window.location.href = '/login' calls with event-based
+    // navigation so Astro's View Transitions pipeline stays intact.
+    window.addEventListener('orbit:auth-expired', () => navigate('/login'));
+    window.addEventListener('orbit:sign-out', () => {
+      clearAll();
+      navigate('/login');
+    });
+
+    // ── Bootstrap: hydrate store + init socket ─────────────────────────────────
+    hydrateApp();
+    initAppSocket();
+  </script>
   <div class="flex h-screen flex-col overflow-hidden" transition:animate="none">
     <!-- Top Navigation Bar -->
     <div transition:persist transition:animate="none">
@@ -22,7 +39,7 @@ const { title, pageTitle = 'Home' } = Astro.props;
 
     <div class="flex flex-1 overflow-hidden" transition:animate="none">
       <aside transition:persist transition:animate="none">
-        <Sidebar client:only="react" currentPath={Astro.url.pathname} />
+        <Sidebar client:load currentPath={Astro.url.pathname} />
       </aside>
       <div class="flex flex-1 flex-col overflow-hidden" transition:animate="none">
         <header transition:persist transition:animate="none">

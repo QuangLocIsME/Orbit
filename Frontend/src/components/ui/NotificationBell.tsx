@@ -53,7 +53,7 @@ export function NotificationBell() {
   }, []);
 
   return (
-    <div className="relative" ref={panelRef}>
+    <div className="relative isolate" ref={panelRef}>
       {/* Bell button */}
       <button
         onClick={() => setOpen((prev) => !prev)}
@@ -70,11 +70,16 @@ export function NotificationBell() {
 
       {/* Panel */}
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border bg-popover shadow-xl">
+        <div className="absolute right-0 top-full z-[100] mt-2 w-80 rounded-xl border bg-popover shadow-xl">
           {/* Header */}
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
+              {unreadCount > 0 && (
+                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600">
+                  {unreadCount} new
+                </span>
+              )}
               {/* Connection status dot */}
               <span
                 className={cn(

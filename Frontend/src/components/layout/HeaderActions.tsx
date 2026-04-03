@@ -1,29 +1,24 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { useNotifications } from '@/hooks/useNotifications';
-
-function timeAgo(dateStr: string): string {
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 export default function HeaderActions() {
   // Use the same key as BaseLayout and Sidebar ('orbit-theme'), default to light
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number } | null>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
-  const notificationButtonRef = useRef<HTMLButtonElement>(null);
-  const notificationPanelRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  const { notifications, unreadCount } = useNotifications();
+  // Sample notifications data
+  const notifications = [
+    { id: 1, title: 'New comment on Metro Station', message: 'John mentioned you in a comment', time: '5m ago', unread: true },
+    { id: 2, title: 'Task completed', message: 'Foundation work has been marked as done', time: '1h ago', unread: true },
+    { id: 3, title: 'Project update', message: 'Office Complex Tower A was updated', time: '3h ago', unread: false },
+    { id: 4, title: 'New team member', message: 'Sarah joined your project', time: '1d ago', unread: false },
+  ];
+
+  const unreadCount = notifications.filter(n => n.unread).length;
 
   // Toggle between light and dark — always an explicit choice, never "system"
   const toggleTheme = () => {
@@ -45,9 +40,7 @@ export default function HeaderActions() {
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      const inNotifButton = notificationRef.current?.contains(event.target as Node);
-      const inNotifPanel  = notificationPanelRef.current?.contains(event.target as Node);
-      if (!inNotifButton && !inNotifPanel) {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
         setShowNotifications(false);
       }
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -62,7 +55,7 @@ export default function HeaderActions() {
   return (
     <div className="flex items-center gap-1">
       {/* Theme toggle */}
-      <button
+      <button 
         onClick={toggleTheme}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
@@ -81,13 +74,8 @@ export default function HeaderActions() {
 
       {/* Notifications */}
       <div ref={notificationRef} className="relative">
-        <button
-          ref={notificationButtonRef}
+        <button 
           onClick={() => {
-            if (!showNotifications && notificationButtonRef.current) {
-              const rect = notificationButtonRef.current.getBoundingClientRect();
-              setDropdownPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
-            }
             setShowNotifications(!showNotifications);
             setShowSettings(false);
           }}
@@ -105,13 +93,9 @@ export default function HeaderActions() {
           )}
         </button>
 
-        {/* Notifications Dropdown — rendered via portal to escape overflow:hidden parents */}
-        {showNotifications && dropdownPos && createPortal(
-          <div
-            ref={notificationPanelRef}
-            style={{ position: 'fixed', top: dropdownPos.top, right: dropdownPos.right }}
-            className="w-80 rounded-xl border border-border bg-card shadow-lg z-[9999]"
-          >
+        {/* Notifications Dropdown */}
+        {showNotifications && (
+          <div className="absolute right-0 top-full mt-2 w-80 rounded-xl border border-border bg-card shadow-lg z-50">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <h3 className="text-sm font-semibold text-card-foreground">Notifications</h3>
               {unreadCount > 0 && (
@@ -125,7 +109,7 @@ export default function HeaderActions() {
                 notifications.map((notification) => (
                   <div
                     key={notification.id}
-                    className={`flex gap-3 px-4 py-3 transition-colors hover:bg-muted ${!notification.read ? 'bg-primary/5' : ''}`}
+                    className={`flex gap-3 px-4 py-3 transition-colors hover:bg-muted ${notification.unread ? 'bg-primary/5' : ''}`}
                   >
                     <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
                       <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -134,12 +118,10 @@ export default function HeaderActions() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-card-foreground truncate">{notification.title}</p>
-                      {notification.message && (
-                        <p className="text-xs text-muted-foreground truncate">{notification.message}</p>
-                      )}
-                      <p className="text-xs text-muted-foreground/70 mt-0.5">{timeAgo(notification.createdAt)}</p>
+                      <p className="text-xs text-muted-foreground truncate">{notification.message}</p>
+                      <p className="text-xs text-muted-foreground/70 mt-0.5">{notification.time}</p>
                     </div>
-                    {!notification.read && (
+                    {notification.unread && (
                       <div className="flex-shrink-0">
                         <span className="h-2 w-2 rounded-full bg-primary block" />
                       </div>
@@ -157,14 +139,13 @@ export default function HeaderActions() {
                 View all notifications
               </button>
             </div>
-          </div>,
-          document.body
+          </div>
         )}
       </div>
 
       {/* Settings */}
       <div ref={settingsRef} className="relative">
-        <button
+        <button 
           onClick={() => {
             setShowSettings(!showSettings);
             setShowNotifications(false);
@@ -202,7 +183,7 @@ export default function HeaderActions() {
                 Integrations
               </a>
               <div className="my-1 border-t border-border" />
-              <button
+              <button 
                 onClick={toggleTheme}
                 className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-card-foreground hover:bg-muted transition-colors"
               >

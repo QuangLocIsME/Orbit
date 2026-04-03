@@ -175,6 +175,19 @@ function broadcastPackage(packageId, event, data) {
 }
 
 /**
+ * Invalidate a user's cached data in the frontend.
+ * Call this after any mutation so clients can bust their in-memory / sessionStorage cache.
+ * Sends to the user's private room: { type: 'cache:invalidate', data: { cacheTypes, userId } }
+ */
+function invalidateUserCache(userId, cacheTypes = ['projects', 'folders', 'auth']) {
+    if (!io) return;
+    io.to(`user:${userId}`).emit('cache:invalidate', {
+        type: 'cache:invalidate',
+        data: { cacheTypes, userId },
+    });
+}
+
+/**
  * Broadcast to all connected clients.
  */
 function broadcastAll(event, data) {
@@ -202,6 +215,7 @@ module.exports = {
     broadcastProject,
     broadcastPackage,
     broadcastAll,
+    invalidateUserCache,
     getOnlineUsers,
     isOnline,
     getIO,

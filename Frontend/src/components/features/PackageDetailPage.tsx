@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import {
   ArrowLeft,
@@ -153,7 +154,7 @@ export default function PackageDetailPage({ pkg, projectSlug = 'metro-station-ph
               e.preventDefault();
               // Set tab to packages before navigation via sessionStorage
               sessionStorage.setItem('projectActiveTab', 'packages');
-              window.location.href = `/projects/${projectSlug}`;
+              navigate(`/projects/${projectSlug}`);
             }}
             className="inline-flex items-center gap-2 text-[14px] text-[#6A7282] transition-colors hover:text-[#101828]"
           >

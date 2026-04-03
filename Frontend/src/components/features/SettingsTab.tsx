@@ -1,6 +1,7 @@
 'use client';
 // Settings Tab v1.0.72
 import { useState, useRef } from 'react';
+import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { Settings, FileText, ListTodo, GitBranch, Shield, Users, Bell, Plug, Plus, Pencil, X, Trash2, GripVertical, Eye, EyeOff, LayoutGrid, FolderOpen, FileText as FileDoc, GitCompare, RefreshCcw, AlertTriangle, Puzzle, Save, Tag, Lock, Check, Mail, MessageSquare, Clock, Zap, Link2, Calendar, FileUp, Box, Globe, Scissors, Database, BookOpen, BarChart3, Folder, Code, Loader2, Upload, ChevronRight, CheckCircle2, UserPlus, Copy, Key, Circle } from 'lucide-react';
 import CreateTaskModal from './CreateTaskModal';
@@ -2849,7 +2850,7 @@ export default function SettingsTab({
               onClick={() => {
                 if (deleteProjectConfirmText === 'DELETE') {
                   // Navigate back to projects page
-                  window.location.href = '/projects';
+                  navigate('/projects');
                 }
               }}
               disabled={deleteProjectConfirmText !== 'DELETE'}

@@ -144,4 +144,22 @@ async function sendWelcomeEmail(toEmail, userName) {
     return result;
 }
 
-module.exports = { sendEmail, sendResetCodeEmail, sendWelcomeEmail, getTransporter };
+async function sendInviteEmail({ toEmail, inviterName, projectName, role, acceptUrl }) {
+    const subject = `You've been invited to join ${projectName} on ORBIT`;
+    const text = [
+        `${inviterName} has invited you to join "${projectName}" as ${role}.`,
+        `Click the link below to accept your invitation:`,
+        acceptUrl,
+        '',
+        'This invite expires in 7 days.',
+    ].join('\n\n');
+    const html = `<div style="font-family: sans-serif; max-width: 560px;">
+  <p>${inviterName} has invited you to join <strong>${projectName}</strong> on ORBIT.</p>
+  <p>You have been invited as <strong>${role}</strong>.</p>
+  <p><a href="${acceptUrl}" style="display:inline-block;background:#155DFC;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Accept Invitation →</a></p>
+  <p style="color:#6B7280;font-size:13px;margin-top:16px;">This invitation expires in 7 days. If you did not expect this, you can safely ignore this email.</p>
+</div>`;
+    return sendEmail(toEmail, subject, { text, html });
+}
+
+module.exports = { sendEmail, sendResetCodeEmail, sendWelcomeEmail, sendInviteEmail, getTransporter };

@@ -1,5 +1,7 @@
 // Auth utility functions for ORBIT
 
+import { dispatchAuthExpired, dispatchSignOut } from './auth-helpers';
+
 export interface User {
   id: string;
   fullName: string;
@@ -53,7 +55,7 @@ export function getCurrentUser(): User | null {
 }
 
 // Attempt to refresh the access token using the httpOnly refreshToken cookie.
-// Returns true on success, false on failure. On failure, signs the user out.
+// Returns true on success, false on failure. On failure, dispatches an auth-expired event.
 export async function refreshAccessToken(): Promise<boolean> {
   try {
     const res = await fetch('/api/auth/refresh-token', {
@@ -62,11 +64,13 @@ export async function refreshAccessToken(): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
     });
     if (res.ok) return true;
-    // Refresh failed — clear local state and redirect
-    await signOut();
+    // Refresh failed — clear local state and dispatch auth-expired event
+    localStorage.removeItem('orbit_user');
+    dispatchAuthExpired();
     return false;
   } catch {
-    await signOut();
+    localStorage.removeItem('orbit_user');
+    dispatchAuthExpired();
     return false;
   }
 }
@@ -111,7 +115,8 @@ export async function syncCurrentUser(): Promise<User | null> {
   }
 }
 
-// Sign out — call backend to clear httpOnly cookies, then clear local state
+// Sign out — call backend to clear httpOnly cookies, then clear local state.
+// Navigation to /login is handled by DashboardLayout listening for 'orbit:sign-out'.
 export async function signOut(): Promise<void> {
   if (typeof window === 'undefined') return;
   try {
@@ -120,7 +125,7 @@ export async function signOut(): Promise<void> {
     // ignore network errors
   }
   localStorage.removeItem('orbit_user');
-  window.location.href = '/login';
+  dispatchSignOut();
 }
 
 // Redirect to login if not authenticated

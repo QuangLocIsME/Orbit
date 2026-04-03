@@ -1,0 +1,55 @@
+---
+// Project Detail Page — SSR: fetches real data server-side, no getStaticPaths needed.
+export const prerender = false;
+
+import ProjectLayout from '@/layouts/ProjectLayout.astro';
+import ProjectDetailPage from '@/components/features/ProjectDetailPage';
+
+// Fetch the user's projects server-side so we can resolve the publicId to a real project.
+// This avoids a client-side loading gap and ensures the page is populated on first paint.
+const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
+
+const accessToken = Astro.cookies.get('accessToken')?.value;
+const publicId = Astro.params.publicId as string;
+
+let project = null;
+let error = null;
+
+if (!publicId) {
+  return Astro.redirect('/projects');
+}
+
+try {
+  const res = await fetch(`${backendUrl}/api/projects/me`, {
+    headers: {
+      Cookie: `accessToken=${accessToken}`,
+      Accept: 'application/json',
+    },
+    credentials: 'include',
+  });
+
+  if (res.ok) {
+    const payload = await res.json();
+    const projects: Array<Record<string, unknown>> = Array.isArray(payload?.data) ? payload.data : [];
+    project = projects.find((p: Record<string, unknown>) => String(p.publicId) === publicId);
+  }
+} catch {
+  error = 'Failed to load project';
+}
+
+// Redirect to /projects if the project is not found or auth failed
+if (!project) {
+  return Astro.redirect('/projects');
+}
+---
+
+<ProjectLayout
+  title={`${project.name} - ORBIT`}
+  projectName={String(project.name)}
+  projectSlug={String(project.publicId)}
+>
+  <ProjectDetailPage
+    project={project}
+    client:load
+  />
+</ProjectLayout>

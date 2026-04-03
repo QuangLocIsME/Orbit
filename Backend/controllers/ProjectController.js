@@ -3,6 +3,7 @@ const Folder = require('../models/Folder');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const { getJson, setJson, delKeys } = require('../services/cacheService');
+const { invalidateUserCache } = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -28,7 +29,10 @@ const requireUserId = (req, res) => {
 const getProjectsCacheKey = (userId) => `projects:me:${userId}`;
 const getFoldersCacheKey = (userId) => `folders:me:${userId}`;
 const invalidateUserCaches = async (userId) => {
+    // Bust server-side Redis cache
     await delKeys([getProjectsCacheKey(userId), getFoldersCacheKey(userId)]);
+    // Notify the connected client so it busts its client-side (sessionStorage / in-memory) cache
+    invalidateUserCache(userId, ['projects', 'folders']);
 };
 
 class ProjectController {
@@ -60,7 +64,7 @@ class ProjectController {
             await ProjectMemberRepository.addMember({
                 projectId: project.publicId,
                 userId,
-                role: 'owner',
+                role: 'admin',
                 status: 'accepted',
                 invitedBy: null,
             });
@@ -152,28 +156,33 @@ class ProjectController {
                 return forbidden(res);
             }
 
-            const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
+            const rawMembers = await ProjectMemberRepository.getMembersWithUsers(normalizedProjectId);
 
-            const enrichedMembers = await Promise.all(
-                members.map(async (item) => {
-                    const profile = await UserRepository.findById(item.userId);
-                    return {
-                        projectId: item.projectId,
-                        userId: item.userId,
-                        role: item.role,
-                        status: item.status,
-                        invitedBy: item.invitedBy,
-                        createdAt: item.createdAt,
-                        fullName: profile?.fullName || null,
-                        email: profile?.email || null,
-                        avatar: profile?.avatar || null,
-                    };
-                })
-            );
+            // Collect unique userIds to batch-fetch user profiles (userId = MongoDB _id ObjectId)
+            const userIds = [...new Set(rawMembers.map((m) => m.userId).filter(Boolean))];
+            const { Types } = require('mongoose');
+            const validObjectIds = userIds.filter((id) => /^[a-f\d]{24}$/i.test(id));
+            const userDocs = validObjectIds.length
+                ? await require('../models/User').find({ _id: { $in: validObjectIds.map((id) => new Types.ObjectId(id)) } }).select('_id fullName email avatar').lean()
+                : [];
+            const userMap = new Map(userDocs.map((u) => [String(u._id), u]));
+
+            const members = rawMembers.map((m) => ({
+                publicId: String(m._id),
+                userId: m.userId,
+                role: m.role,
+                status: m.status,
+                invitedBy: m.invitedBy,
+                createdAt: m.createdAt,
+                user: m.userId ? (() => {
+                    const u = userMap.get(m.userId);
+                    return u ? { fullName: u.fullName, email: u.email, avatar: u.avatar } : null;
+                })() : null,
+            }));
 
             return res.status(200).json({
                 success: true,
-                data: enrichedMembers,
+                data: members,
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load project members');
@@ -194,7 +203,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || !['owner', 'admin'].includes(member.role)) {
+            if (!member || member.role !== 'admin') {
                 return forbidden(res);
             }
 
@@ -385,11 +394,6 @@ class ProjectController {
                 return badRequest(res, 'Missing projectId, targetUserId or role');
             }
 
-            const allowedRoles = ['admin', 'manager', 'viewer'];
-            if (!allowedRoles.includes(normalizedRole)) {
-                return badRequest(res, 'Role must be admin, manager or viewer');
-            }
-
             const userId = req.user?.id;
             if (!userId) {
                 return unauthorized(res);
@@ -412,11 +416,7 @@ class ProjectController {
                 return notFound(res, 'Member not found');
             }
 
-            if (targetMember.role === 'owner') {
-                return forbidden(res);
-            }
-
-            if (targetMember.role === 'admin' && normalizedRole !== 'admin') {
+            if (targetMember.role === 'admin' && role !== 'admin') {
                 const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
                 if (adminCount <= 1) {
                     return forbidden(res);
@@ -428,6 +428,8 @@ class ProjectController {
                 normalizedTargetUserId,
                 normalizedRole
             );
+
+            await invalidateUserCaches(userId);
 
             return res.status(200).json({
                 success: true,
@@ -482,6 +484,8 @@ class ProjectController {
             }
 
             await ProjectMemberRepository.removeMember(normalizedProjectId, normalizedTargetUserId);
+
+            await invalidateUserCaches(userId);
 
             return res.status(200).json({
                 success: true,

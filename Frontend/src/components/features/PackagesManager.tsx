@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
+import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { PackagesSkeleton } from '@/components/ui/skeletons';
 import { 
@@ -146,7 +147,7 @@ export default function PackagesManager({ packages }: PackagesManagerProps) {
   }, [packages, searchQuery, statusFilter]);
 
   const handlePackageClick = (slug: string) => {
-    window.location.href = `/packages/${slug}`;
+    navigate(`/packages/${slug}`);
   };
 
   const handleCreatePackage = () => {

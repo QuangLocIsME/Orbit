@@ -3,6 +3,8 @@
  * Uses httpOnly cookies for auth tokens.
  */
 
+import { dispatchAuthExpired } from './auth-helpers';
+
 let isRefreshing = false;
 let waitQueue: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
 
@@ -55,9 +57,11 @@ export async function apiFetch(
     response = await fetch(input, opts); // retry original request
   } catch (err) {
     drainQueue(err as Error);
-    // Refresh failed — user must log in again
+    // Refresh failed — user must log in again.
+    // Dispatch an event instead of window.location.href so Astro's ClientRouter
+    // handles the redirect and the View Transitions pipeline stays intact.
     localStorage.removeItem('orbit_user');
-    if (typeof window !== 'undefined') window.location.href = '/login';
+    dispatchAuthExpired();
   } finally {
     isRefreshing = false;
   }

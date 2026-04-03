@@ -2,7 +2,8 @@ const crypto = require('node:crypto');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const UserRepository = require('../repositories/UserRepository');
-const { notifyUser } = require('../services/socketService');
+const socketService = require('../services/socketService');
+const emailService = require('../services/emailService');
 const { errorResponse } = require('../utils/response');
 
 const INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
@@ -16,24 +17,27 @@ class InviteController {
             const { projectId, email, role } = req.body || {};
             const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
             const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-            const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : '';
+            const normalizedRole = typeof role === 'string' ? role.trim() : '';
+
             if (!normalizedProjectId || !normalizedEmail) {
                 return errorResponse(res, 400, 'Missing projectId or email');
             }
 
-            const userId = req.user?.id;
-            if (!userId) {
+            const callerId = req.user?.id;
+            if (!callerId) {
                 return errorResponse(res, 401, 'Unauthorized');
             }
 
-            const requester = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!requester || !['owner', 'admin'].includes(requester.role)) {
-                return errorResponse(res, 403, 'Forbidden');
+            // RBAC: only admin can invite members
+            const callerMember = await ProjectMemberRepository.findMember(normalizedProjectId, callerId);
+            if (!callerMember || callerMember.role !== 'admin') {
+                return errorResponse(res, 403, 'Only admins can invite members');
             }
 
-            const allowedInviteRoles = ['admin', 'manager', 'viewer'];
-            if (normalizedRole && !allowedInviteRoles.includes(normalizedRole)) {
-                return errorResponse(res, 400, 'Role must be admin, manager or viewer');
+            // Check for duplicate pending invite
+            const existing = await ProjectInviteRepository.findPendingByEmailAndProject(normalizedEmail, normalizedProjectId);
+            if (existing) {
+                return errorResponse(res, 409, 'A pending invite already exists for this email in this project');
             }
 
             const token = crypto.randomBytes(32).toString('hex');
@@ -42,33 +46,52 @@ class InviteController {
             const invite = await ProjectInviteRepository.createInvite({
                 projectId: normalizedProjectId,
                 email: normalizedEmail,
-                role: normalizedRole || 'viewer',
+                role: normalizedRole || 'member',
                 tokenHash,
                 status: 'pending',
-                invitedBy: userId,
+                invitedBy: callerId,
                 expiresAt: new Date(Date.now() + INVITE_EXPIRES_MS),
             });
 
-            const invitedUser = await UserRepository.findByEmail(normalizedEmail);
-            if (invitedUser?._id) {
-                notifyUser(String(invitedUser._id), 'notification:new', {
-                    id: crypto.randomUUID(),
-                    type: 'info',
-                    title: 'New project invitation',
-                    message: `You were invited to project ${normalizedProjectId} as ${invite.role}`,
-                    link: '/projects',
-                    createdAt: new Date().toISOString(),
-                    read: false,
+            // Look up invitee's userId for real-time notification
+            const inviteeProfile = await UserRepository.findByEmail(normalizedEmail);
+            const frontendBase =
+                process.env.FRONTEND_URI ||
+                process.env.FRONTED_URI ||
+                'http://localhost:4321';
+            const acceptUrl = `${frontendBase.replace(/\/$/, '')}/invite/${token}`;
+
+            // Real-time notification if invitee has an account
+            if (inviteeProfile) {
+                const inviterProfile = await UserRepository.getProfileById(callerId);
+                socketService.notifyUser(String(inviteeProfile._id), 'invite:new', {
+                    inviteId: String(invite._id),
+                    projectId: normalizedProjectId,
+                    projectName: req.body?.projectName || 'a project',
+                    role: invite.role,
+                    inviterName: inviterProfile?.fullName || 'Someone',
+                    acceptUrl,
                 });
             }
+
+            // Send invite email (fire-and-forget — don't block the response)
+            const inviterProfile = await UserRepository.getProfileById(callerId);
+            emailService.sendInviteEmail({
+                toEmail: normalizedEmail,
+                inviterName: inviterProfile?.fullName || 'Someone',
+                projectName: req.body?.projectName || 'a project',
+                role: invite.role,
+                acceptUrl,
+            }).catch((err) => console.warn('[Invite] Email send failed:', err.message));
 
             return res.status(201).json({
                 success: true,
                 message: 'Invite created',
                 data: {
-                    inviteId: invite._id,
+                    inviteId: String(invite._id),
                     token,
                     expiresAt: invite.expiresAt,
+                    acceptUrl,
                 },
             });
         } catch (error) {
@@ -103,7 +126,7 @@ class InviteController {
 
             const profile = await UserRepository.getProfileById(userId);
             if (!profile || profile.email !== invite.email) {
-                return errorResponse(res, 403, 'Forbidden');
+                return errorResponse(res, 403, 'This invitation was sent to a different email address');
             }
 
             await ProjectMemberRepository.addMember({
@@ -115,6 +138,16 @@ class InviteController {
             });
 
             await ProjectInviteRepository.markAccepted(invite._id);
+
+            // Notify inviter in real-time
+            socketService.notifyUser(String(invite.invitedBy), 'invite:accepted', {
+                projectId: invite.projectId,
+                inviteId: String(invite._id),
+                acceptedBy: profile.fullName,
+            });
+
+            // Bust inviter's project list cache so new member appears
+            socketService.invalidateUserCache(String(invite.invitedBy), ['projects']);
 
             return res.status(200).json({
                 success: true,
@@ -133,14 +166,28 @@ class InviteController {
                 return errorResponse(res, 400, 'Missing inviteId');
             }
 
-            const invite = await ProjectInviteRepository.revokeInvite(normalizedInviteId);
+            const callerId = req.user?.id;
+            if (!callerId) {
+                return errorResponse(res, 401, 'Unauthorized');
+            }
+
+            // Find the invite to get projectId for RBAC check
+            const invite = await ProjectInviteRepository.findById(normalizedInviteId);
             if (!invite) {
                 return errorResponse(res, 404, 'Invite not found');
             }
 
+            const callerMember = await ProjectMemberRepository.findMember(invite.projectId, callerId);
+            if (!callerMember || callerMember.role !== 'admin') {
+                return errorResponse(res, 403, 'Only admins can revoke invites');
+            }
+
+            const revoked = await ProjectInviteRepository.revokeInvite(normalizedInviteId);
+
             return res.status(200).json({
                 success: true,
                 message: 'Invite revoked',
+                data: revoked,
             });
         } catch (error) {
             return errorResponse(res, 400, 'Revoke invite failed');
@@ -149,8 +196,13 @@ class InviteController {
 
     async listInvites(req, res) {
         try {
-            const { projectId } = req.body || {};
-            const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+            // Support both GET (query) and POST (body) for backward compat
+            const normalizedProjectId = req.query?.projectId
+                ? String(req.query.projectId).trim()
+                : req.body?.projectId
+                    ? String(req.body.projectId).trim()
+                    : '';
+
             if (!normalizedProjectId) {
                 return errorResponse(res, 400, 'Missing projectId');
             }
@@ -160,6 +212,7 @@ class InviteController {
                 return errorResponse(res, 401, 'Unauthorized');
             }
 
+            // RBAC: only admin can list pending invites
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || member.role !== 'admin') {
                 return errorResponse(res, 403, 'Forbidden');

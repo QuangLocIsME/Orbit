@@ -3,6 +3,7 @@ const UserRepository = require('../repositories/UserRepository');
 const emailService = require('../services/emailService');
 const { logSecurityEvent } = require('../utils/securityLog');
 const { errorResponse } = require('../utils/response');
+const { getJson, setJson, delKeys } = require('../services/cacheService');
 const {
     signAccessToken,
     signRefreshToken,
@@ -165,6 +166,7 @@ class AuthController {
                 if (user) {
                     await UserRepository.revokeRefreshToken(user._id, refreshToken);
                     logSecurityEvent('auth.logout', { userId: user._id, email: user.email });
+                    await delKeys([`auth:me:${user._id}`]);
                 }
             }
 
@@ -300,19 +302,29 @@ class AuthController {
 
     async getMe(req, res) {
         try {
-            const user = await UserRepository.findById(req.user.id);
+            const userId = req.user.id;
+            const cacheKey = `auth:me:${userId}`;
+
+            const cached = await getJson(cacheKey);
+            if (cached) {
+                return res.status(200).json({ success: true, data: cached, cached: true });
+            }
+
+            const user = await UserRepository.findById(userId);
             if (!user) return errorResponse(res, 404, 'User not found');
-            return res.status(200).json({
-                success: true,
-                data: {
-                    id: user._id,
-                    fullName: user.fullName,
-                    email: user.email,
-                    role: user.role,
-                    avatar: user.avatar || null,
-                    createdAt: user.createdAt,
-                },
-            });
+
+            const data = {
+                id: user._id,
+                fullName: user.fullName,
+                email: user.email,
+                role: user.role,
+                avatar: user.avatar || null,
+                createdAt: user.createdAt,
+            };
+
+            await setJson(cacheKey, data, 120);
+
+            return res.status(200).json({ success: true, data });
         } catch (error) {
             return errorResponse(res, 500, 'Failed to get user info');
         }

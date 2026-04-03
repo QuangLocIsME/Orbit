@@ -5,8 +5,8 @@ const ProjectMemberSchema = new mongoose.Schema({
     userId: { type: String, required: true, index: true },
     role: {
         type: String,
-        enum: ['owner', 'admin', 'manager', 'viewer'],
-        default: 'viewer',
+        enum: ['admin', 'member', 'viewer'],
+        default: 'member',
     },
     status: {
         type: String,

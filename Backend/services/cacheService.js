@@ -1,6 +1,6 @@
 const { createClient } = require('redis');
 
-const DEFAULT_TTL_SECONDS = 60;
+const DEFAULT_TTL_SECONDS = Number(process.env.REDIS_CACHE_TTL_SECONDS) || 60;
 const redisUrl = process.env.REDIS_URL;
 
 let client = null;

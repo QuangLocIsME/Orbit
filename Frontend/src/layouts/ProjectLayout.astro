@@ -1,11 +1,13 @@
 ---
+import { Toaster } from '@/components/ui/sonner';
+
 interface Props {
   title?: string;
   projectName: string;
   projectSlug: string;
 }
 
-const { 
+const {
   title = 'ORBIT - Project Management',
   projectName,
   projectSlug
@@ -24,10 +26,24 @@ const {
     <title>{title}</title>
   </head>
   <body class="min-h-screen font-sans bg-background">
+    <script>
+      import { navigate } from 'astro:transitions/client';
+      import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
+
+      window.addEventListener('orbit:auth-expired', () => navigate('/login'));
+      window.addEventListener('orbit:sign-out', () => {
+        clearAll();
+        navigate('/login');
+      });
+
+      hydrateApp();
+      initAppSocket();
+    </script>
     <!-- Main Content (no sidebar, top bar is inside React component) -->
     <main>
       <slot />
     </main>
+    <Toaster client:load />
   </body>
 </html>
 

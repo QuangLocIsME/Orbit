@@ -35,6 +35,22 @@ class ProjectInviteRepository {
     async removeByProject(projectId) {
         return await ProjectInvite.deleteMany({ projectId });
     }
+
+    async findPendingByEmailAndProject(email, projectId) {
+        return await ProjectInvite.findOne({
+            email: email.toLowerCase(),
+            projectId,
+            status: 'pending',
+        });
+    }
+
+    async findByEmail(email) {
+        return await ProjectInvite.findOne({ email: email.toLowerCase() });
+    }
+
+    async findById(inviteId) {
+        return await ProjectInvite.findById(inviteId);
+    }
 }
 
 module.exports = new ProjectInviteRepository();

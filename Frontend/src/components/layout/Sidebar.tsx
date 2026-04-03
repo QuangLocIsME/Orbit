@@ -90,6 +90,9 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         sidebarUserCache = user;
         setAuthUser(user);
       }
+    }).catch(() => {
+      // Silently swallow errors — the store hydration handles auth state.
+      // No unhandled promise rejection will be raised.
     });
   }, []);
 

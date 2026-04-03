@@ -35,11 +35,19 @@ class ProjectMemberRepository {
     }
 
     async countAdmins(projectId) {
-        return await ProjectMember.countDocuments({ projectId, role: { $in: ['owner', 'admin'] } });
+        return await ProjectMember.countDocuments({ projectId, role: 'admin' });
     }
 
     async removeMembersByProject(projectId) {
         return await ProjectMember.deleteMany({ projectId });
+    }
+
+    async getMemberWithUser(projectId, userId) {
+        return await ProjectMember.findOne({ projectId, userId });
+    }
+
+    async getMembersWithUsers(projectId) {
+        return await ProjectMember.find({ projectId }).lean();
     }
 }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { navigate } from 'astro:transitions/client';
 import { NotificationBell } from '@/components/ui/NotificationBell';
 
 interface OpenProject {
@@ -62,12 +63,12 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
     
     // If closing current project, navigate to home
     if (projectId === currentProjectSlug) {
-      window.location.href = '/home';
+      navigate('/home');
     }
   };
 
   const addNewTab = () => {
-    window.location.href = '/projects';
+    navigate('/projects');
   };
 
   return (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 
 interface OpenProject {
@@ -22,13 +23,6 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
   const [openProjects, setOpenProjects] = useState<OpenProject[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Resolve display name: prefer prop (if not a UUID fallback), then localStorage cache
-  const isUuidFallback = projectName.startsWith('Project ') && projectSlug.length === 36;
-  const effectiveName = (!isUuidFallback && projectName)
-    || (typeof window !== 'undefined' ? localStorage.getItem(`orbit-pname-${projectSlug}`) ?? '' : '')
-    || projectName
-    || projectSlug;
-
   useEffect(() => {
     // Load open projects from localStorage
     const stored = localStorage.getItem('orbit-open-projects');
@@ -36,29 +30,15 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
       setOpenProjects(JSON.parse(stored));
     }
 
-    // Resolve best available name
-    const isFallback = projectName.startsWith('Project ') && projectSlug.length === 36;
-    const resolvedName = (!isFallback && projectName)
-      || localStorage.getItem(`orbit-pname-${projectSlug}`)
-      || projectName
-      || projectSlug;
-
-    if (resolvedName && !resolvedName.startsWith('Project ')) {
-      document.title = `${resolvedName} - ORBIT`;
-      localStorage.setItem(`orbit-pname-${projectSlug}`, resolvedName);
-    }
-
-    // Add or update current project in open projects
+    // Add current project to open projects
     setOpenProjects(prev => {
-      const name = resolvedName;
-      const existingIdx = prev.findIndex(p => p.id === projectSlug);
-      if (existingIdx === -1) {
-        const newProjects = [...prev, { id: projectSlug, title: name, path: `/projects/${projectSlug}` }];
-        localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
-        return newProjects;
-      } else if (prev[existingIdx].title !== name && !name.startsWith('Project ')) {
-        // Update stale UUID-fallback title with real name
-        const newProjects = prev.map((p, i) => i === existingIdx ? { ...p, title: name } : p);
+      const exists = prev.some(p => p.id === projectSlug);
+      if (!exists) {
+        const newProjects = [...prev, {
+          id: projectSlug,
+          title: projectName,
+          path: `/projects/${projectSlug}`
+        }];
         localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
         return newProjects;
       }
@@ -75,7 +55,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
     
     // Navigate to home when closing current project
     if (projectId === projectSlug) {
-      window.location.href = '/';
+      navigate('/');
     }
   };
 
@@ -201,7 +181,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
             >
               {/* Green dot for active project */}
               <span className={`h-2 w-2 rounded-full ${project.id === projectSlug ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-              <span className="truncate max-w-[150px]">{project.id === projectSlug ? effectiveName : project.title}</span>
+              <span className="truncate max-w-[150px]">{project.title}</span>
               {/* Close button */}
               <button
                 onClick={(e) => closeProject(project.id, e)}
@@ -222,7 +202,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
 
         {/* Right side - Close button */}
         <button
-          onClick={() => window.location.href = '/'}
+          onClick={() => navigate('/')}
           className="flex h-7 w-7 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
           aria-label="Close project"
         >
@@ -266,14 +246,14 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
             </svg>
             {packageName ? (
               <>
-                <a href={`/projects/${projectSlug}`} className="text-gray-500 hover:text-gray-700 transition-colors">{effectiveName}</a>
+                <a href={`/projects/${projectSlug}`} className="text-gray-500 hover:text-gray-700 transition-colors">{projectName}</a>
                 <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
                 <span className="font-medium text-gray-900">{packageName}</span>
               </>
             ) : (
-              <span className="font-medium text-gray-900">{effectiveName}</span>
+              <span className="font-medium text-gray-900">{projectName}</span>
             )}
           </div>
         </div>
