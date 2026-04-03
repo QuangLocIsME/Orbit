@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import type { Project } from '@/types';
 import PackagesManager from './PackagesManager';
-import packagesData from '@/data/packages.json';
+import ProjectDocumentsManager from './ProjectDocumentsManager';
 import ProjectTopBar from '@/components/layout/ProjectTopBar';
 import CreateTaskModal from './CreateTaskModal';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
@@ -27,14 +27,24 @@ interface ProjectDetailPageProps {
   };
 }
 
-// Real team members are fetched via API when the project loads
-const mockTeamMembers = [
-  { id: '1', name: 'Thao Duyen', role: 'Design Lead', avatar: 'TD', color: 'bg-pink-500', isOnline: true },
-  { id: '2', name: 'Minh Anh', role: 'Project Manager', avatar: 'MA', color: 'bg-emerald-500', isOnline: true },
-  { id: '3', name: 'Hoang Nam', role: 'Lead Architect', avatar: 'HN', color: 'bg-indigo-500', isOnline: true },
-  { id: '4', name: 'Thu Trang', role: 'Structural Engineer', avatar: 'TT', color: 'bg-blue-500', isOnline: false },
-  { id: '5', name: 'Tuan Kiet', role: 'MEP Engineer', avatar: 'TK', color: 'bg-teal-500', isOnline: true },
-  ];
+interface TeamMemberView {
+  id: string;
+  name: string;
+  role: string;
+  avatar: string;
+  color: string;
+  isOnline: boolean;
+}
+
+const avatarColors = ['bg-pink-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-blue-500', 'bg-teal-500', 'bg-orange-500'];
+
+const getInitials = (name: string) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'U';
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+};
+
+const mockTeamMembers: TeamMemberView[] = [];
 
 const mockActivities = [
   { id: '1', action: 'Version 3.2 approved', user: 'Minh Anh', time: '2 hours ago', icon: 'check', color: 'bg-emerald-100 text-emerald-600' },
@@ -461,32 +471,63 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isFavorite, setIsFavorite] = useState(false);
-  const [teamMembers, setTeamMembers] = useState(mockTeamMembers);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
+  const [documentsCount, setDocumentsCount] = useState(0);
 
-  // Fetch real team members from the backend API
+  // Fetch real team members + documents count from backend API
   useEffect(() => {
     let cancelled = false;
 
-    const fetchTeam = async () => {
+    const fetchProjectOverviewData = async () => {
       try {
-        const res = await fetch('/api/projects/member-list', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ projectId: project.publicId }),
-        });
-        if (!res.ok) return;
-        const payload = await res.json();
-        const members: typeof mockTeamMembers = Array.isArray(payload?.data) ? payload.data : [];
-        if (!cancelled && members.length > 0) {
-          setTeamMembers(members);
+        const [membersRes, documentsRes] = await Promise.all([
+          fetch('/api/projects/member-list', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: project.publicId }),
+          }),
+          fetch('/api/projects/packages/documents/list', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: project.publicId }),
+          }),
+        ]);
+
+        if (membersRes.ok) {
+          const payload = await membersRes.json();
+          const members = Array.isArray(payload?.data) ? payload.data : [];
+          const mappedMembers: TeamMemberView[] = members.map((m: any, index: number) => {
+            const name = m?.user?.fullName || m?.user?.name || m?.user?.email || 'Unknown';
+            return {
+              id: m?.userId || String(index),
+              name,
+              role: m?.role || 'member',
+              avatar: getInitials(name),
+              color: avatarColors[index % avatarColors.length],
+              isOnline: m?.status === 'accepted',
+            };
+          });
+
+          if (!cancelled) {
+            setTeamMembers(mappedMembers);
+          }
+        }
+
+        if (documentsRes.ok) {
+          const payload = await documentsRes.json();
+          const total = Number(payload?.data?.total || 0);
+          if (!cancelled) {
+            setDocumentsCount(Number.isFinite(total) ? total : 0);
+          }
         }
       } catch {
-        // Fall back to mock data on error
+        // Keep default values on error
       }
     };
 
-    fetchTeam();
+    fetchProjectOverviewData();
     return () => { cancelled = true; };
   }, [project.publicId]);
   
@@ -612,10 +653,10 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
   // Mock extended data
   const projectStats = {
-    documents: 48,
+    documents: documentsCount,
     versions: 124,
-    teamMembers: project.teamMembers,
-    openClashes: project.issues,
+    teamMembers: teamMembers.length,
+    openClashes: (project as any).issues || 0,
     startDate: 'Jan 15, 2024',
     deadline: 'Dec 15, 2025',
   };
@@ -672,7 +713,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
       <div className="px-[300px] py-6">
         {/* Packages Tab Content */}
         {activeTab === 'packages' && (
-          <PackagesManager packages={packagesData as any} />
+          <PackagesManager fixedProjectId={project.publicId} fixedProjectName={project.name} />
         )}
 
 {/* Overview Tab Content */}
@@ -770,7 +811,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
               <h3 className="font-semibold text-foreground">Team members</h3>
             </div>
             <div className="space-y-3">
-              {mockTeamMembers.map((member) => (
+              {teamMembers.map((member) => (
                 <div key={member.id} className="flex items-center gap-3">
                   <div className="relative">
                     <div className={cn("flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium text-white", member.color)}>
@@ -782,7 +823,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-foreground">{member.name}</p>
-                    <p className="text-xs text-muted-foreground">{member.role}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{member.role}</p>
                   </div>
                 </div>
               ))}
@@ -870,258 +911,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
         {/* Documents Tab */}
         {activeTab === 'documents' && (
-          <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-<div>
-            <h2 className="text-[24px] font-normal text-[#101828]">Documents & Drawings</h2>
-          </div>
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => setIsNewFolderModalOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] font-normal text-[#364153] transition-colors hover:bg-gray-50"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                  </svg>
-                  New Folder
-                </button>
-                <button 
-                  onClick={() => setIsUploadModalOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white transition-colors hover:bg-blue-700"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                  </svg>
-                  Upload
-                </button>
-              </div>
-            </div>
-
-            {/* Search and View Toggle */}
-            <div className="flex items-center gap-4">
-              <div className="relative flex-1 max-w-md">
-                <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  type="text"
-                  value={docSearchQuery}
-                  onChange={(e) => setDocSearchQuery(e.target.value)}
-                  placeholder="Search files and folders..."
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex items-center rounded-lg border border-gray-200 bg-white p-1">
-                <button
-                  onClick={() => setDocViewMode('list')}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-                    docViewMode === 'list' ? "bg-gray-100 text-gray-900" : "text-gray-400 hover:text-gray-600"
-                  )}
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setDocViewMode('grid')}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-                    docViewMode === 'grid' ? "bg-gray-100 text-gray-900" : "text-gray-400 hover:text-gray-600"
-                  )}
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            {/* Breadcrumb Navigation */}
-            <div className="flex items-center gap-2 text-sm">
-              {getBreadcrumbs().map((crumb, index) => (
-                <div key={crumb.id} className="flex items-center gap-2">
-                  {index > 0 && (
-                    <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  )}
-                  <button
-                    onClick={() => navigateToBreadcrumb(index)}
-                    className={cn(
-                      "font-medium transition-colors",
-                      index === getBreadcrumbs().length - 1 
-                        ? "text-gray-900" 
-                        : "text-gray-500 hover:text-gray-900"
-                    )}
-                  >
-                    {crumb.name}
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {/* Content - List View */}
-            {docViewMode === 'list' && (
-              <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
-                {filteredItems.length > 0 ? (
-                  filteredItems.map((item) => (
-                    item.type === 'folder' ? (
-                      <button
-                        key={item.id}
-                        onClick={() => navigateToFolder(item.id)}
-                        className="flex w-full items-center gap-4 p-4 text-left transition-colors hover:bg-gray-50"
-                      >
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100">
-                          <svg className="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                          </svg>
-                        </div>
-                        <span className="text-sm font-medium text-gray-900">{item.name}</span>
-                      </button>
-                    ) : (
-                      <div
-                        key={item.id}
-                        className="flex items-center gap-4 p-4 transition-colors hover:bg-gray-50"
-                      >
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
-                          <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-gray-900">{item.name}</span>
-                            {(item as DocFile).starred && (
-                              <svg className="h-4 w-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                              </svg>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                              {(item as DocFile).category}
-                            </span>
-                            <span className="text-xs text-gray-500">{(item as DocFile).size}</span>
-                            <span className="text-xs text-gray-400">•</span>
-                            <span className="text-xs text-gray-500">{(item as DocFile).updatedAt}</span>
-                            <span className="text-xs text-gray-400">•</span>
-                            <span className="text-xs text-gray-500">by {(item as DocFile).author}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                            </svg>
-                          </button>
-                          <button className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                          </button>
-                          <button className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  ))
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 mb-4">
-                      <svg className="h-8 w-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-base font-semibold text-gray-900 mb-1">No items yet</h3>
-                    <p className="text-sm text-muted-foreground mb-4">Create your first folder or upload files to get started</p>
-                    <button 
-                      onClick={() => setIsNewFolderModalOpen(true)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-                    >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      New Folder
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Content - Grid View */}
-            {docViewMode === 'grid' && (
-              <>
-                {filteredItems.length > 0 ? (
-                  <div className="grid grid-cols-4 gap-4">
-                    {filteredItems.map((item) => (
-                      item.type === 'folder' ? (
-                        <button
-                          key={item.id}
-                          onClick={() => navigateToFolder(item.id)}
-                          className="flex flex-col items-center rounded-xl border border-gray-200 bg-white p-6 text-center transition-colors hover:border-gray-300 hover:bg-gray-50"
-                        >
-                          <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-gray-100 mb-4">
-                            <svg className="h-8 w-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                            </svg>
-                          </div>
-                          <span className="text-sm font-medium text-gray-900">{item.name}</span>
-                        </button>
-                      ) : (
-                        <div
-                          key={item.id}
-                          className="flex flex-col rounded-xl border border-gray-200 bg-white p-4 transition-colors hover:border-gray-300"
-                        >
-                          <div className="flex h-24 items-center justify-center rounded-lg bg-blue-50 mb-3">
-                            <svg className="h-10 w-10 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                          </div>
-                          <div className="flex items-start justify-between mb-1">
-                            <span className="text-sm font-medium text-gray-900 truncate flex-1">{item.name}</span>
-                            {(item as DocFile).starred && (
-                              <svg className="h-4 w-4 text-amber-400 shrink-0 ml-1" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                              </svg>
-                            )}
-                          </div>
-                          <span className="inline-flex items-center self-start rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 mb-2">
-                            {(item as DocFile).category}
-                          </span>
-                          <p className="text-xs text-gray-500">{(item as DocFile).size} • {(item as DocFile).updatedAt}</p>
-                        </div>
-                      )
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center rounded-xl border border-gray-200 bg-white py-16">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 mb-4">
-                      <svg className="h-8 w-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-base font-semibold text-gray-900 mb-1">No items yet</h3>
-                    <p className="text-sm text-muted-foreground mb-4">Create your first folder or upload files to get started</p>
-                    <button 
-                      onClick={() => setIsNewFolderModalOpen(true)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-                    >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      New Folder
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <ProjectDocumentsManager projectId={project.publicId} />
         )}
 
         {/* Versions Tab */}

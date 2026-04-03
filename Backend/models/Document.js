@@ -10,7 +10,14 @@ const DocumentSchema = new mongoose.Schema({
         default: () => crypto.randomUUID(),
     },
     projectId: { type: String, required: true, index: true },
-    packageId: { type: String, required: true, index: true },
+    packageId: { type: String, default: null, index: true },
+    folderType: {
+        type: String,
+        enum: ['images', 'files'],
+        default: 'files',
+        index: true,
+    },
+    folderPath: { type: String, default: '', trim: true, index: true },
 
     originalName: { type: String, required: true, trim: true },
     storedName: { type: String, required: true, trim: true },
@@ -27,7 +34,7 @@ const DocumentSchema = new mongoose.Schema({
     updatedAt: { type: Date, default: Date.now },
 });
 
-DocumentSchema.index({ projectId: 1, packageId: 1, createdAt: -1 });
+DocumentSchema.index({ projectId: 1, packageId: 1, folderType: 1, folderPath: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Document', DocumentSchema);
 

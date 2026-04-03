@@ -1,4 +1,6 @@
 const path = require('path');
+const os = require('os');
+const cluster = require('cluster');
 // Luôn đọc .env tại thư mục Backend (kể cả khi chạy: cd workers && node packageUploadWorker.js)
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -92,7 +94,7 @@ async function processJob(jobId) {
     }
 }
 
-async function main() {
+async function runConsumer() {
     await connectDB();
     assertS3Configured();
 
@@ -103,8 +105,28 @@ async function main() {
     });
 }
 
-main().catch((err) => {
-    console.error('[packageUploadWorker] fatal error:', err);
-    process.exit(1);
-});
+function startWorkerCluster() {
+    const cpuCount = os.cpus()?.length || 1;
+    const workerCount = Number(process.env.UPLOAD_WORKER_THREADS || Math.min(Math.max(cpuCount - 1, 1), 4));
+
+    if (cluster.isPrimary) {
+        console.log(`[packageUploadWorker] primary ${process.pid} starting ${workerCount} workers`);
+        for (let i = 0; i < workerCount; i += 1) {
+            cluster.fork();
+        }
+
+        cluster.on('exit', (worker, code, signal) => {
+            console.error(`[packageUploadWorker] worker ${worker.process.pid} exited (code=${code}, signal=${signal}). restarting...`);
+            cluster.fork();
+        });
+        return;
+    }
+
+    runConsumer().catch((err) => {
+        console.error(`[packageUploadWorker] worker ${process.pid} fatal error:`, err);
+        process.exit(1);
+    });
+}
+
+startWorkerCluster();
 

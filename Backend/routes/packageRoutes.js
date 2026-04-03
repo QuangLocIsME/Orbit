@@ -25,6 +25,30 @@ router.post('/delete', authenticate, (req, res) =>
     PackageController.deletePackage(req, res)
 );
 
+router.post('/documents/list', authenticate, (req, res) =>
+    PackageController.listProjectDocuments(req, res)
+);
+
+router.post('/documents/folders/create', authenticate, (req, res) =>
+    PackageController.createDocumentFolder(req, res)
+);
+
+router.post('/documents/file/rename', authenticate, (req, res) =>
+    PackageController.renameDocumentFile(req, res)
+);
+
+router.post('/documents/folder/rename', authenticate, (req, res) =>
+    PackageController.renameDocumentFolder(req, res)
+);
+
+router.post('/documents/file/delete', authenticate, (req, res) =>
+    PackageController.deleteDocumentFile(req, res)
+);
+
+router.post('/documents/folder/delete', authenticate, (req, res) =>
+    PackageController.deleteDocumentFolder(req, res)
+);
+
 router.post(
     '/upload',
     authenticate,

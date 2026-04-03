@@ -11,7 +11,7 @@ function ensureDir() {
     }
 }
 
-const MAX_UPLOAD_SIZE_MB = Number(process.env.MAX_UPLOAD_SIZE_MB || 50);
+const MAX_UPLOAD_SIZE_MB = Number(process.env.MAX_UPLOAD_SIZE_MB || 500);
 
 ensureDir();
 

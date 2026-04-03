@@ -5,6 +5,26 @@ class PackageRepository {
         return await Package.findOne({ projectId, name });
     }
 
+    async listByProjectAndMember(projectId, userId, scope = 'active') {
+        const filter = { projectId };
+        if (scope === 'active') {
+            filter.status = { $ne: 'Archived' };
+        } else if (scope === 'archived') {
+            filter.status = 'Archived';
+        }
+
+        if (userId) {
+            filter.$or = [
+                { creatorId: userId },
+                { teamMemberIds: userId },
+            ];
+        }
+
+        const query = Package.find(filter).select('-_id -__v');
+        if (scope === 'archived') return await query.sort({ archivedAt: -1 });
+        return await query.sort({ updatedAt: -1 });
+    }
+
     async create(data) {
         return await Package.create(data);
     }

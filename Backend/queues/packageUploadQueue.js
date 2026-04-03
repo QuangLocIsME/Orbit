@@ -27,7 +27,8 @@ async function publishPackageUpload(jobPublicId) {
 
 async function startPackageUploadConsumer(onMessage) {
     const { conn, channel } = await createChannel();
-    channel.prefetch(1);
+    const prefetch = Number(process.env.RABBITMQ_PREFETCH || 3);
+    channel.prefetch(Number.isFinite(prefetch) && prefetch > 0 ? prefetch : 3);
 
     await channel.consume(
         QUEUE_NAME,

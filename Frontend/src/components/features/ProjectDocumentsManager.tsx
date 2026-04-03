@@ -1,0 +1,482 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight, Eye, Download, Trash2 } from 'lucide-react';
+
+interface ProjectDocumentsManagerProps {
+  projectId: string;
+}
+
+interface TreeNode {
+  id: string;
+  name: string;
+  type: 'folder' | 'file';
+  children?: TreeNode[];
+  category?: string;
+  s3Url?: string;
+  mimeType?: string;
+  folderPath?: string;
+}
+
+function findNodeById(node: TreeNode | null, id: string): TreeNode | null {
+  if (!node) return null;
+  if (node.id === id) return node;
+  for (const child of node.children || []) {
+    const found = findNodeById(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function buildBreadcrumbs(root: TreeNode | null, currentId: string): TreeNode[] {
+  if (!root) return [];
+
+  const path: TreeNode[] = [];
+  const dfs = (node: TreeNode): boolean => {
+    path.push(node);
+    if (node.id === currentId) return true;
+    for (const child of node.children || []) {
+      if (dfs(child)) return true;
+    }
+    path.pop();
+    return false;
+  };
+
+  dfs(root);
+  return path;
+}
+
+function deriveLocation(
+  currentFolder: TreeNode | null,
+  packageNode: TreeNode | null
+): { packageId: string; folderType: 'files' | 'images'; folderPath: string } {
+  const targetId = currentFolder?.id || packageNode?.id || 'root';
+
+  if (targetId === 'root') {
+    return { packageId: '', folderType: 'files', folderPath: '' };
+  }
+
+  const marker = '/pkg/';
+  const pkgIndex = targetId.indexOf(marker);
+
+  if (pkgIndex !== -1) {
+    const pathAfterPkg = targetId.slice(pkgIndex + marker.length);
+    const segments = pathAfterPkg.split('/').filter(Boolean);
+    const packageId = segments[0] || '';
+    const folderPath = segments.slice(1).join('/');
+    return { packageId, folderType: 'files', folderPath };
+  }
+
+  const rootPrefix = 'root/';
+  const folderPath = targetId.startsWith(rootPrefix) ? targetId.slice(rootPrefix.length) : '';
+  return { packageId: '', folderType: 'files', folderPath };
+}
+
+export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsManagerProps) {
+  const [loading, setLoading] = useState(true);
+  const [rootTree, setRootTree] = useState<TreeNode | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string>('');
+
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [folderName, setFolderName] = useState('');
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [hoveredId, setHoveredId] = useState<string>('');
+  const [renamingNodeId, setRenamingNodeId] = useState<string>('');
+  const [renameValue, setRenameValue] = useState('');
+  const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadDocuments = async () => {
+    const res = await fetch('/api/projects/packages/documents/list', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ projectId }),
+    });
+    if (!res.ok) throw new Error('Không thể tải documents');
+
+    const payload = await res.json();
+    setRootTree(payload?.data?.tree || null);
+  };
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      await loadDocuments();
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể tải documents');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, [projectId]);
+
+  const packageNode = useMemo(() => {
+    if (!rootTree) return null;
+    return rootTree;
+  }, [rootTree]);
+
+  useEffect(() => {
+    if (packageNode) {
+      setCurrentFolderId(packageNode.id);
+    }
+  }, [packageNode?.id]);
+
+  const currentFolder = useMemo(() => {
+    if (!packageNode) return null;
+    return findNodeById(packageNode, currentFolderId) || packageNode;
+  }, [packageNode, currentFolderId]);
+
+  const breadcrumbs = useMemo(() => {
+    if (!packageNode || !currentFolder) return [];
+    return buildBreadcrumbs(packageNode, currentFolder.id);
+  }, [packageNode, currentFolder]);
+
+  const createFolder = async () => {
+    if (!folderName.trim()) {
+      toast.error('Vui lòng nhập tên folder');
+      return;
+    }
+    const location = deriveLocation(currentFolder, packageNode);
+
+    const packageId = location.packageId;
+
+    const res = await fetch('/api/projects/packages/documents/folders/create', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        packageId,
+        folderType: location.folderType,
+        folderName: folderName.trim(),
+        parentPath: location.folderPath,
+      }),
+    });
+
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || !payload?.success) {
+      throw new Error(payload?.message || 'Tạo folder thất bại');
+    }
+
+    setFolderName('');
+    setIsCreateFolderOpen(false);
+    await loadDocuments();
+  };
+
+  const uploadFile = async (file: File) => {
+    setIsUploading(true);
+    try {
+      const location = deriveLocation(currentFolder, packageNode);
+      const packageId = location.packageId;
+      const folderType = location.folderType;
+
+      const formData = new FormData();
+      formData.append('projectId', projectId);
+      formData.append('packageId', packageId);
+      formData.append('folderType', folderType);
+      formData.append('folderPath', location.folderPath);
+      formData.append('file', file);
+
+      const res = await fetch('/api/projects/packages/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.message || 'Upload thất bại');
+      }
+
+      toast.success(payload?.mode === 'queue' ? 'File lớn đã đưa vào queue xử lý nền' : 'Upload thành công');
+      await loadDocuments();
+    } finally {
+      setIsUploading(false);
+      setPendingUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDelete = async (node: TreeNode) => {
+    const endpoint = node.type === 'folder'
+      ? '/api/projects/packages/documents/folder/delete'
+      : '/api/projects/packages/documents/file/delete';
+
+    const body = node.type === 'folder'
+      ? { projectId, folderId: node.id }
+      : { projectId, fileId: node.id };
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || !payload?.success) {
+      throw new Error(payload?.message || 'Xóa thất bại');
+    }
+
+    await loadDocuments();
+  };
+
+  const startRename = (node: TreeNode) => {
+    setRenamingNodeId(node.id);
+    setRenameValue(node.name);
+  };
+
+  const submitRename = async (node: TreeNode) => {
+    if (!renameValue.trim()) {
+      setRenamingNodeId('');
+      return;
+    }
+
+    const endpoint = node.type === 'folder'
+      ? '/api/projects/packages/documents/folder/rename'
+      : '/api/projects/packages/documents/file/rename';
+
+    const body = node.type === 'folder'
+      ? { projectId, folderId: node.id, newName: renameValue.trim() }
+      : { projectId, fileId: node.id, newName: renameValue.trim() };
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || !payload?.success) {
+      throw new Error(payload?.message || 'Rename thất bại');
+    }
+
+    setRenamingNodeId('');
+    setRenameValue('');
+    await loadDocuments();
+  };
+
+  useEffect(() => {
+    if (pendingUploadFile) {
+      uploadFile(pendingUploadFile).catch((err: any) => toast.error(err?.message || 'Upload thất bại'));
+    }
+  }, [pendingUploadFile]);
+
+  if (loading) {
+    return <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px] text-sm text-gray-500">Loading documents...</div>;
+  }
+
+  return (
+    <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-[24px] font-normal text-[#101828]">Documents & Drawings</h2>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsCreateFolderOpen(true)}
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <FolderPlus className="h-4 w-4" />
+            Create Folder
+          </button>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            <Upload className="h-4 w-4" />
+            {isUploading ? 'Uploading...' : 'Upload File'}
+          </button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => setPendingUploadFile(e.target.files?.[0] || null)}
+          />
+        </div>
+      </div>
+
+      {breadcrumbs.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          {breadcrumbs.map((node, idx) => (
+            <div key={node.id} className="inline-flex items-center gap-2">
+              {idx > 0 && <ChevronRight className="h-4 w-4 text-gray-400" />}
+              <button
+                onClick={() => setCurrentFolderId(node.id)}
+                className={idx === breadcrumbs.length - 1 ? 'font-medium text-gray-800' : 'hover:text-gray-800'}
+              >
+                {node.name}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div>
+        <h3 className="mb-3 text-[22px] font-medium text-[#101828]">{currentFolder?.name || 'All Files'}</h3>
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+          {!currentFolder ? (
+            <p className="p-4 text-sm text-gray-500">Package này chưa có dữ liệu documents.</p>
+          ) : (currentFolder.children || []).length === 0 ? (
+            <p className="p-4 text-sm text-gray-500">Folder trống.</p>
+          ) : (
+            <ul>
+              {(currentFolder.children || []).map((child, idx) => {
+                const isLast = idx === (currentFolder.children || []).length - 1;
+                if (child.type === 'folder') {
+                  return (
+                    <li
+                      key={child.id}
+                      className={!isLast ? 'border-b border-gray-200' : ''}
+                      onMouseEnter={() => setHoveredId(child.id)}
+                      onMouseLeave={() => setHoveredId('')}
+                    >
+                      <div className="flex items-center gap-4 px-4 py-4 hover:bg-gray-50">
+                        <button onClick={() => setCurrentFolderId(child.id)} className="flex items-center gap-4 text-left">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
+                            <Folder className="h-5 w-5 text-gray-500" />
+                          </span>
+                        </button>
+
+                        {renamingNodeId === child.id ? (
+                          <input
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={() => submitRename(child).catch((e: any) => toast.error(e.message))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') submitRename(child).catch((err: any) => toast.error(err.message));
+                              if (e.key === 'Escape') setRenamingNodeId('');
+                            }}
+                            className="flex-1 rounded border border-gray-200 px-2 py-1 text-sm"
+                            autoFocus
+                          />
+                        ) : (
+                          <button
+                            onDoubleClick={() => startRename(child)}
+                            onClick={() => setCurrentFolderId(child.id)}
+                            className="flex-1 text-left text-sm font-medium text-[#101828]"
+                          >
+                            {child.name}
+                          </button>
+                        )}
+
+                        {hoveredId === child.id && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleDelete(child).catch((e: any) => toast.error(e.message))}
+                              className="rounded p-1 text-red-500 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                }
+
+                const isImage = (child.mimeType || '').startsWith('image/') || child.category === 'Image';
+                return (
+                  <li
+                    key={child.id}
+                    className={!isLast ? 'border-b border-gray-200' : ''}
+                    onMouseEnter={() => setHoveredId(child.id)}
+                    onMouseLeave={() => setHoveredId('')}
+                  >
+                    <div className="flex items-center gap-4 px-4 py-4 hover:bg-gray-50">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
+                        {isImage ? <ImageIcon className="h-5 w-5 text-gray-500" /> : <FileText className="h-5 w-5 text-gray-500" />}
+                      </span>
+
+                      {renamingNodeId === child.id ? (
+                        <input
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={() => submitRename(child).catch((e: any) => toast.error(e.message))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') submitRename(child).catch((err: any) => toast.error(err.message));
+                            if (e.key === 'Escape') setRenamingNodeId('');
+                          }}
+                          className="flex-1 rounded border border-gray-200 px-2 py-1 text-sm"
+                          autoFocus
+                        />
+                      ) : (
+                        <button onDoubleClick={() => startRename(child)} className="flex-1 text-left text-sm font-medium text-[#101828]">
+                          {child.name}
+                        </button>
+                      )}
+
+                      {hoveredId === child.id && (
+                        <div className="flex items-center gap-1">
+                          {isImage && (
+                            <button onClick={() => setPreviewImageUrl(child.s3Url || '')} className="rounded p-1 text-gray-600 hover:bg-gray-100">
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          )}
+                          <a href={child.s3Url || '#'} download className="rounded p-1 text-gray-600 hover:bg-gray-100">
+                            <Download className="h-4 w-4" />
+                          </a>
+                          <button
+                            onClick={() => handleDelete(child).catch((e: any) => toast.error(e.message))}
+                            className="rounded p-1 text-red-500 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {isCreateFolderOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setIsCreateFolderOpen(false)}>
+          <div className="w-full max-w-md rounded-xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900">Create Folder</h3>
+            <p className="mt-1 text-sm text-gray-500">Folder sẽ được tạo tại vị trí hiện tại.</p>
+
+            <input
+              value={folderName}
+              onChange={(e) => setFolderName(e.target.value)}
+              placeholder="Folder name"
+              className="mt-4 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            />
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setIsCreateFolderOpen(false)} className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button
+                onClick={() => createFolder().catch((e: any) => toast.error(e.message))}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewImageUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setPreviewImageUrl('')}>
+          <div className="max-h-[90vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+            <img src={previewImageUrl} alt="Preview" className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

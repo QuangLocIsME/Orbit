@@ -2,12 +2,8 @@
 export const prerender = false;
 import DashboardLayout from '@/layouts/DashboardLayout.astro';
 import PackagesManager from '@/components/features/PackagesManager';
-
-import packagesData from '@/data/packages.json';
-
-const packages = packagesData as any[];
 ---
 
 <DashboardLayout title="Packages - ORBIT" pageTitle="Packages">
-  <PackagesManager client:load packages={packages} />
+  <PackagesManager client:load />
 </DashboardLayout>
