@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import type { Project } from '@/types';
 import PackagesManager from './PackagesManager';
-import packagesData from '@/data/packages.json';
 import ProjectTopBar from '@/components/layout/ProjectTopBar';
 import CreateTaskModal from './CreateTaskModal';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
@@ -27,14 +26,34 @@ interface ProjectDetailPageProps {
   };
 }
 
-// Real team members are fetched via API when the project loads
-const mockTeamMembers = [
+type TeamMember = {
+  id: string;
+  name: string;
+  role: string;
+  avatar: string;
+  color: string;
+  isOnline: boolean;
+};
+
+const TEAM_MEMBER_COLORS = [
+  'bg-pink-500',
+  'bg-emerald-500',
+  'bg-indigo-500',
+  'bg-blue-500',
+  'bg-teal-500',
+  'bg-purple-500',
+  'bg-orange-500',
+  'bg-cyan-500',
+] as const;
+
+// Mock fallback if API is unavailable
+const mockTeamMembers: TeamMember[] = [
   { id: '1', name: 'Thao Duyen', role: 'Design Lead', avatar: 'TD', color: 'bg-pink-500', isOnline: true },
   { id: '2', name: 'Minh Anh', role: 'Project Manager', avatar: 'MA', color: 'bg-emerald-500', isOnline: true },
   { id: '3', name: 'Hoang Nam', role: 'Lead Architect', avatar: 'HN', color: 'bg-indigo-500', isOnline: true },
   { id: '4', name: 'Thu Trang', role: 'Structural Engineer', avatar: 'TT', color: 'bg-blue-500', isOnline: false },
   { id: '5', name: 'Tuan Kiet', role: 'MEP Engineer', avatar: 'TK', color: 'bg-teal-500', isOnline: true },
-  ];
+];
 
 const mockActivities = [
   { id: '1', action: 'Version 3.2 approved', user: 'Minh Anh', time: '2 hours ago', icon: 'check', color: 'bg-emerald-100 text-emerald-600' },
@@ -67,6 +86,7 @@ interface DocFolder {
   id: string;
   name: string;
   type: 'folder';
+  icon?: 'package' | 'images' | 'files' | 'folder';
   children: (DocFolder | DocFile)[];
 }
 
@@ -461,13 +481,99 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isFavorite, setIsFavorite] = useState(false);
-  const [teamMembers, setTeamMembers] = useState(mockTeamMembers);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [isTeamMembersLoading, setIsTeamMembersLoading] = useState(true);
+  const [documentsTree, setDocumentsTree] = useState<DocFolder>({
+    id: 'root',
+    name: 'All Files',
+    type: 'folder',
+    children: [],
+  });
+  const [isDocumentsLoading, setIsDocumentsLoading] = useState(true);
 
   // Fetch real team members from the backend API
   useEffect(() => {
     let cancelled = false;
 
+    const toAvatar = (fullName: string) => {
+      const parts = fullName.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return 'NA';
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase();
+    };
+
+    const toTitleCase = (value: string) =>
+      value
+        .replace(/[_-]+/g, ' ')
+        .toLowerCase()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+
+    const pickString = (...values: unknown[]) => {
+      for (const value of values) {
+        if (typeof value === 'string' && value.trim().length > 0) {
+          return value.trim();
+        }
+      }
+      return '';
+    };
+
+    const normalizeMember = (member: any, index: number): TeamMember => {
+      const user = member?.user ?? member?.member ?? member?.profile ?? {};
+
+      const name = pickString(
+        member?.name,
+        member?.fullName,
+        user?.name,
+        user?.fullName,
+        user?.displayName,
+        member?.displayName,
+        member?.username,
+        user?.username,
+        member?.email,
+        user?.email
+      ) || `Member ${index + 1}`;
+
+      const role =
+        pickString(
+          member?.projectRole,
+          member?.role,
+          member?.project_role,
+          member?.memberRole,
+          user?.projectRole,
+          user?.role,
+          member?.position,
+          user?.position,
+          member?.title,
+          user?.title
+        ) || 'Member';
+
+      const id =
+        pickString(
+          member?.id,
+          member?.publicId,
+          member?.userId,
+          member?.user_id,
+          member?.memberId,
+          user?.id,
+          user?.publicId,
+          user?.userId
+        ) || `${index + 1}`;
+
+      const color = TEAM_MEMBER_COLORS[index % TEAM_MEMBER_COLORS.length];
+      const isOnline = member?.isOnline ?? user?.isOnline ?? true;
+
+      return {
+        id: String(id),
+        name,
+        role: toTitleCase(String(role)),
+        avatar: toAvatar(name),
+        color,
+        isOnline,
+      };
+    };
+
     const fetchTeam = async () => {
+      setIsTeamMembersLoading(true);
       try {
         const res = await fetch('/api/projects/member-list', {
           method: 'POST',
@@ -475,14 +581,32 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({ projectId: project.publicId }),
         });
-        if (!res.ok) return;
+
+        if (!res.ok) {
+          if (!cancelled) setTeamMembers([]);
+          return;
+        }
+
         const payload = await res.json();
-        const members: typeof mockTeamMembers = Array.isArray(payload?.data) ? payload.data : [];
-        if (!cancelled && members.length > 0) {
+        const membersRaw = Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.members)
+            ? payload.members
+            : Array.isArray(payload?.results)
+              ? payload.results
+              : [];
+
+        const members = membersRaw
+          .map(normalizeMember)
+          .filter((m, idx, arr) => arr.findIndex((x) => x.id === m.id) === idx);
+
+        if (!cancelled) {
           setTeamMembers(members);
         }
       } catch {
-        // Fall back to mock data on error
+        if (!cancelled) setTeamMembers([]);
+      } finally {
+        if (!cancelled) setIsTeamMembersLoading(false);
       }
     };
 
@@ -490,6 +614,16 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
     return () => { cancelled = true; };
   }, [project.publicId]);
   
+  const [docViewMode, setDocViewMode] = useState<'list' | 'grid'>('list');
+  const [docSearchQuery, setDocSearchQuery] = useState('');
+  const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [currentPath, setCurrentPath] = useState<string[]>(['root']);
+
   // Check for stored tab on mount (used when navigating back from package detail)
   useEffect(() => {
     const storedTab = sessionStorage.getItem('projectActiveTab');
@@ -498,12 +632,50 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
       sessionStorage.removeItem('projectActiveTab');
     }
   }, []);
-  const [docViewMode, setDocViewMode] = useState<'list' | 'grid'>('list');
-  const [docSearchQuery, setDocSearchQuery] = useState('');
-  const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
-  const [currentPath, setCurrentPath] = useState<string[]>(['root']);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchDocumentsTree = async () => {
+      setIsDocumentsLoading(true);
+      try {
+        const res = await fetch('/api/projects/packages/documents/list', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: project.publicId }),
+        });
+
+        if (!res.ok) {
+          if (!cancelled) {
+            setDocumentsTree({ id: 'root', name: 'All Files', type: 'folder', children: [] });
+            setCurrentPath(['root']);
+          }
+          return;
+        }
+
+        const payload = await res.json();
+        const tree = payload?.data?.tree;
+
+        if (!cancelled && tree && tree.type === 'folder') {
+          setDocumentsTree(tree as DocFolder);
+          setCurrentPath(['root']);
+        }
+      } catch {
+        if (!cancelled) {
+          setDocumentsTree({ id: 'root', name: 'All Files', type: 'folder', children: [] });
+          setCurrentPath(['root']);
+        }
+      } finally {
+        if (!cancelled) setIsDocumentsLoading(false);
+      }
+    };
+
+    fetchDocumentsTree();
+    return () => {
+      cancelled = true;
+    };
+  }, [project.publicId]);
   const [selectedVersion, setSelectedVersion] = useState<Version | null>(null);
   const [isVersionDetailOpen, setIsVersionDetailOpen] = useState(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
@@ -521,11 +693,13 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
   // Get current folder based on path
   const getCurrentFolder = (): DocFolder => {
-    let current: DocFolder = mockDocuments;
+    let current: DocFolder = documentsTree;
     for (let i = 1; i < currentPath.length; i++) {
       const found = current.children.find(c => c.id === currentPath[i] && c.type === 'folder');
       if (found && found.type === 'folder') {
         current = found;
+      } else {
+        break;
       }
     }
     return current;
@@ -536,12 +710,14 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   // Get breadcrumb items
   const getBreadcrumbs = (): { id: string; name: string }[] => {
     const crumbs: { id: string; name: string }[] = [{ id: 'root', name: 'All Files' }];
-    let current: DocFolder = mockDocuments;
+    let current: DocFolder = documentsTree;
     for (let i = 1; i < currentPath.length; i++) {
       const found = current.children.find(c => c.id === currentPath[i] && c.type === 'folder');
       if (found && found.type === 'folder') {
         crumbs.push({ id: found.id, name: found.name });
         current = found;
+      } else {
+        break;
       }
     }
     return crumbs;
@@ -557,6 +733,105 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
   const navigateToBreadcrumb = (index: number) => {
     setCurrentPath(currentPath.slice(0, index + 1));
+  };
+
+  const getCurrentFolderContext = () => {
+    if (currentPath.length < 2) {
+      return { folderType: 'files', parentPath: '' };
+    }
+
+    const groupNodeId = currentPath[1] || '';
+    const folderType = groupNodeId.includes('/images') ? 'images' : 'files';
+    const parentPath = currentPath.length > 2
+      ? currentPath.slice(2).map((id) => id.split('/').pop() || '').filter(Boolean).join('/')
+      : '';
+
+    return { folderType, parentPath };
+  };
+
+  const refreshDocumentsTree = async () => {
+    const refreshRes = await fetch('/api/projects/packages/documents/list', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ projectId: project.publicId }),
+    });
+
+    if (refreshRes.ok) {
+      const refreshPayload = await refreshRes.json();
+      const tree = refreshPayload?.data?.tree;
+      if (tree && tree.type === 'folder') {
+        setDocumentsTree(tree as DocFolder);
+        setCurrentPath(['root']);
+      }
+    }
+  };
+
+  const handleCreateDocumentFolder = async () => {
+    const folderName = newFolderName.trim();
+    if (!folderName) return;
+
+    const { folderType, parentPath } = getCurrentFolderContext();
+
+    try {
+      const res = await fetch('/api/projects/packages/documents/folders/create', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: project.publicId,
+          folderName,
+          folderType,
+          parentPath,
+        }),
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        alert(payload?.message || 'Create folder failed');
+        return;
+      }
+
+      setIsNewFolderModalOpen(false);
+      setNewFolderName('');
+      await refreshDocumentsTree();
+    } catch {
+      alert('Create folder failed');
+    }
+  };
+
+  const handleUploadSubmit = async () => {
+    if (!selectedUploadFile) return;
+
+    const { folderType, parentPath } = getCurrentFolderContext();
+    setIsUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('projectId', project.publicId);
+      formData.append('folderType', folderType);
+      formData.append('folderPath', parentPath);
+      formData.append('file', selectedUploadFile);
+
+      const res = await fetch('/api/projects/packages/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        alert(payload?.message || 'Upload failed');
+        return;
+      }
+
+      setIsUploadModalOpen(false);
+      setSelectedUploadFile(null);
+      await refreshDocumentsTree();
+    } catch {
+      alert('Upload failed');
+    } finally {
+      setIsUploadingFile(false);
+    }
   };
 
   const filteredItems = currentFolder.children.filter(item =>
@@ -614,7 +889,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const projectStats = {
     documents: 48,
     versions: 124,
-    teamMembers: project.teamMembers,
+    teamMembers: teamMembers.length,
     openClashes: project.issues,
     startDate: 'Jan 15, 2024',
     deadline: 'Dec 15, 2025',
@@ -672,7 +947,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
       <div className="px-[300px] py-6">
         {/* Packages Tab Content */}
         {activeTab === 'packages' && (
-          <PackagesManager packages={packagesData as any} />
+          <PackagesManager projectId={project.publicId} />
         )}
 
 {/* Overview Tab Content */}
@@ -770,22 +1045,36 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
               <h3 className="font-semibold text-foreground">Team members</h3>
             </div>
             <div className="space-y-3">
-              {mockTeamMembers.map((member) => (
-                <div key={member.id} className="flex items-center gap-3">
-                  <div className="relative">
-                    <div className={cn("flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium text-white", member.color)}>
-                      {member.avatar}
+              {isTeamMembersLoading ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <div key={`team-member-skeleton-${idx}`} className="flex items-center gap-3">
+                    <div className="h-10 w-10 animate-pulse rounded-full bg-gray-200" />
+                    <div className="space-y-2">
+                      <div className="h-3 w-24 animate-pulse rounded bg-gray-200" />
+                      <div className="h-3 w-20 animate-pulse rounded bg-gray-100" />
                     </div>
-                    {member.isOnline && (
-                      <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />
-                    )}
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{member.name}</p>
-                    <p className="text-xs text-muted-foreground">{member.role}</p>
+                ))
+              ) : teamMembers.length > 0 ? (
+                teamMembers.map((member) => (
+                  <div key={member.id} className="flex items-center gap-3">
+                    <div className="relative">
+                      <div className={cn("flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium text-white", member.color)}>
+                        {member.avatar}
+                      </div>
+                      {member.isOnline && (
+                        <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{member.name}</p>
+                      <p className="text-xs text-muted-foreground">{member.role}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">No team members found</p>
+              )}
             </div>
           </div>
 
@@ -1999,7 +2288,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                         });
                         return files;
                       };
-                      const projectFiles = extractFiles(mockDocuments);
+                      const projectFiles = extractFiles(documentsTree);
                       return projectFiles.slice(0, 5).map((file) => (
                         <label key={file.id} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-100">
                           <input type="checkbox" className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500 bg-[#F9FAFB]" />
@@ -2591,8 +2880,8 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                   Cancel
                 </button>
                 <button 
-                  onClick={() => { console.log('Creating folder:', newFolderName); setIsNewFolderModalOpen(false); setNewFolderName(''); }}
-                  disabled={!newFolderName}
+                  onClick={handleCreateDocumentFolder}
+                  disabled={!newFolderName.trim()}
                   className="px-4 py-2.5 rounded-lg bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Create Folder
@@ -2631,30 +2920,50 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
               {/* Content */}
               <div className="px-6 py-5">
-                <div className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer group">
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setSelectedUploadFile(file);
+                  }}
+                />
+
+                <div
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer group"
+                  onClick={() => uploadInputRef.current?.click()}
+                >
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-indigo-50 mb-4 group-hover:bg-indigo-100 transition-colors">
                     <svg className="h-7 w-7 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
                   </div>
-                  <p className="text-sm font-semibold text-gray-900 mb-1">Click to upload or drag and drop</p>
+                  <p className="text-sm font-semibold text-gray-900 mb-1">Click to choose file from device</p>
                   <p className="text-xs text-gray-500">PDF, DWG, RVT, IFC, NWC or other files up to 500MB</p>
+                  {selectedUploadFile && (
+                    <p className="mt-3 text-xs text-indigo-700 font-medium">Selected: {selectedUploadFile.name}</p>
+                  )}
                 </div>
               </div>
 
               {/* Footer */}
               <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
                 <button 
-                  onClick={() => setIsUploadModalOpen(false)} 
+                  onClick={() => {
+                    setIsUploadModalOpen(false);
+                    setSelectedUploadFile(null);
+                  }} 
                   className="px-4 py-2.5 text-sm font-medium text-gray-700 hover:text-gray-900 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   Cancel
                 </button>
                 <button 
-                  onClick={() => setIsUploadModalOpen(false)}
-                  className="px-4 py-2.5 rounded-lg bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
+                  onClick={handleUploadSubmit}
+                  disabled={!selectedUploadFile || isUploadingFile}
+                  className="px-4 py-2.5 rounded-lg bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Upload
+                  {isUploadingFile ? 'Uploading...' : 'Upload'}
                 </button>
               </div>
             </div>

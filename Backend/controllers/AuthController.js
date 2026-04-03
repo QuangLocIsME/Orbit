@@ -28,6 +28,7 @@ const setAuthCookies = (res, accessToken, refreshToken) => {
         secure: isProduction,
         sameSite: 'lax',
         maxAge: ACCESS_TOKEN_EXPIRES_MS,
+        path: '/',
     });
 
     res.cookie('refreshToken', refreshToken, {
@@ -35,6 +36,7 @@ const setAuthCookies = (res, accessToken, refreshToken) => {
         secure: isProduction,
         sameSite: 'lax',
         maxAge: REFRESH_TOKEN_EXPIRES_MS,
+        path: '/',
     });
 };
 
@@ -176,11 +178,13 @@ class AuthController {
                 httpOnly: true,
                 secure: isProduction,
                 sameSite: 'lax',
+                path: '/',
             });
             res.clearCookie('refreshToken', {
                 httpOnly: true,
                 secure: isProduction,
                 sameSite: 'lax',
+                path: '/',
             });
 
             return res.status(200).json({

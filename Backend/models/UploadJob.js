@@ -18,10 +18,24 @@ const UploadJobSchema = new mongoose.Schema({
     mimeType: { type: String, default: '', trim: true },
     size: { type: Number, default: 0 },
 
+    folderType: {
+        type: String,
+        enum: ['images', 'files'],
+        default: 'files',
+        index: true,
+    },
+    folderPath: { type: String, default: '', trim: true },
+
     tempFilePath: { type: String, required: true, trim: true },
 
     s3Bucket: { type: String, required: true },
     s3Key: { type: String, required: true },
+    storageProvider: {
+        type: String,
+        enum: ['supabase-s3', 'aws-s3', 'minio', 'local'],
+        default: 'supabase-s3',
+    },
+    storageEndpoint: { type: String, default: '', trim: true },
 
     status: {
         type: String,

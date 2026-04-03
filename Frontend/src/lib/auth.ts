@@ -2,6 +2,18 @@
 
 import { dispatchAuthExpired, dispatchSignOut } from './auth-helpers';
 
+// ── Shared refresh lock (prevents concurrent refresh race condition) ───────────
+let isRefreshing = false;
+let waitQueue: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+
+function drainQueue(error: Error | null) {
+  waitQueue.forEach(({ resolve, reject }) => {
+    if (error) reject(error);
+    else resolve();
+  });
+  waitQueue = [];
+}
+
 export interface User {
   id: string;
   fullName: string;
@@ -77,24 +89,38 @@ export async function refreshAccessToken(): Promise<boolean> {
 
 // fetch wrapper that automatically retries once after a 401 by refreshing tokens.
 // All protected API calls should use this instead of raw fetch.
+// Uses a shared refresh lock to prevent concurrent 401s from firing multiple simultaneous
+// refresh requests (which would cause all but the first to get 401 on the now-revoked token).
 export async function fetchWithAuth(
   url: string,
   init?: RequestInit
 ): Promise<Response> {
   const opts: RequestInit = { ...init, credentials: 'include' };
-  const res = await fetch(url, opts);
+  let response = await fetch(url, opts);
 
-  if (res.status !== 401) return res;
+  if (response.status !== 401) return response;
 
-  // Access token expired — try to refresh
-  const refreshed = await refreshAccessToken();
-  if (!refreshed) {
-    // refreshAccessToken already called signOut()
-    return res;
+  // 401 — try to refresh. If another request is already refreshing, wait for it.
+  if (isRefreshing) {
+    await new Promise<void>((resolve, reject) => { waitQueue.push({ resolve, reject }); });
+    return fetch(url, opts);
   }
 
-  // Retry original request with new tokens
-  return fetch(url, opts);
+  isRefreshing = true;
+  try {
+    const refreshed = await refreshAccessToken();
+    drainQueue(refreshed ? null : new Error('refresh failed'));
+    if (!refreshed) {
+      // refreshAccessToken already called signOut()
+      return response;
+    }
+    return fetch(url, opts);
+  } catch (err) {
+    drainQueue(err as Error);
+    return response;
+  } finally {
+    isRefreshing = false;
+  }
 }
 
 // Refresh user info from backend /api/auth/me and update localStorage

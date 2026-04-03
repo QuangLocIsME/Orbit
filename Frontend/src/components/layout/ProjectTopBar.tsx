@@ -53,9 +53,9 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
     setOpenProjects(newProjects);
     localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
     
-    // Navigate to home when closing current project
+    // Navigate to projects list when closing current project
     if (projectId === projectSlug) {
-      navigate('/');
+      navigate('/projects');
     }
   };
 
@@ -80,7 +80,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
         {/* Sidebar Panel */}
         <div className="absolute left-0 top-0 h-full w-64 bg-white shadow-lg border-r border-gray-200 overflow-auto">
           <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <a href="/" className="flex items-center gap-2">
+            <a href="/home" className="flex items-center gap-2">
               <svg width="28" height="24" viewBox="0 0 29 25" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M15.0464 21.9802C20.5435 21.9802 24.9997 17.5239 24.9997 12.0269C24.9997 6.52984 20.5435 2.07361 15.0464 2.07361C9.54937 2.07361 5.09314 6.52984 5.09314 12.0269C5.09314 17.5239 9.54937 21.9802 15.0464 21.9802Z" stroke="#1F4CB1" strokeWidth="4.1472"/>
                 <path d="M16.5772 16.0603C23.718 11.9375 28.4215 6.71548 27.0826 4.39653C25.7438 2.07758 18.8696 3.53988 11.7288 7.66266C4.58789 11.7854 -0.115579 17.0075 1.22327 19.3265C2.56211 21.6454 9.43628 20.1831 16.5772 16.0603Z" stroke="#C1C7CD" strokeWidth="1.99066" strokeLinecap="round"/>
@@ -101,7 +101,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
           {/* Quick Navigation */}
           <div className="p-4">
             <div className="space-y-1">
-              <a href="/" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
+              <a href="/home" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
                 <svg className="h-4 w-4 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                 </svg>
@@ -143,7 +143,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
         {/* Left side - Logo */}
         <div className="flex items-center gap-2">
           {/* ORBIT Logo */}
-          <a href="/" className="flex items-center">
+          <a href="/home" className="flex items-center">
             <svg width="28" height="24" viewBox="0 0 29 25" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M15.0464 21.9802C20.5435 21.9802 24.9997 17.5239 24.9997 12.0269C24.9997 6.52984 20.5435 2.07361 15.0464 2.07361C9.54937 2.07361 5.09314 6.52984 5.09314 12.0269C5.09314 17.5239 9.54937 21.9802 15.0464 21.9802Z" stroke="#1F4CB1" strokeWidth="4.1472"/>
               <path d="M16.5772 16.0603C23.718 11.9375 28.4215 6.71548 27.0826 4.39653C25.7438 2.07758 18.8696 3.53988 11.7288 7.66266C4.58789 11.7854 -0.115579 17.0075 1.22327 19.3265C2.56211 21.6454 9.43628 20.1831 16.5772 16.0603Z" stroke="#C1C7CD" strokeWidth="1.99066" strokeLinecap="round"/>
@@ -202,7 +202,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
 
         {/* Right side - Close button */}
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/projects')}
           className="flex h-7 w-7 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
           aria-label="Close project"
         >
@@ -240,7 +240,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
 
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 text-sm">
-            <a href="/" className="text-gray-500 hover:text-gray-700 transition-colors">Workspace</a>
+            <a href="/projects" className="text-gray-500 hover:text-gray-700 transition-colors">Projects</a>
             <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>

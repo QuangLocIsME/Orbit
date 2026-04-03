@@ -1,9 +1,19 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
+
 const { errorResponse } = require('../utils/response');
 const { normalizeString } = require('../utils/sanitize');
 
 const ProjectRepository = require('../repositories/ProjectRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const PackageRepository = require('../repositories/PackageRepository');
+const DocumentRepository = require('../repositories/DocumentRepository');
+const DocumentFolderRepository = require('../repositories/DocumentFolderRepository');
+const UploadJobRepository = require('../repositories/UploadJobRepository');
+const { publishPackageUpload } = require('../queues/packageUploadQueue');
+const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
@@ -17,6 +27,36 @@ function parseDueDate(dueDate) {
     const date = dueDate instanceof Date ? dueDate : new Date(dueDate);
     if (Number.isNaN(date.getTime())) return null;
     return date;
+}
+
+const SYNC_UPLOAD_MAX_MB = Number(process.env.SYNC_UPLOAD_MAX_MB || 20);
+const SYNC_UPLOAD_MAX_BYTES = SYNC_UPLOAD_MAX_MB * 1024 * 1024;
+const DEFAULT_IMAGE_FOLDER = process.env.DEFAULT_IMAGE_FOLDER || 'image';
+const DEFAULT_FILE_FOLDER = process.env.DEFAULT_FILE_FOLDER || 'file';
+
+function normalizeFolderType(value) {
+    if (String(value || '').toLowerCase() === 'images') return 'images';
+    return 'files';
+}
+
+function normalizeFolderPath(value) {
+    const normalized = String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^\/+|\/+$/g, '');
+    return normalized;
+}
+
+function buildStorageKey({ projectId, packageId, folderType, folderPath, originalName }) {
+    const ext = path.extname(originalName || '').toLowerCase();
+    const random = crypto.randomBytes(8).toString('hex');
+    const baseFolder = folderType === 'images' ? DEFAULT_IMAGE_FOLDER : DEFAULT_FILE_FOLDER;
+    const folderPart = folderPath ? `${folderPath}/` : '';
+    return `${baseFolder}/${projectId}/${folderPart}${projectId}-${Date.now()}-${random}${ext}`;
+}
+
+function getStorageProvider() {
+    return STORAGE_PROVIDER || 'supabase-s3';
 }
 
 class PackageController {
@@ -154,6 +194,137 @@ class PackageController {
         }
     }
 
+    async listProjectDocuments(req, res) {
+        try {
+            const { projectId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            if (!normalizedProjectId) return badRequest(res, 'projectId is required');
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can view documents');
+            }
+
+            const [docs, emptyFolders, packages] = await Promise.all([
+                DocumentRepository.listByProject(normalizedProjectId),
+                DocumentFolderRepository.listByProject(normalizedProjectId),
+                PackageRepository.listByProjectIdSorted(normalizedProjectId, 'all'),
+            ]);
+
+            const packageNameMap = new Map(
+                (packages || []).map((pkg) => [pkg.publicId, pkg.name || `Package ${String(pkg.publicId).slice(0, 8)}`])
+            );
+
+            const treeMap = new Map();
+            treeMap.set('root', {
+                id: 'root',
+                name: 'All Files',
+                type: 'folder',
+                children: [],
+            });
+
+            const ensureFolderNode = (parentKey, name, fullKey) => {
+                if (treeMap.has(fullKey)) return treeMap.get(fullKey);
+                const node = {
+                    id: fullKey,
+                    name,
+                    type: 'folder',
+                    icon: 'folder',
+                    children: [],
+                };
+                treeMap.set(fullKey, node);
+                treeMap.get(parentKey).children.push(node);
+                return node;
+            };
+
+            const packageMap = new Map();
+            const resolvePackageNode = (packageId) => {
+                if (packageMap.has(packageId)) return packageMap.get(packageId);
+                const pkgNodeKey = `root/pkg/${packageId}`;
+                const pkgName = packageNameMap.get(packageId) || `Package ${String(packageId).slice(0, 8)}`;
+                const node = ensureFolderNode('root', pkgName, pkgNodeKey);
+                node.icon = 'package';
+                packageMap.set(packageId, pkgNodeKey);
+                return pkgNodeKey;
+            };
+
+            const resolveFolderChain = (packageId, folderType, folderPath = '') => {
+                const packageNodeKey = resolvePackageNode(packageId);
+                const groupKey = `${packageNodeKey}/${folderType}`;
+                const groupNode = ensureFolderNode(packageNodeKey, folderType === 'images' ? 'Images' : 'Files', groupKey);
+                groupNode.icon = folderType === 'images' ? 'images' : 'files';
+
+                if (!folderPath) return groupKey;
+
+                const segments = String(folderPath)
+                    .split('/')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+
+                let parentKey = groupKey;
+                let currentPath = groupKey;
+                for (const segment of segments) {
+                    currentPath = `${currentPath}/${segment}`;
+                    ensureFolderNode(parentKey, segment, currentPath);
+                    parentKey = currentPath;
+                }
+                return parentKey;
+            };
+
+            for (const folder of emptyFolders) {
+                const folderType = folder.folderType === 'images' ? 'images' : 'files';
+                resolveFolderChain(folder.packageId, folderType, folder.folderPath || '');
+            }
+
+            for (const doc of docs) {
+                if (!doc.packageId) continue;
+                const folderType = doc.folderType === 'images' ? 'images' : 'files';
+                const parentKey = resolveFolderChain(doc.packageId, folderType, doc.folderPath || '');
+
+                treeMap.get(parentKey).children.push({
+                    id: doc.publicId,
+                    name: doc.originalName,
+                    type: 'file',
+                    category: folderType === 'images' ? 'Image' : 'File',
+                    size: `${Math.round((doc.size || 0) / 1024)} KB`,
+                    updatedAt: doc.updatedAt,
+                    author: doc.uploadedBy,
+                    mimeType: doc.mimeType || '',
+                    folderType,
+                    folderPath: doc.folderPath || '',
+                    s3Key: doc.s3Key,
+                    s3Url: doc.s3Url,
+                });
+            }
+
+            const sortNode = (node) => {
+                node.children.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                    return String(a.name).localeCompare(String(b.name));
+                });
+                for (const child of node.children) {
+                    if (child.type === 'folder') sortNode(child);
+                }
+            };
+
+            const root = treeMap.get('root');
+            sortNode(root);
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    tree: root,
+                    total: docs.length,
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to load project documents');
+        }
+    }
+
     /**
      * UC-PKG-002: Archive Package
      * Draft/Active -> Archived
@@ -213,6 +384,254 @@ class PackageController {
             });
         } catch (error) {
             return serverError(res, error.message || 'Archive package failed');
+        }
+    }
+
+    async createDocumentFolder(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { projectId, folderName, folderType, parentPath } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFolderName = normalizeString(folderName);
+
+            if (!normalizedProjectId || !normalizedFolderName) {
+                return badRequest(res, 'projectId and folderName are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can create folders');
+            }
+            if (member.role === 'viewer') {
+                return forbidden(res, 'Viewers do not have folder management permission');
+            }
+
+            const normalizedType = normalizeFolderType(folderType);
+            const normalizedParentPath = normalizeFolderPath(parentPath);
+            const safeFolderName = normalizedFolderName.replace(/[\\/:*?"<>|]/g, '-').trim();
+            if (!safeFolderName) {
+                return badRequest(res, 'folderName is invalid');
+            }
+
+            const folderPath = normalizedParentPath ? `${normalizedParentPath}/${safeFolderName}` : safeFolderName;
+
+            const existing = await DocumentFolderRepository.findByProjectAndPath({
+                projectId: normalizedProjectId,
+                folderType: normalizedType,
+                folderPath,
+            });
+            if (existing) {
+                return badRequest(res, 'Folder already exists in this location');
+            }
+
+            const created = await DocumentFolderRepository.createFolder({
+                projectId: normalizedProjectId,
+                folderType: normalizedType,
+                folderPath,
+                createdBy: userId,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            });
+
+            return res.status(201).json({
+                success: true,
+                message: 'Folder created',
+                data: {
+                    publicId: created.publicId,
+                    projectId: created.projectId,
+                    folderType: created.folderType,
+                    folderPath: created.folderPath,
+                    createdAt: created.createdAt,
+                },
+            });
+        } catch (error) {
+            if (error && error.code === 11000) {
+                return badRequest(res, 'Folder already exists in this location');
+            }
+            return serverError(res, error.message || 'Create folder failed');
+        }
+    }
+
+    async uploadPackageDocument(req, res) {
+        try {
+            assertS3Configured();
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { projectId, packageId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedPackageId = normalizeString(packageId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'projectId is required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can upload documents');
+            }
+            if (member.role === 'viewer') {
+                return forbidden(res, 'Viewers do not have document upload permission');
+            }
+
+            let targetPackageId = normalizedPackageId;
+            if (!targetPackageId) {
+                const projectPackages = await PackageRepository.listByProjectIdSorted(
+                    normalizedProjectId,
+                    'active'
+                );
+                targetPackageId = projectPackages?.[0]?.publicId || null;
+            }
+
+            if (!targetPackageId) {
+                return badRequest(res, 'No active package found in this project. Please create a package first.');
+            }
+
+            const pkg = await PackageRepository.findByPublicIdInProject(targetPackageId, normalizedProjectId);
+            if (!pkg) return notFound(res, 'Package not found');
+
+            const file = req.file;
+            if (!file) return badRequest(res, 'file is required (multipart/form-data)');
+
+            const folderType = normalizeFolderType(req.body?.folderType);
+            const folderPath = normalizeFolderPath(req.body?.folderPath);
+            const s3Key = buildStorageKey({
+                projectId: normalizedProjectId,
+                packageId: targetPackageId,
+                folderType,
+                folderPath,
+                originalName: file.originalname,
+            });
+
+            if (file.size <= SYNC_UPLOAD_MAX_BYTES) {
+                const body = fs.readFileSync(file.path);
+                await s3Client.send(
+                    new PutObjectCommand({
+                        Bucket: S3_BUCKET,
+                        Key: s3Key,
+                        Body: body,
+                        ContentType: file.mimetype || undefined,
+                    })
+                );
+
+                const document = await DocumentRepository.createDocument({
+                    projectId: normalizedProjectId,
+                    packageId: targetPackageId,
+                    folderType,
+                    folderPath,
+                    originalName: file.originalname,
+                    storedName: path.basename(s3Key),
+                    mimeType: file.mimetype || '',
+                    size: file.size || 0,
+                    extension: path.extname(file.originalname || '').replace('.', '').toLowerCase(),
+                    storageProvider: getStorageProvider(),
+                    storageEndpoint: S3_ENDPOINT || '',
+                    s3Bucket: S3_BUCKET,
+                    s3Key,
+                    s3Url: buildS3Url(s3Key),
+                    uploadedBy: userId,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                });
+
+                await PackageRepository.addDocumentIdToPackage(
+                    targetPackageId,
+                    normalizedProjectId,
+                    document.publicId
+                );
+
+                fs.unlink(file.path, () => {});
+
+                return res.status(201).json({
+                    success: true,
+                    mode: 'sync',
+                    message: 'Upload completed',
+                    data: {
+                        documentPublicId: document.publicId,
+                        folderType: document.folderType,
+                        folderPath: document.folderPath,
+                        s3Key: document.s3Key,
+                        s3Url: document.s3Url,
+                    },
+                });
+            }
+
+            const uploadJob = await UploadJobRepository.createJob({
+                projectId: normalizedProjectId,
+                packageId: targetPackageId,
+                uploaderId: userId,
+                fileOriginalName: file.originalname,
+                mimeType: file.mimetype || '',
+                size: file.size || 0,
+                folderType,
+                folderPath,
+                tempFilePath: file.path,
+                s3Bucket: S3_BUCKET,
+                s3Key,
+                storageProvider: getStorageProvider(),
+                storageEndpoint: S3_ENDPOINT || '',
+                status: 'queued',
+                progress: 0,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            });
+
+            await publishPackageUpload(uploadJob.publicId);
+
+            return res.status(202).json({
+                success: true,
+                mode: 'queue',
+                message: 'Upload queued for background processing',
+                data: {
+                    jobId: uploadJob.publicId,
+                    status: uploadJob.status,
+                    progress: uploadJob.progress,
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Upload failed');
+        }
+    }
+
+    async getUploadJobStatus(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const jobId = normalizeString(req.params?.jobId);
+            if (!jobId) return badRequest(res, 'jobId is required');
+
+            const job = await UploadJobRepository.findByPublicId(jobId);
+            if (!job) return notFound(res, 'Upload job not found');
+
+            if (job.uploaderId !== userId) {
+                const member = await ProjectMemberRepository.findMember(job.projectId, userId);
+                if (!member || member.status !== 'accepted') {
+                    return forbidden(res, 'You do not have permission to view this upload job');
+                }
+            }
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    jobId: job.publicId,
+                    status: job.status,
+                    progress: job.progress,
+                    errorMessage: job.errorMessage,
+                    documentPublicId: job.documentPublicId,
+                    folderType: job.folderType,
+                    folderPath: job.folderPath,
+                    size: job.size,
+                    createdAt: job.createdAt,
+                    startedAt: job.startedAt,
+                    finishedAt: job.finishedAt,
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to get upload job status');
         }
     }
 

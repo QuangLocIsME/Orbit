@@ -6,7 +6,13 @@ const fs = require('fs');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const connectDB = require('../config/database');
-const { s3Client, buildS3Url, assertS3Configured } = require('../config/s3');
+const {
+    s3Client,
+    S3_ENDPOINT,
+    STORAGE_PROVIDER,
+    buildS3Url,
+    assertS3Configured,
+} = require('../config/s3');
 
 const PackageRepository = require('../repositories/PackageRepository');
 const DocumentRepository = require('../repositories/DocumentRepository');
@@ -52,10 +58,15 @@ async function processJob(jobId) {
         const document = await DocumentRepository.createDocument({
             projectId: job.projectId,
             packageId: job.packageId,
+            folderType: job.folderType || 'files',
+            folderPath: job.folderPath || '',
             originalName: job.fileOriginalName,
             storedName,
             mimeType: job.mimeType,
             size: job.size,
+            extension: path.extname(job.fileOriginalName || '').replace('.', '').toLowerCase(),
+            storageProvider: job.storageProvider || STORAGE_PROVIDER,
+            storageEndpoint: job.storageEndpoint || S3_ENDPOINT || '',
             s3Bucket: job.s3Bucket,
             s3Key: job.s3Key,
             s3Url: buildS3Url(job.s3Key),

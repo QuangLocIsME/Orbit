@@ -2,6 +2,7 @@ const amqp = require('amqplib');
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
 const QUEUE_NAME = process.env.RABBITMQ_PACKAGE_UPLOAD_QUEUE || 'package_uploads';
+const CONSUMER_PREFETCH = Number(process.env.RABBITMQ_PACKAGE_UPLOAD_PREFETCH || 2);
 
 async function createChannel() {
     const conn = await amqp.connect(RABBITMQ_URL);
@@ -27,7 +28,7 @@ async function publishPackageUpload(jobPublicId) {
 
 async function startPackageUploadConsumer(onMessage) {
     const { conn, channel } = await createChannel();
-    channel.prefetch(1);
+    channel.prefetch(CONSUMER_PREFETCH);
 
     await channel.consume(
         QUEUE_NAME,

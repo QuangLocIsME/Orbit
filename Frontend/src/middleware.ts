@@ -54,35 +54,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  // Only refreshToken present → try server-side token refresh
-  const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
-  try {
-    const refreshRes = await fetch(`${backendUrl}/api/auth/refresh-token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: `refreshToken=${refreshToken}`,
-      },
-    });
-
-    if (!refreshRes.ok) {
-      return context.redirect('/login');
-    }
-
-    const isGuestOnlyPage = GUEST_ONLY_PATHS.has(pathname);
-    const response = isGuestOnlyPage ? context.redirect('/home') : await next();
-
-    // Forward the new Set-Cookie headers so the browser gets the new tokens
-    const setCookie = refreshRes.headers.get('set-cookie');
-    if (setCookie) {
-      // set-cookie may have multiple values joined; split on ", " only between directives
-      for (const cookie of setCookie.split(/,(?=\s*\w+=)/)) {
-        response.headers.append('set-cookie', cookie.trim());
-      }
-    }
-    return response;
-  } catch {
-    // Network error reaching the backend → redirect to login
-    return context.redirect('/login');
+  // Only refreshToken present:
+  // do NOT refresh on server middleware anymore.
+  // Let client API layer perform refresh flow when first protected request gets 401.
+  if (refreshToken) {
+    return next();
   }
+
+  return context.redirect('/login');
 });

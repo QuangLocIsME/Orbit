@@ -30,8 +30,15 @@ const verifyCodeLimiter = createLimiter({
     message: 'Too many verification attempts. Please try again later.',
 });
 
+const refreshLimiter = createLimiter({
+    windowMs: 60 * 1000,
+    limit: 10,
+    message: 'Too many refresh attempts, please try again later.',
+});
+
 module.exports = {
     loginLimiter,
     forgotPasswordLimiter,
     verifyCodeLimiter,
+    refreshLimiter,
 };

@@ -12,10 +12,27 @@ const DocumentSchema = new mongoose.Schema({
     projectId: { type: String, required: true, index: true },
     packageId: { type: String, required: true, index: true },
 
+    folderType: {
+        type: String,
+        enum: ['images', 'files'],
+        default: 'files',
+        index: true,
+    },
+    folderPath: { type: String, default: '', trim: true, index: true },
+
     originalName: { type: String, required: true, trim: true },
     storedName: { type: String, required: true, trim: true },
     mimeType: { type: String, default: '', trim: true },
     size: { type: Number, default: 0 },
+    extension: { type: String, default: '', trim: true },
+
+    storageProvider: {
+        type: String,
+        enum: ['supabase-s3', 'aws-s3', 'minio', 'local'],
+        default: 'supabase-s3',
+        index: true,
+    },
+    storageEndpoint: { type: String, default: '', trim: true },
 
     s3Bucket: { type: String, required: true, index: true },
     s3Key: { type: String, required: true, index: true },
@@ -28,6 +45,7 @@ const DocumentSchema = new mongoose.Schema({
 });
 
 DocumentSchema.index({ projectId: 1, packageId: 1, createdAt: -1 });
+DocumentSchema.index({ projectId: 1, folderType: 1, folderPath: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Document', DocumentSchema);
 

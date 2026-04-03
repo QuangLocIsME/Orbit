@@ -15,6 +15,7 @@
 
 import { create } from 'zustand';
 import { io, type Socket } from 'socket.io-client';
+import { apiFetch } from '@/lib/api-client';
 
 // ── Types ────────────────────────────────────────────────────────────────────────
 
@@ -139,7 +140,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const fetchJson = async <T,>(url: string): Promise<T | null> => {
       try {
-        const res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+        const res = await apiFetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+        if (res.status === 401) {
+          // Token expired during hydration — trigger one refresh then retry
+          const refreshed = await import('@/lib/auth').then(m => m.refreshAccessToken());
+          if (refreshed) {
+            const retry = await apiFetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+            if (!retry.ok) return null;
+            const payload = await retry.json();
+            return (payload?.data ?? payload) as T;
+          }
+          return null;
+        }
         if (!res.ok) return null;
         const payload = await res.json();
         return (payload?.data ?? payload) as T;

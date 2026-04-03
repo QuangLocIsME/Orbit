@@ -13,6 +13,14 @@ router.post('/list', authenticate, (req, res) =>
     PackageController.listPackages(req, res)
 );
 
+router.post('/documents/list', authenticate, (req, res) =>
+    PackageController.listProjectDocuments(req, res)
+);
+
+router.post('/documents/folders/create', authenticate, (req, res) =>
+    PackageController.createDocumentFolder(req, res)
+);
+
 router.post('/update', authenticate, (req, res) =>
     PackageController.updatePackage(req, res)
 );

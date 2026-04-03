@@ -50,7 +50,37 @@ interface Package {
 }
 
 interface PackagesManagerProps {
-  packages: Package[];
+  projectId: string;
+}
+
+interface ApiPackage {
+  publicId: string;
+  name: string;
+  description?: string;
+  status?: string;
+  dueDate?: string;
+  teamMemberIds?: string[];
+  createdAt?: string;
+}
+
+interface ApiProjectMember {
+  id?: string;
+  publicId?: string;
+  userId?: string;
+  memberId?: string;
+  name?: string;
+  fullName?: string;
+  username?: string;
+  email?: string;
+  user?: {
+    id?: string;
+    publicId?: string;
+    userId?: string;
+    name?: string;
+    fullName?: string;
+    username?: string;
+    email?: string;
+  };
 }
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -103,17 +133,14 @@ const packageTypes = [
   { id: 'other', label: 'Other', icon: Layers, color: 'bg-gray-100', iconColor: 'text-gray-600' },
 ];
 
-// Mock team members for assignment
-const availableMembers = [
-  { id: '1', name: 'Minh Anh', initials: 'MA', color: '#EC4899' },
-  { id: '2', name: 'Hoàng Nam', initials: 'HN', color: '#06B6D4' },
-  { id: '3', name: 'Jacob Harris', initials: 'JH', color: '#3B82F6' },
-  { id: '4', name: 'Ethan Parker', initials: 'EP', color: '#8B5CF6' },
-];
+const TEAM_COLORS = ['#EC4899', '#06B6D4', '#3B82F6', '#8B5CF6', '#10B981', '#F59E0B'];
 
-export default function PackagesManager({ packages }: PackagesManagerProps) {
+export default function PackagesManager({ projectId }: PackagesManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [packages, setPackages] = useState<Package[]>([]);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
+  const [availableMembers, setAvailableMembers] = useState<TeamMember[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   
@@ -150,9 +177,7 @@ export default function PackagesManager({ packages }: PackagesManagerProps) {
     navigate(`/packages/${slug}`);
   };
 
-  const handleCreatePackage = () => {
-    // In a real app, this would send data to the backend
-    console.log('Creating package:', newPackage);
+  const resetCreateForm = () => {
     setIsCreateModalOpen(false);
     setNewPackage({
       name: '',
@@ -162,6 +187,143 @@ export default function PackagesManager({ packages }: PackagesManagerProps) {
       dueDate: '',
       teamMembers: [],
     });
+  };
+
+  const normalizeMember = (member: ApiProjectMember, index: number): TeamMember => {
+    const name =
+      member?.name ||
+      member?.fullName ||
+      member?.user?.name ||
+      member?.user?.fullName ||
+      member?.username ||
+      member?.user?.username ||
+      member?.email ||
+      member?.user?.email ||
+      `Member ${index + 1}`;
+
+    const id =
+      member?.id ||
+      member?.publicId ||
+      member?.userId ||
+      member?.memberId ||
+      member?.user?.id ||
+      member?.user?.publicId ||
+      member?.user?.userId ||
+      `${index + 1}`;
+
+    const parts = String(name).trim().split(/\s+/).filter(Boolean);
+    const initials = parts.length <= 1
+      ? String(name).slice(0, 2).toUpperCase()
+      : `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase();
+
+    return {
+      id: String(id),
+      name: String(name),
+      initials,
+      color: TEAM_COLORS[index % TEAM_COLORS.length],
+    };
+  };
+
+  const loadPackages = async () => {
+    setIsLoadingPackages(true);
+    try {
+      const [packagesRes, membersRes] = await Promise.all([
+        fetch('/api/projects/packages/list', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId }),
+        }),
+        fetch('/api/projects/member-list', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId }),
+        }),
+      ]);
+
+      const membersPayload = membersRes.ok ? await membersRes.json().catch(() => null) : null;
+      const membersRaw = Array.isArray(membersPayload?.data)
+        ? membersPayload.data
+        : Array.isArray(membersPayload?.members)
+          ? membersPayload.members
+          : Array.isArray(membersPayload?.results)
+            ? membersPayload.results
+            : [];
+
+      const members = membersRaw
+        .map(normalizeMember)
+        .filter((m: TeamMember, idx: number, arr: TeamMember[]) => arr.findIndex((x) => x.id === m.id) === idx);
+      setAvailableMembers(members);
+
+      if (!packagesRes.ok) {
+        setPackages([]);
+        return;
+      }
+
+      const payload = await packagesRes.json();
+      const apiItems: ApiPackage[] = Array.isArray(payload?.data) ? payload.data : [];
+
+      const mapped: Package[] = apiItems.map((item, idx) => ({
+        id: item.publicId,
+        slug: item.publicId,
+        name: item.name || `Package ${idx + 1}`,
+        description: item.description || '',
+        status:
+          String(item.status || '').toLowerCase() === 'archived'
+            ? 'on-hold'
+            : String(item.status || '').toLowerCase() === 'active'
+              ? 'active'
+              : 'active',
+        progress: 0,
+        tasksCompleted: 0,
+        totalTasks: 0,
+        dueDate: item.dueDate || item.createdAt || new Date().toISOString(),
+        lastActivity: 'Just now',
+        icon: 'construction',
+        color: '#3B82F6',
+        team: (item.teamMemberIds || [])
+          .map((id) => members.find((m) => m.id === id))
+          .filter(Boolean) as TeamMember[],
+        documentsCount: 0,
+      }));
+
+      setPackages(mapped);
+    } catch {
+      setPackages([]);
+      setAvailableMembers([]);
+    } finally {
+      setIsLoadingPackages(false);
+    }
+  };
+
+  const handleCreatePackage = async () => {
+    try {
+      const res = await fetch('/api/projects/packages/create', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          name: newPackage.name,
+          description: newPackage.description,
+          type: newPackage.type,
+          dueDate: newPackage.dueDate,
+          teamMemberIds: newPackage.teamMembers,
+        }),
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        alert(payload?.message || 'Create package failed');
+        return;
+      }
+
+      resetCreateForm();
+      await loadPackages();
+    } catch {
+      alert('Create package failed');
+    }
   };
 
   const toggleTeamMember = (memberId: string) => {
@@ -175,7 +337,12 @@ export default function PackagesManager({ packages }: PackagesManagerProps) {
 
   useEffect(() => { setIsHydrated(true); }, []);
 
-  if (!isHydrated) return <PackagesSkeleton />;
+  useEffect(() => {
+    if (!projectId) return;
+    loadPackages();
+  }, [projectId]);
+
+  if (!isHydrated || isLoadingPackages) return <PackagesSkeleton />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

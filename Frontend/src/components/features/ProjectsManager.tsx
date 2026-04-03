@@ -11,8 +11,9 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
 import type { CreatedProjectPayload } from './CreateProjectModal';
-import { ProjectsSkeleton } from '@/components/ui/skeletons';
+import { ProjectsSkeleton } from '@/components/ui/skeletons/ProjectsSkeleton';
 import { useAppStore } from '@/stores/appStore';
+import { apiFetch } from '@/lib/api-client';
 
 // Types
 interface Folder {
@@ -592,6 +593,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = useState(true);
+  const [isFoldersLoading, setIsFoldersLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFolderModal, setShowFolderModal] = useState(false);
@@ -702,6 +704,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     if (!shouldForce && projectsCacheRef.current && projectsCacheRef.current.expiresAt > Date.now()) {
       const cached = projectsCacheRef.current.data;
       setProjects(cached);
+      if (showLoading) setIsProjectsLoading(false);
       return cached;
     }
 
@@ -711,6 +714,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     if (!shouldForce && storeProjects.length > 0) {
       const nextProjects = storeProjects.map(mapApiProjectToUiProject);
       setProjects(nextProjects);
+      if (showLoading) setIsProjectsLoading(false);
       return nextProjects;
     }
 
@@ -720,10 +724,16 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         const raw = sessionStorage.getItem(PROJECTS_CACHE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
-          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
+          if (Array.isArray(parsed.data)) {
+            // Always hydrate immediately from cached data (even stale) to avoid UI flicker.
+            // We'll still revalidate via network when cache is expired.
             projectsCacheRef.current = parsed;
             setProjects(parsed.data);
-            return parsed.data;
+
+            if (parsed.expiresAt > Date.now()) {
+              if (showLoading) setIsProjectsLoading(false);
+              return parsed.data;
+            }
           }
         }
       } catch {
@@ -734,9 +744,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     if (showLoading) setIsProjectsLoading(true);
 
     try {
-      const response = await fetch('/api/projects/me', {
+      const response = await apiFetch('/api/projects/me', {
         method: 'GET',
-        credentials: 'include',
         headers: { Accept: 'application/json' },
       });
 
@@ -770,6 +779,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
 
     if (!shouldForce && foldersCacheRef.current && foldersCacheRef.current.expiresAt > Date.now()) {
       setFolders(foldersCacheRef.current.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+      setIsFoldersLoading(false);
       return;
     }
 
@@ -777,6 +787,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     const storeFolders = useAppStore.getState().folders;
     if (!shouldForce && storeFolders.length > 0) {
       setFolders(storeFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
+      setIsFoldersLoading(false);
       return;
     }
 
@@ -786,10 +797,15 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         const raw = sessionStorage.getItem(FOLDERS_CACHE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw) as { data: ApiFolder[]; expiresAt: number };
-          if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
+          if (Array.isArray(parsed.data)) {
+            // Hydrate immediately from cache (even stale) to avoid temporary empty state.
             foldersCacheRef.current = parsed;
             setFolders(parsed.data.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
-            return;
+
+            if (parsed.expiresAt > Date.now()) {
+              setIsFoldersLoading(false);
+              return;
+            }
           }
         }
       } catch {
@@ -797,10 +813,11 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       }
     }
 
+    setIsFoldersLoading(true);
+
     try {
-      const response = await fetch('/api/folders/me', {
+      const response = await apiFetch('/api/folders/me', {
         method: 'GET',
-        credentials: 'include',
         headers: { Accept: 'application/json' },
       });
 
@@ -819,6 +836,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       setFolders(apiFolders.map((folder) => mapApiFolderToUiFolder(folder, projectsSource)));
     } catch {
       // keep fallback folders if API fails
+    } finally {
+      setIsFoldersLoading(false);
     }
   }, []); // deps intentionally empty — all reads via getState()
 
@@ -886,15 +905,20 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
 
     if (storeProjects.length > 0) {
       // Store has data — sync to local state and dismiss skeleton immediately.
-      setProjects(storeProjects.map(mapApiProjectToUiProject));
+      const mappedProjects = storeProjects.map(mapApiProjectToUiProject);
+      setProjects(mappedProjects);
       setIsProjectsLoading(false);
+
+      // Ensure folder list is also hydrated from cache/store/network.
+      // Without this, folders can stay stale/empty when projects come from store.
+      loadFolders(mappedProjects);
       return;
     }
 
     // Store is still empty (hydration missed or returned null).
     // Fetch from network so the skeleton resolves instead of hanging forever.
     loadProjects(true).then((fetched) => {
-      if (fetched.length > 0) loadFolders(fetched);
+      loadFolders(fetched);
     });
   }, [storeProjectsLen]); // fires on mount (0) and again when hydration populates the store (N)
 

@@ -6,6 +6,7 @@ const {
     loginLimiter,
     forgotPasswordLimiter,
     verifyCodeLimiter,
+    refreshLimiter,
 } = require('../middlewares/rateLimiters');
 
 const router = express.Router();
@@ -31,7 +32,7 @@ router.get('/google/callback', (req, res, next) => {
 router.get('/me', authenticate, (req, res) => AuthController.getMe(req, res));
 router.post('/register', (req, res) => AuthController.register(req, res));
 router.post('/login', loginLimiter, (req, res) => AuthController.login(req, res));
-router.post('/refresh-token', loginLimiter, (req, res) => AuthController.refreshToken(req, res));
+router.post('/refresh-token', refreshLimiter, (req, res) => AuthController.refreshToken(req, res));
 router.post('/logout', (req, res) => AuthController.logout(req, res));
 
 // Forgot password: gửi mã qua email → đặt lại mật khẩu bằng mã (hoặc bằng token)

@@ -36,9 +36,13 @@ function assertS3Configured() {
     }
 }
 
+const STORAGE_PROVIDER = process.env.STORAGE_PROVIDER || 'supabase-s3';
+
 module.exports = {
     s3Client,
     S3_BUCKET,
+    S3_ENDPOINT,
+    STORAGE_PROVIDER,
     buildS3Url,
     assertS3Configured,
 };
