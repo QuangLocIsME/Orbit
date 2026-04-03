@@ -126,40 +126,6 @@ export default function ClashResolvePanel({
               </div>
             </div>
 
-            {/* Assignment */}
-            <div className="mt-6 space-y-3">
-              <h4 className="text-sm font-medium text-[#101828]">Assignment</h4>
-              <div className="space-y-2">
-                <label className="block text-xs text-[#6A7282]">Assigned to</label>
-                <select
-                  value={assignedTo}
-                  onChange={(e) => setAssignedTo(e.target.value)}
-                  className="w-full rounded-xl border border-[#D1D5DC] px-3 py-2 text-sm text-[#101828] outline-none transition-colors focus:border-[#155DFC]"
-                >
-                  {TEAM_MEMBERS.map((member) => (
-                    <option key={member} value={member}>{member}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="block text-xs text-[#6A7282]">Due date</label>
-                <input
-                  type="date"
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full rounded-xl border border-[#D1D5DC] px-3 py-2 text-sm text-[#101828] outline-none transition-colors focus:border-[#155DFC]"
-                />
-              </div>
-              {onAssign && (
-                <button
-                  type="button"
-                  onClick={() => onAssign(assignedTo, dueDate || undefined)}
-                  className="w-full rounded-xl border border-[#D1D5DC] bg-white px-4 py-2.5 text-sm font-medium text-[#364153] transition-colors hover:bg-gray-50"
-                >
-                  Save Assignment
-                </button>
-              )}
-            </div>
           </aside>
 
           {/* Center — Viewer */}
@@ -257,6 +223,41 @@ export default function ClashResolvePanel({
             >
               Save Positions
             </button>
+
+            {/* Assignment */}
+            <div className="space-y-3 rounded-xl border border-[#E5E7EB] p-4">
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-[#6A7282]">Assignment</p>
+              <div className="space-y-1.5">
+                <label className="block text-xs text-[#6A7282]">Assigned to</label>
+                <select
+                  value={assignedTo}
+                  onChange={(e) => setAssignedTo(e.target.value)}
+                  className="w-full rounded-xl border border-[#D1D5DC] px-3 py-2 text-sm text-[#101828] outline-none transition-colors focus:border-[#155DFC]"
+                >
+                  {TEAM_MEMBERS.map((member) => (
+                    <option key={member} value={member}>{member}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="block text-xs text-[#6A7282]">Due date</label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="w-full rounded-xl border border-[#D1D5DC] px-3 py-2 text-sm text-[#101828] outline-none transition-colors focus:border-[#155DFC]"
+                />
+              </div>
+              {onAssign && (
+                <button
+                  type="button"
+                  onClick={() => onAssign(assignedTo, dueDate || undefined)}
+                  className="w-full rounded-xl border border-[#D1D5DC] bg-white px-4 py-2.5 text-sm font-medium text-[#364153] transition-colors hover:bg-gray-50"
+                >
+                  Save Assignment
+                </button>
+              )}
+            </div>
 
             {/* Waive */}
             {!isResolved && !isWaived && onWaive && (

@@ -42,6 +42,9 @@ export default function ClashesTab({ projectSlug }: ClashesTabProps) {
 function ClashesTabContent({ projectSlug }: ClashesTabProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningDetection, setIsRunningDetection] = useState(false);
+  const [testStage, setTestStage] = useState(0);
+  const [justCompleted, setJustCompleted] = useState(false);
+  const [lastFoundCount, setLastFoundCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detectionSettings, setDetectionSettings] = useState<DetectionSettings>(() => loadSettings());
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -57,6 +60,9 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
   const [viewerHasCollision, setViewerHasCollision] = useState(false);
   const [viewerCollisionMessage, setViewerCollisionMessage] = useState<string | null>(null);
   const [unsavedPrompt, setUnsavedPrompt] = useState<UnsavedClashPrompt | null>(null);
+  const [inlineAssignedTo, setInlineAssignedTo] = useState('Unassigned');
+  const [inlineDueDate, setInlineDueDate] = useState('');
+  const [showAssignConfirm, setShowAssignConfirm] = useState(false);
 
   const {
     clashes,
@@ -128,6 +134,8 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
 
   useEffect(() => {
     setSelectedObjectId(selectedClash?.objectA ?? null);
+    setInlineAssignedTo(selectedClash?.assignedTo ?? 'Unassigned');
+    setInlineDueDate(selectedClash?.dueDate ?? '');
   }, [selectedClash]);
 
   useEffect(() => {
@@ -165,6 +173,13 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [clashStore, resolvePanelClash?.id, selectedClash?.id]);
+
+  // Cycle qua stages khi đang detect
+  useEffect(() => {
+    if (!isRunningDetection) { setTestStage(0); return; }
+    const id = setInterval(() => setTestStage((s) => (s + 1) % 4), 700);
+    return () => clearInterval(id);
+  }, [isRunningDetection]);
 
   const matchesSeverityFilter = (clash: Clash) => {
     if (severityFilter === 'all') return true;
@@ -331,11 +346,71 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
       applyClashResponse(data);
       setIsDetectionView(true);
       setViewMode('split');
+      // Flash "done" state
+      const activeCount = (data.clashes ?? []).filter((c) => !c.stale).length;
+      setLastFoundCount(activeCount);
+      setJustCompleted(true);
+      setTimeout(() => setJustCompleted(false), 1800);
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : 'Failed to run clash detection');
     } finally {
       setIsRunningDetection(false);
     }
+  };
+
+  // ── Run Clash Test button ──────────────────────────────────────────────────
+  const TEST_STAGES = [
+    { label: 'Scanning objects...',        dot: 'bg-blue-400' },
+    { label: 'Detecting intersections...', dot: 'bg-amber-400' },
+    { label: 'Computing severity...',      dot: 'bg-orange-400' },
+    { label: 'Building report...',         dot: 'bg-emerald-400' },
+  ] as const;
+
+  const RunTestButton = ({ compact = false }: { compact?: boolean }) => {
+    const px = compact ? 'px-3 py-2' : 'px-4 py-2';
+    const rounded = compact ? 'rounded' : 'rounded-[10px]';
+
+    if (justCompleted) {
+      return (
+        <button
+          type="button"
+          disabled
+          className={`inline-flex items-center gap-2 ${rounded} ${px} text-sm font-medium text-white bg-emerald-500 transition-colors`}
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+          Found {lastFoundCount} clash{lastFoundCount === 1 ? '' : 'es'}
+        </button>
+      );
+    }
+
+    if (isRunningDetection) {
+      const stage = TEST_STAGES[testStage];
+      return (
+        <button
+          type="button"
+          disabled
+          className={`inline-flex items-center gap-2.5 ${rounded} ${px} text-sm font-medium text-white bg-[#155DFC] cursor-not-allowed min-w-[190px]`}
+        >
+          <span className={`inline-block h-2 w-2 flex-shrink-0 rounded-full ${stage.dot} animate-pulse`} />
+          {stage.label}
+        </button>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={() => void runDetection()}
+        className={`inline-flex items-center gap-2 ${rounded} ${px} text-sm font-medium text-white bg-[#155DFC] transition-colors hover:bg-blue-700`}
+      >
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+        </svg>
+        Run Detection
+      </button>
+    );
   };
 
   const renderStatusBadge = (clash: Clash) => {
@@ -395,6 +470,55 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
     return (
       <>
         {unsavedDialog}
+
+        {/* Assign confirmation dialog */}
+        {showAssignConfirm && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+              aria-label="Close"
+              onClick={() => setShowAssignConfirm(false)}
+            />
+            <div className="relative z-10 w-full max-w-sm rounded-xl border border-gray-200 bg-white shadow-xl">
+              <div className="px-6 py-5">
+                <h2 className="text-base font-semibold text-[#101828]">Confirm Assignment</h2>
+                <p className="mt-2 text-sm text-[#4A5565]">
+                  Are you sure you want to assign this clash to{' '}
+                  <span className="font-medium text-[#101828]">{inlineAssignedTo}</span>
+                  {inlineDueDate ? (
+                    <> with due date <span className="font-medium text-[#101828]">{inlineDueDate}</span></>
+                  ) : null}?
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAssignConfirm(false)}
+                  className="rounded-lg px-4 py-2.5 text-sm font-medium text-[#364153] transition-colors hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowAssignConfirm(false);
+                    if (!selectedClash) return;
+                    try {
+                      await assignClash(selectedClash.id, inlineAssignedTo, inlineDueDate || undefined);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Failed to assign clash');
+                    }
+                  }}
+                  className="rounded-lg bg-[#155DFC] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                >
+                  Yes, Assign
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <DetectionSettingsModal
           open={showSettingsModal}
           onClose={() => setShowSettingsModal(false)}
@@ -408,16 +532,7 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
         <div className="mx-auto flex w-full max-w-[1360px] flex-col rounded-[18px] border border-[#E5E7EB] bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-[#E5E7EB] bg-white px-4 py-3">
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => void runDetection()}
-                disabled={isRunningDetection}
-                className="inline-flex items-center gap-2 rounded bg-[#155DFC] px-3 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
-                {isRunningDetection ? 'Running...' : 'Run Detection'}
-              </button>
+              <RunTestButton compact />
               <button
                 onClick={handleExportReport}
                 className="inline-flex items-center gap-2 rounded border border-[#D1D5DC] bg-white px-3 py-2 text-sm text-[#364153] transition-colors hover:bg-gray-50"
@@ -627,34 +742,63 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <button
-                    onClick={async () => {
-                      if (!selectedClash) return;
-                      await clashStore.saveClashSceneToServer(selectedClash.id, projectSlug);
-                    }}
-                    disabled={!selectedClash || !clashStore.isClashDirty(selectedClash.id)}
-                    className={cn(
-                      'inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-sm transition-colors',
-                      !selectedClash || !clashStore.isClashDirty(selectedClash.id)
-                        ? 'cursor-not-allowed border border-[#D1D5DC] bg-[#F3F4F6] text-[#9CA3AF]'
-                        : 'bg-[#155DFC] text-white hover:bg-blue-700'
-                    )}
-                  >
-                    Save Positions
-                  </button>
-                  <button
-                    onClick={() => handleResolveRequest(selectedClash)}
-                    disabled={selectedClash.resolved || viewerHasCollision}
-                    className={cn(
-                      'inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-sm transition-colors',
-                      selectedClash.resolved || viewerHasCollision
-                        ? 'cursor-not-allowed bg-[#D1FAE5] text-[#047857]'
-                        : 'bg-[#009966] text-white hover:bg-emerald-600'
-                    )}
-                  >
-                    {selectedClash.resolved ? 'Resolved' : viewerHasCollision ? 'Blocked by Collision' : 'Resolve'}
-                  </button>
+                <div className="flex flex-col items-end gap-3">
+                  {/* Primary actions */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!selectedClash) return;
+                        await clashStore.saveClashSceneToServer(selectedClash.id, projectSlug);
+                      }}
+                      disabled={!selectedClash || !clashStore.isClashDirty(selectedClash.id)}
+                      className={cn(
+                        'inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-sm transition-colors',
+                        !selectedClash || !clashStore.isClashDirty(selectedClash.id)
+                          ? 'cursor-not-allowed border border-[#D1D5DC] bg-[#F3F4F6] text-[#9CA3AF]'
+                          : 'bg-[#155DFC] text-white hover:bg-blue-700'
+                      )}
+                    >
+                      Save Positions
+                    </button>
+                    <button
+                      onClick={() => handleResolveRequest(selectedClash)}
+                      disabled={selectedClash.resolved || viewerHasCollision}
+                      className={cn(
+                        'inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-sm transition-colors',
+                        selectedClash.resolved || viewerHasCollision
+                          ? 'cursor-not-allowed bg-[#D1FAE5] text-[#047857]'
+                          : 'bg-[#009966] text-white hover:bg-emerald-600'
+                      )}
+                    >
+                      {selectedClash.resolved ? 'Resolved' : viewerHasCollision ? 'Blocked by Collision' : 'Resolve'}
+                    </button>
+                  </div>
+
+                  {/* Assignment — kế Save Positions */}
+                  <div className="flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
+                    <select
+                      value={inlineAssignedTo}
+                      onChange={(e) => setInlineAssignedTo(e.target.value)}
+                      className="rounded-lg border border-[#D1D5DC] bg-white px-2 py-1.5 text-xs text-[#101828] outline-none transition-colors focus:border-[#155DFC]"
+                    >
+                      {['Unassigned', 'Thao Duyen', 'Minh Anh', 'Hoang Nam', 'Thu Trang', 'Tuan Kiet'].map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={inlineDueDate}
+                      onChange={(e) => setInlineDueDate(e.target.value)}
+                      className="rounded-lg border border-[#D1D5DC] bg-white px-2 py-1.5 text-xs text-[#101828] outline-none transition-colors focus:border-[#155DFC]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAssignConfirm(true)}
+                      className="rounded-lg border border-[#D1D5DC] bg-white px-3 py-1.5 text-xs font-medium text-[#364153] transition-colors hover:bg-gray-50"
+                    >
+                      Assign
+                    </button>
+                  </div>
                 </div>
               </div>
               {viewerCollisionMessage && (
@@ -772,16 +916,7 @@ function ClashesTabContent({ projectSlug }: ClashesTabProps) {
               </span>
             )}
           </button>
-          <button
-            onClick={() => void runDetection()}
-            disabled={isRunningDetection}
-            className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-sm font-normal text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-            </svg>
-            {isRunningDetection ? 'Running...' : 'Run Detection'}
-          </button>
+          <RunTestButton />
         </div>
       </div>
 

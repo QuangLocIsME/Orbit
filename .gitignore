@@ -2,6 +2,8 @@ Backend/.env
 Backend/node_modules
 Frontend/dist/
 Frontend/.astro/
+Frontend/node_modules/
+Frontend/.env*
 node_modules/
 .env
 *.md
