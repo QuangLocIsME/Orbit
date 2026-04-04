@@ -8,7 +8,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       theme="light"
       richColors
       closeButton
-      position="top-right"
+      position="bottom-right"
       {...props}
     />
   );

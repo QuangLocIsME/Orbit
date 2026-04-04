@@ -604,6 +604,9 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const loadProjectsRef = useRef<(showLoading?: boolean, options?: { force?: boolean }) => Promise<Project[]>>(
+    async () => [] as Project[]
+  );
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -761,6 +764,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       if (showLoading) setIsProjectsLoading(false);
     }
   }, []); // deps intentionally empty — all reads via getState() / stable refs
+  loadProjectsRef.current = loadProjects;
 
   const loadFolders = useCallback(async (
     projectsSource: Project[],
@@ -934,9 +938,22 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     socket.on('project:created', handleCreated);
     socket.on('project:updated', handleUpdated);
 
+    // Reload projects when cache is invalidated (e.g. invite accepted, member removed)
+    const handleCacheInvalidate = (payload: { data: { cacheTypes: string[]; userId: string } }) => {
+      const { cacheTypes } = payload.data ?? {};
+      if (!Array.isArray(cacheTypes)) return;
+      if (cacheTypes.includes('projects')) {
+        // Invalidate local cache so next load fetches fresh data
+        projectsCacheRef.current = null;
+        loadProjectsRef.current(false, { force: true });
+      }
+    };
+    socket.on('cache:invalidate', handleCacheInvalidate);
+
     return () => {
       socket.off('project:created', handleCreated);
       socket.off('project:updated', handleUpdated);
+      socket.off('cache:invalidate', handleCacheInvalidate);
     };
   }, []); // intentionally empty — socket events handle their own lifecycle
 

@@ -66,6 +66,7 @@ class InviteController {
                 const inviterProfile = await UserRepository.getProfileById(callerId);
                 socketService.notifyUser(String(inviteeProfile._id), 'invite:new', {
                     inviteId: String(invite._id),
+                    token, // raw token — needed for accept endpoint
                     projectId: normalizedProjectId,
                     projectName: req.body?.projectName || 'a project',
                     role: invite.role,
@@ -149,12 +150,64 @@ class InviteController {
             // Bust inviter's project list cache so new member appears
             socketService.invalidateUserCache(String(invite.invitedBy), ['projects']);
 
+            // Bust B's own project list cache (B is now a member of this project)
+            socketService.invalidateUserCache(userId, ['projects']);
+
+            // Tell all project members (including inviter) that a new member joined
+            socketService.broadcastProject(invite.projectId, 'project:member:joined', {
+                projectId: invite.projectId,
+                userId,
+                fullName: profile.fullName,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Invite accepted',
             });
         } catch (error) {
             return errorResponse(res, 400, 'Accept invite failed');
+        }
+    }
+
+    /**
+     * Decline invite — called by invitee when they reject via AlertDialog.
+     * Sends invite:declined to inviter so their invites list refreshes.
+     */
+    async declineInvite(req, res) {
+        try {
+            const { inviteId } = req.body || {};
+            const normalizedInviteId = typeof inviteId === 'string' ? inviteId.trim() : '';
+            if (!normalizedInviteId) {
+                return errorResponse(res, 400, 'Missing inviteId');
+            }
+
+            const invite = await ProjectInviteRepository.findById(normalizedInviteId);
+            if (!invite) {
+                return errorResponse(res, 404, 'Invite not found');
+            }
+
+            // Verify the caller is the invitee
+            const callerId = req.user?.id;
+            if (!callerId) return errorResponse(res, 401, 'Unauthorized');
+            const profile = await UserRepository.getProfileById(callerId);
+            if (!profile || profile.email !== invite.email) {
+                return errorResponse(res, 403, 'Not authorized to decline this invite');
+            }
+
+            await ProjectInviteRepository.revokeInvite(normalizedInviteId);
+
+            // Tell inviter their invite was declined
+            if (invite.invitedBy) {
+                socketService.notifyUser(String(invite.invitedBy), 'invite:declined', {
+                    projectId: invite.projectId,
+                    inviteId: normalizedInviteId,
+                    declinedBy: profile.fullName,
+                });
+            }
+
+            return res.status(200).json({ success: true, message: 'Invite declined' });
+        } catch (error) {
+            return errorResponse(res, 400, 'Decline invite failed');
         }
     }
 
@@ -183,6 +236,12 @@ class InviteController {
             }
 
             const revoked = await ProjectInviteRepository.revokeInvite(normalizedInviteId);
+
+            // Notify project members that invite was revoked
+            socketService.broadcastProject(invite.projectId, 'invite:revoked', {
+                projectId: invite.projectId,
+                inviteId: normalizedInviteId,
+            });
 
             return res.status(200).json({
                 success: true,

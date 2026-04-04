@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight, Eye, Download, Trash2 } from 'lucide-react';
+import { useAppStore } from '@/stores/appStore';
 
 interface ProjectDocumentsManagerProps {
   projectId: string;
@@ -89,6 +90,15 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const registerProjectCallback = useAppStore((s) => s.registerProjectCallback);
+
+  // Real-time: refresh documents when another user creates/upload/deletes
+  useEffect(() => {
+    const cleanup = registerProjectCallback(projectId, 'documents:refresh', () => {
+      loadDocumentsRef.current();
+    });
+    return cleanup;
+  }, [registerProjectCallback, projectId]);
 
   const loadDocuments = async () => {
     const res = await fetch('/api/projects/packages/documents/list', {
@@ -102,6 +112,8 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     const payload = await res.json();
     setRootTree(payload?.data?.tree || null);
   };
+  const loadDocumentsRef = useRef(loadDocuments);
+  loadDocumentsRef.current = loadDocuments;
 
   const refresh = async () => {
     setLoading(true);

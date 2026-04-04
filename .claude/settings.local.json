@@ -4,7 +4,9 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(node -e \"const p=require\\(''/c/Users/ADMIN/Documents/Project/Orbit/Frontend/node_modules/astro/package.json''\\); console.log\\(JSON.stringify\\(p.bin\\)\\)\")",
       "Bash(node -e \"const p=require\\(''C:/Users/ADMIN/Documents/Project/Orbit/Frontend/node_modules/astro/package.json''\\); console.log\\(JSON.stringify\\(p.bin\\)\\)\")",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(npm install:*)",
+      "Bash(node:*)"
     ]
   }
 }

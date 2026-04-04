@@ -490,6 +490,12 @@ class PackageController {
                 normalizedProjectId
             );
 
+            // Notify all project members so packages list updates
+            broadcastProject(normalizedProjectId, 'package:archived', {
+                projectId: normalizedProjectId,
+                packageId: updated.publicId,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Package archived (moved to archive page)',

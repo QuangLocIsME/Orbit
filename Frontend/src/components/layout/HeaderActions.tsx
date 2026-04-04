@@ -1,41 +1,41 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
+import { useNotifications } from '@/hooks/useNotifications';
+import { cn } from '@/lib/utils';
+
+function timeAgo(dateStr: string): string {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
 
 export default function HeaderActions() {
-  // Use the same key as BaseLayout and Sidebar ('orbit-theme'), default to light
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    document.documentElement.classList.toggle('dark', next === 'dark');
+    localStorage.setItem('orbit-theme', next);
+  };
+
+  useEffect(() => {
+    const saved = localStorage.getItem('orbit-theme') as 'light' | 'dark' | null;
+    const initial: 'light' | 'dark' = saved === 'dark' ? 'dark' : 'light';
+    setTheme(initial);
+    document.documentElement.classList.toggle('dark', initial === 'dark');
+  }, []);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // Sample notifications data
-  const notifications = [
-    { id: 1, title: 'New comment on Metro Station', message: 'John mentioned you in a comment', time: '5m ago', unread: true },
-    { id: 2, title: 'Task completed', message: 'Foundation work has been marked as done', time: '1h ago', unread: true },
-    { id: 3, title: 'Project update', message: 'Office Complex Tower A was updated', time: '3h ago', unread: false },
-    { id: 4, title: 'New team member', message: 'Sarah joined your project', time: '1d ago', unread: false },
-  ];
-
-  const unreadCount = notifications.filter(n => n.unread).length;
-
-  // Toggle between light and dark — always an explicit choice, never "system"
-  const toggleTheme = () => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(newTheme);
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
-    localStorage.setItem('orbit-theme', newTheme);
-  };
-
-  // Read saved theme on mount — default is light when nothing is saved
-  useEffect(() => {
-    const saved = localStorage.getItem('orbit-theme') as 'light' | 'dark' | 'system' | null;
-    // 'system' was a valid value from the Sidebar picker; treat it as light default here
-    const initial: 'light' | 'dark' = saved === 'dark' ? 'dark' : 'light';
-    setTheme(initial);
-    document.documentElement.classList.toggle('dark', initial === 'dark');
-  }, []);
+  const { notifications, unreadCount, inviteUnreadCount, markRead, markAllRead } = useNotifications();
+  const totalUnread = unreadCount + inviteUnreadCount;
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -47,7 +47,6 @@ export default function HeaderActions() {
         setShowSettings(false);
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -55,7 +54,7 @@ export default function HeaderActions() {
   return (
     <div className="flex items-center gap-1">
       {/* Theme toggle */}
-      <button 
+      <button
         onClick={toggleTheme}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
@@ -74,7 +73,7 @@ export default function HeaderActions() {
 
       {/* Notifications */}
       <div ref={notificationRef} className="relative">
-        <button 
+        <button
           onClick={() => {
             setShowNotifications(!showNotifications);
             setShowSettings(false);
@@ -86,61 +85,77 @@ export default function HeaderActions() {
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
           </svg>
-          {unreadCount > 0 && (
+          {totalUnread > 0 && (
             <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white">
-              {unreadCount}
+              {totalUnread > 9 ? '9+' : totalUnread}
             </span>
           )}
         </button>
 
         {/* Notifications Dropdown */}
-        {showNotifications && (
-          <div className="absolute right-0 top-full mt-2 w-80 rounded-xl border border-border bg-card shadow-lg z-50">
+        {showNotifications && ReactDOM.createPortal((
+          <div
+            className="fixed right-6 top-14 w-80 rounded-xl border border-border bg-card shadow-xl z-[99999]"
+            style={{ position: 'fixed', right: '1.5rem', top: '3.5rem' }}
+          >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 className="text-sm font-semibold text-card-foreground">Notifications</h3>
-              {unreadCount > 0 && (
-                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600">
-                  {unreadCount} new
-                </span>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-card-foreground">Notifications</h3>
+                {totalUnread > 0 && (
+                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600">
+                    {totalUnread} new
+                  </span>
+                )}
+              </div>
+              {totalUnread > 0 && (
+                <button
+                  onClick={markAllRead}
+                  className="text-xs text-indigo-600 hover:underline"
+                >
+                  Mark all read
+                </button>
               )}
             </div>
             <div className="max-h-80 overflow-y-auto">
-              {notifications.length > 0 ? (
-                notifications.map((notification) => (
-                  <div
-                    key={notification.id}
-                    className={`flex gap-3 px-4 py-3 transition-colors hover:bg-muted ${notification.unread ? 'bg-primary/5' : ''}`}
-                  >
-                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
-                      <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-card-foreground truncate">{notification.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">{notification.message}</p>
-                      <p className="text-xs text-muted-foreground/70 mt-0.5">{notification.time}</p>
-                    </div>
-                    {notification.unread && (
-                      <div className="flex-shrink-0">
-                        <span className="h-2 w-2 rounded-full bg-primary block" />
-                      </div>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  No notifications yet
+              {notifications.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+                  <svg className="h-8 w-8 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                      d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                  </svg>
+                  <p className="text-sm">No notifications</p>
                 </div>
+              ) : (
+                notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => { markRead(n.id); if (n.link) window.location.href = n.link; }}
+                    className={cn(
+                      'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted',
+                      !n.read && 'bg-indigo-50/50'
+                    )}
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-600">
+                      {n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : n.type === 'error' ? '✕' : 'ℹ'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={cn('text-sm truncate', !n.read && 'font-medium text-foreground')}>
+                        {n.title}
+                      </p>
+                      {n.message && (
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">{n.message}</p>
+                      )}
+                      <p className="mt-1 text-[10px] text-muted-foreground">{timeAgo(n.createdAt)}</p>
+                    </div>
+                    {!n.read && (
+                      <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
+                    )}
+                  </button>
+                ))
               )}
             </div>
-            <div className="border-t border-border px-4 py-2">
-              <button className="w-full rounded-lg py-2 text-center text-sm font-medium text-primary hover:bg-muted transition-colors">
-                View all notifications
-              </button>
-            </div>
           </div>
-        )}
+        ), document.body)}
       </div>
 
       {/* Settings */}

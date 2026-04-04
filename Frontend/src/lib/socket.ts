@@ -15,10 +15,19 @@ export interface ServerToClientEvents {
   'user:online': (data: { userId: string }) => void;
   'user:offline': (data: { userId: string }) => void;
   'notification:new': (data: Notification) => void;
+  'invite:new': (data: InviteNotification) => void;
+  'invite:accepted': (data: { projectId: string; inviteId: string; acceptedBy: string }) => void;
+  'invite:revoked': (data: { projectId: string; inviteId: string }) => void;
+  'invite:declined': (data: { projectId: string; inviteId: string; declinedBy: string }) => void;
   'project:updated': (data: { projectId: string; changes: Record<string, unknown> }) => void;
   'project:member:joined': (data: { projectId: string; userId: string; fullName: string }) => void;
   'project:member:left': (data: { projectId: string; userId: string }) => void;
+  'project:member:role-updated': (data: { projectId: string; userId: string; role: string }) => void;
+  'member:removed': (data: { projectId: string }) => void;
   'package:updated': (data: { packageId: string; projectId: string; changes: Record<string, unknown> }) => void;
+  'package:archived': (data: { projectId: string; packageId: string }) => void;
+  'package:unarchived': (data: { projectId: string; packageId: string }) => void;
+  'documents:refresh': (data: { projectId: string; packageId: string }) => void;
   'task:assigned': (data: { taskId: string; projectId: string; assignedTo: string; title: string }) => void;
   'task:completed': (data: { taskId: string; projectId: string; completedBy: string }) => void;
 }
@@ -40,6 +49,17 @@ export interface Notification {
   link?: string;
   createdAt: string;
   read: boolean;
+}
+
+export interface InviteNotification {
+  inviteId: string;
+  token?: string; // raw token — needed for accept endpoint
+  projectId: string;
+  projectName: string;
+  role: string;
+  inviterName: string;
+  acceptUrl?: string;
+  createdAt: string;
 }
 
 export type OrbitSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
-import { NotificationBell } from '@/components/ui/NotificationBell';
 
 interface OpenProject {
   id: string;
@@ -150,9 +149,8 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
         <div className="flex-1" />
       )}
 
-      {/* Right side — notification bell + close */}
+      {/* Right side — close button */}
       <div className="flex items-center gap-1">
-        <NotificationBell />
         <button
           className="flex h-7 w-7 items-center justify-center rounded text-[#4A5565] transition-colors hover:bg-gray-100"
           aria-label="Close"

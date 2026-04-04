@@ -5,16 +5,16 @@
  * that page transitions are instantaneous — data is already in memory when the
  * user navigates.
  *
- * Hydration strategy:
- *   1. DashboardLayout calls `hydrateApp()` on mount (via Astro <script>).
- *   2. That fires concurrent API calls and writes results into the store.
- *   3. Components read from the store — no loading state needed for cached data.
- *   4. On cache invalidation (socket `cache:invalidate` event), the affected
- *      slice is cleared so the next read fetches fresh data.
+ * Real-time strategy:
+ *   - appStore manages a global socket and dispatches project-scoped events
+ *     to registered callbacks.
+ *   - Components call registerProjectCallback(projectId, event, callback) on mount.
+ *   - appStore joins the project:projectId room when the first callback is registered,
+ *     and leaves when the last callback is removed.
  */
 
 import { create } from 'zustand';
-import { io, type Socket } from 'socket.io-client';
+import { getSocket, type OrbitSocket } from '@/lib/socket';
 
 // ── Types ────────────────────────────────────────────────────────────────────────
 
@@ -72,6 +72,39 @@ export interface ApiFolder {
 
 export type PrefetchStatus = 'idle' | 'loading' | 'done' | 'error';
 
+// ── Callback registry types ──────────────────────────────────────────────────────
+
+type ProjectEvent =
+  | 'documents:refresh'
+  | 'package:updated'
+  | 'package:archived'
+  | 'package:unarchived'
+  | 'project:updated'
+  | 'project:member:joined'
+  | 'project:member:left'
+  | 'project:member:role-updated'
+  | 'member:removed'
+  | 'invite:accepted'
+  | 'invite:revoked'
+  | 'invite:declined';
+
+type ProjectEventData = {
+  'documents:refresh': { projectId: string; packageId: string };
+  'package:updated': { packageId: string; projectId: string; changes: Record<string, unknown> };
+  'package:archived': { projectId: string; packageId: string };
+  'package:unarchived': { projectId: string; packageId: string };
+  'project:updated': { projectId: string; changes: Record<string, unknown> };
+  'project:member:joined': { projectId: string; userId: string; fullName: string };
+  'project:member:left': { projectId: string; userId: string };
+  'project:member:role-updated': { projectId: string; userId: string; role: string };
+  'member:removed': { projectId: string };
+  'invite:accepted': { projectId: string; inviteId: string; acceptedBy: string };
+  'invite:revoked': { projectId: string; inviteId: string };
+  'invite:declined': { projectId: string; inviteId: string; declinedBy: string };
+};
+
+// ── Store ────────────────────────────────────────────────────────────────────────
+
 interface AppState {
   auth: AuthUser | null;
   projects: ApiProject[];
@@ -79,7 +112,7 @@ interface AppState {
   teamMembers: Record<string, ApiMember[]>;
   isHydrated: boolean;
   prefetchStatus: PrefetchStatus;
-  socket: Socket | null;
+  socket: OrbitSocket | null;
 
   // Actions
   setAuth: (auth: AuthUser | null) => void;
@@ -94,9 +127,41 @@ interface AppState {
   hydrate: () => Promise<void>;
   initSocket: () => void;
   destroySocket: () => void;
+
+  // Real-time callbacks
+  registerProjectCallback: <E extends ProjectEvent>(
+    projectId: string,
+    event: E,
+    callback: (data: ProjectEventData[E]) => void
+  ) => () => void;
 }
 
-// ── Store ────────────────────────────────────────────────────────────────────────
+// Internal registry: projectId → event → callbacks[]
+type CallbackEntry = {
+  event: ProjectEvent;
+  callback: (data: unknown) => void;
+  _projectId: string;
+};
+const _projectCallbacks: Map<string, CallbackEntry[]> = new Map();
+
+// Pending callbacks queued before socket is initialized
+const _pendingCallbacks: CallbackEntry[] = [];
+
+function _getOrCreate(socket: OrbitSocket, projectId: string): CallbackEntry[] {
+  if (!_projectCallbacks.has(projectId)) {
+    _projectCallbacks.set(projectId, []);
+    socket.emit('project:join', { projectId });
+  }
+  return _projectCallbacks.get(projectId)!;
+}
+
+function _dispatchEvent(projectId: string, event: ProjectEvent, data: unknown) {
+  const cbs = _projectCallbacks.get(projectId);
+  if (!cbs) return;
+  cbs.forEach((entry) => {
+    if (entry.event === event) entry.callback(data);
+  });
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   auth: null,
@@ -105,7 +170,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   teamMembers: {},
   isHydrated: false,
   prefetchStatus: 'idle',
-  socket: null,
+  socket: null as OrbitSocket | null,
 
   setAuth: (auth) => set({ auth }),
 
@@ -154,7 +219,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       fetchJson<ApiFolder[]>('/api/folders/me'),
     ]);
 
-    // Always update localStorage + set hydrated=true if ANY response came back
     if (auth) {
       try { localStorage.setItem('orbit_user', JSON.stringify(auth)); } catch { /* ignore */ }
     }
@@ -173,11 +237,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const existing = get().socket;
     if (existing) return;
 
-    const socket = io(import.meta.env.PUBLIC_BACKEND_WS_URL ?? 'http://localhost:3000', {
-      withCredentials: true,
-      transports: ['websocket', 'polling'],
-    });
+    const socket = getSocket();
 
+    // ── Global events ──────────────────────────────────────────────────────────
     socket.on('cache:invalidate', (payload: { data: { cacheTypes: string[]; userId: string } }) => {
       const { cacheTypes } = payload.data ?? {};
       if (!Array.isArray(cacheTypes)) return;
@@ -190,9 +252,35 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     });
 
-    socket.on('disconnect', () => {
-      // Socket.io auto-reconnects; no action needed
-    });
+    // ── Project-scoped events — dispatch to registered callbacks ───────────────
+    const projectEvents: ProjectEvent[] = [
+      'documents:refresh',
+      'package:updated',
+      'package:archived',
+      'package:unarchived',
+      'project:updated',
+      'project:member:joined',
+      'project:member:left',
+      'project:member:role-updated',
+      'member:removed',
+      'invite:accepted',
+      'invite:revoked',
+      'invite:declined',
+    ];
+
+    for (const event of projectEvents) {
+      (socket.on as (event: string, handler: (data: unknown) => void) => void)(event, (data: unknown) => {
+        const payload = data as { projectId?: string };
+        if (!payload?.projectId) return;
+        _dispatchEvent(payload.projectId, event, data);
+      });
+    }
+
+    // Drain any callbacks registered before socket was ready
+    while (_pendingCallbacks.length > 0) {
+      const pending = _pendingCallbacks.shift()!;
+      _getOrCreate(socket, pending._projectId).push(pending);
+    }
 
     set({ socket });
   },
@@ -204,9 +292,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ socket: null });
     }
   },
+
+  // ── Real-time callback registration ─────────────────────────────────────────
+  registerProjectCallback: (projectId, event, callback) => {
+    const socket = get().socket;
+
+    const entry: CallbackEntry = {
+      event,
+      callback: callback as (data: unknown) => void,
+      _projectId: projectId,
+    };
+
+    if (!socket) {
+      // Queue until socket is initialized
+      _pendingCallbacks.push(entry);
+      return () => {
+        const idx = _pendingCallbacks.indexOf(entry);
+        if (idx !== -1) _pendingCallbacks.splice(idx, 1);
+      };
+    }
+
+    _getOrCreate(socket, projectId).push(entry);
+
+    // Return cleanup function
+    return () => {
+      const arr = _projectCallbacks.get(projectId);
+      if (!arr) return;
+      const idx = arr.indexOf(entry);
+      if (idx !== -1) arr.splice(idx, 1);
+      if (arr.length === 0) {
+        _projectCallbacks.delete(projectId);
+        const s = get().socket;
+        if (s) s.emit('project:leave', { projectId });
+      }
+    };
+  },
 }));
 
-// ── Convenience exports (no hook overhead when you just need to call actions) ─────
+// ── Convenience exports ────────────────────────────────────────────────────────
 
 export const hydrateApp = () => useAppStore.getState().hydrate();
 export const initAppSocket = () => useAppStore.getState().initSocket();

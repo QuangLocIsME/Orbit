@@ -3,7 +3,8 @@ const Folder = require('../models/Folder');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const { getJson, setJson, delKeys } = require('../services/cacheService');
-const { invalidateUserCache } = require('../services/socketService');
+const socketService = require('../services/socketService');
+const { invalidateUserCache } = socketService;
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -70,6 +71,12 @@ class ProjectController {
             });
 
             await invalidateUserCaches(userId);
+
+            // Broadcast project:updated so creator's project list refreshes
+            socketService.broadcastProject(project.publicId, 'project:updated', {
+                projectId: project.publicId,
+                changes: { name: project.name, description: project.description },
+            });
 
             return res.status(201).json({
                 success: true,
@@ -227,6 +234,12 @@ class ProjectController {
 
             await invalidateUserCaches(userId);
 
+            // Broadcast so all project members see the updated name/icon/status
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { name: project.name, description: project.description, industry: project.industry, coverImageUrl: project.coverImageUrl },
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Project updated',
@@ -268,7 +281,9 @@ class ProjectController {
             await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
             await ProjectInviteRepository.removeByProject(normalizedProjectId);
 
-            await invalidateUserCaches(userId);
+            // Invalidate all project members' caches so their project list refreshes
+            const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
+            await Promise.all(members.map((m) => invalidateUserCaches(m.userId)));
 
             return res.status(200).json({
                 success: true,
@@ -431,6 +446,13 @@ class ProjectController {
 
             await invalidateUserCaches(userId);
 
+            // Broadcast so UI role/permissions update immediately
+            socketService.broadcastProject(normalizedProjectId, 'project:member:role-updated', {
+                projectId: normalizedProjectId,
+                userId: normalizedTargetUserId,
+                role: normalizedRole,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Member role updated',
@@ -447,9 +469,9 @@ class ProjectController {
 
     async removeMember(req, res) {
         try {
-            const { projectId, targetUserId } = req.body || {};
+            const { projectId, targetUserId, userId: bodyUserId } = req.body || {};
             const normalizedProjectId = normalizeString(projectId);
-            const normalizedTargetUserId = normalizeString(targetUserId);
+            const normalizedTargetUserId = normalizeString(targetUserId || bodyUserId);
             if (!normalizedProjectId || !normalizedTargetUserId) {
                 return badRequest(res, 'Missing projectId or targetUserId');
             }
@@ -485,7 +507,22 @@ class ProjectController {
 
             await ProjectMemberRepository.removeMember(normalizedProjectId, normalizedTargetUserId);
 
-            await invalidateUserCaches(userId);
+            // Invalidate both the admin's and removed member's cache
+            await Promise.all([
+                invalidateUserCaches(userId),
+                invalidateUserCaches(normalizedTargetUserId),
+            ]);
+
+            // Tell the removed member to redirect away from this project
+            socketService.notifyUser(normalizedTargetUserId, 'member:removed', {
+                projectId: normalizedProjectId,
+            });
+
+            // Broadcast to remaining project members so they see the updated member list
+            socketService.broadcastProject(normalizedProjectId, 'project:member:left', {
+                projectId: normalizedProjectId,
+                userId: normalizedTargetUserId,
+            });
 
             return res.status(200).json({
                 success: true,

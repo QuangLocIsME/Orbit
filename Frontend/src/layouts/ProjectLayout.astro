@@ -1,5 +1,6 @@
 ---
 import { Toaster } from '@/components/ui/sonner';
+import InviteNotificationHandler from '@/hooks/useInviteNotifications';
 
 interface Props {
   title?: string;
@@ -44,6 +45,7 @@ const {
       <slot />
     </main>
     <Toaster client:load />
+    <InviteNotificationHandler client:load />
   </body>
 </html>
 
