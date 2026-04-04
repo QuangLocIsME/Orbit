@@ -6,7 +6,6 @@ import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
 import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
-import packagesData from '@/data/packages.json';
 import ProjectTopBar from '../../components/layout/ProjectTopBar';
 import CreateTaskModal from './CreateTaskModal';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
