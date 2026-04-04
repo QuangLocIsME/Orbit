@@ -16,6 +16,41 @@
 import { create } from 'zustand';
 import { getSocket, type OrbitSocket } from '@/lib/socket';
 
+const PROJECTS_CACHE_KEY = 'orbit:projects:me';
+const FOLDERS_CACHE_KEY = 'orbit:folders:me';
+const APP_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type CachedPayload<T> = {
+  data: T;
+  expiresAt: number;
+};
+
+function readCache<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedPayload<T>;
+    if (!parsed?.expiresAt || parsed.expiresAt <= Date.now()) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache<T>(key: string, data: T): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: CachedPayload<T> = {
+      data,
+      expiresAt: Date.now() + APP_CACHE_TTL_MS,
+    };
+    sessionStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    // ignore quota / serialization errors
+  }
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────────
 
 export interface AuthUser {
@@ -174,9 +209,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setAuth: (auth) => set({ auth }),
 
-  setProjects: (projects) => set({ projects }),
+  setProjects: (projects) => {
+    writeCache(PROJECTS_CACHE_KEY, projects);
+    set({ projects });
+  },
 
-  setFolders: (folders) => set({ folders }),
+  setFolders: (folders) => {
+    writeCache(FOLDERS_CACHE_KEY, folders);
+    set({ folders });
+  },
 
   setTeamMembers: (projectPublicId, members) =>
     set((s) => ({ teamMembers: { ...s.teamMembers, [projectPublicId]: members } })),
@@ -190,9 +231,19 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   clearAuth: () => set({ auth: null, isHydrated: false }),
 
-  clearProjects: () => set({ projects: [] }),
+  clearProjects: () => {
+    if (typeof window !== 'undefined') {
+      try { sessionStorage.removeItem(PROJECTS_CACHE_KEY); } catch { /* ignore */ }
+    }
+    set({ projects: [] });
+  },
 
-  clearFolders: () => set({ folders: [] }),
+  clearFolders: () => {
+    if (typeof window !== 'undefined') {
+      try { sessionStorage.removeItem(FOLDERS_CACHE_KEY); } catch { /* ignore */ }
+    }
+    set({ folders: [] });
+  },
 
   clearAll: () =>
     set({ auth: null, projects: [], folders: [], teamMembers: {}, isHydrated: false, prefetchStatus: 'idle' }),
@@ -200,6 +251,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   hydrate: async () => {
     if (typeof window === 'undefined') return;
     if (get().prefetchStatus === 'loading') return;
+
+    // Fast path: hydrate from session cache first (instant UI on navigation)
+    const cachedProjects = readCache<ApiProject[]>(PROJECTS_CACHE_KEY);
+    const cachedFolders = readCache<ApiFolder[]>(FOLDERS_CACHE_KEY);
+    if (cachedProjects || cachedFolders) {
+      set((state) => ({
+        projects: cachedProjects ?? state.projects,
+        folders: cachedFolders ?? state.folders,
+        isHydrated: true,
+        prefetchStatus: 'done',
+      }));
+    }
+
     set({ prefetchStatus: 'loading' });
 
     const fetchJson = async <T,>(url: string): Promise<T | null> => {
@@ -223,10 +287,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       try { localStorage.setItem('orbit_user', JSON.stringify(auth)); } catch { /* ignore */ }
     }
 
+    if (projects) writeCache(PROJECTS_CACHE_KEY, projects);
+    if (folders) writeCache(FOLDERS_CACHE_KEY, folders);
+
     set({
       auth: auth ?? null,
-      projects: projects ?? [],
-      folders: folders ?? [],
+      projects: projects ?? cachedProjects ?? [],
+      folders: folders ?? cachedFolders ?? [],
       isHydrated: true,
       prefetchStatus: 'done',
     });

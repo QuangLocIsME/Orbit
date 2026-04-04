@@ -28,7 +28,7 @@ class ProjectInviteRepository {
 
     async listByProject(projectId) {
         return await ProjectInvite.find({ projectId }).select(
-            '-_id projectId email role status invitedBy createdAt expiresAt acceptedAt'
+            '_id projectId email role status invitedBy createdAt expiresAt acceptedAt'
         );
     }
 

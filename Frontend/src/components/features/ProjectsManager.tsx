@@ -890,15 +890,21 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
 
     if (storeProjects.length > 0) {
       // Store has data — sync to local state and dismiss skeleton immediately.
-      setProjects(storeProjects.map(mapApiProjectToUiProject));
+      const mapped = storeProjects.map(mapApiProjectToUiProject);
+      setProjects(mapped);
       setIsProjectsLoading(false);
+      // Always revalidate in background so /projects still triggers fresh API call.
+      loadProjects(false, { force: true }).then((fresh) => {
+        const source = fresh.length > 0 ? fresh : mapped;
+        if (source.length > 0) loadFolders(source, { force: true });
+      });
       return;
     }
 
     // Store is still empty (hydration missed or returned null).
     // Fetch from network so the skeleton resolves instead of hanging forever.
-    loadProjects(true).then((fetched) => {
-      if (fetched.length > 0) loadFolders(fetched);
+    loadProjects(true, { force: true }).then((fetched) => {
+      if (fetched.length > 0) loadFolders(fetched, { force: true });
     });
   }, [storeProjectsLen]); // fires on mount (0) and again when hydration populates the store (N)
 
@@ -948,12 +954,24 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         loadProjectsRef.current(false, { force: true });
       }
     };
+
+    // If current user is removed from a project while staying on /projects,
+    // remove it from UI immediately, then revalidate in background.
+    const handleMemberRemoved = (payload: { projectId: string }) => {
+      if (!payload?.projectId) return;
+      setProjects((prev) => prev.filter((p) => p.id !== payload.projectId));
+      projectsCacheRef.current = null;
+      loadProjectsRef.current(false, { force: true });
+    };
+
     socket.on('cache:invalidate', handleCacheInvalidate);
+    socket.on('member:removed', handleMemberRemoved);
 
     return () => {
       socket.off('project:created', handleCreated);
       socket.off('project:updated', handleUpdated);
       socket.off('cache:invalidate', handleCacheInvalidate);
+      socket.off('member:removed', handleMemberRemoved);
     };
   }, []); // intentionally empty — socket events handle their own lifecycle
 

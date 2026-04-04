@@ -4,6 +4,19 @@ import { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useNotifications } from '@/hooks/useNotifications';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-client';
+import { toast } from '@/components/ui/sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import type { InviteNotification } from '@/lib/socket';
 
 function timeAgo(dateStr: string): string {
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -13,8 +26,14 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+interface PendingInvite extends InviteNotification {
+  dismissed?: boolean;
+}
+
 export default function HeaderActions() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [activeInvite, setActiveInvite] = useState<PendingInvite | null>(null);
+  const activeInviteRef = useRef<PendingInvite | null>(null);
 
   const toggleTheme = () => {
     const next = theme === 'light' ? 'dark' : 'light';
@@ -36,6 +55,69 @@ export default function HeaderActions() {
 
   const { notifications, unreadCount, inviteUnreadCount, markRead, markAllRead } = useNotifications();
   const totalUnread = unreadCount + inviteUnreadCount;
+
+  useEffect(() => { activeInviteRef.current = activeInvite; }, [activeInvite]);
+
+  const resolveInviteFromNotification = (n: { id: string; title: string; message?: string; link?: string; createdAt: string; inviteData?: InviteNotification }): PendingInvite => {
+    const fallbackInviteId = n.id.replace('invite:', '');
+    const fallbackPayload: PendingInvite = {
+      inviteId: fallbackInviteId,
+      token: undefined,
+      projectId: '',
+      projectName: n.message?.match(/Join\s+"([^"]+)"/)?.[1] || 'a project',
+      role: n.message?.match(/as\s+(.+)$/)?.[1] || 'member',
+      inviterName: n.title?.replace(/\s+invited you$/i, '') || 'Someone',
+      acceptUrl: n.link,
+      createdAt: n.createdAt,
+      dismissed: false,
+    };
+
+    return { ...(n.inviteData ?? fallbackPayload), dismissed: false };
+  };
+
+  const handleAcceptInvite = async () => {
+    const invite = activeInviteRef.current;
+    if (!invite) return;
+    try {
+      const res = await apiFetch('/api/invites/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: invite.token || invite.inviteId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.message || 'Failed to accept invite');
+        return;
+      }
+      toast.success(`You joined "${invite.projectName}"`);
+      setActiveInvite(null);
+      activeInviteRef.current = null;
+    } catch {
+      toast.error('Failed to accept invite');
+    }
+  };
+
+  const handleDeclineInvite = async () => {
+    const invite = activeInviteRef.current;
+    if (!invite) return;
+    try {
+      const res = await apiFetch('/api/invites/decline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inviteId: invite.inviteId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(data?.message || 'Failed to decline invite');
+        return;
+      }
+      toast.info(`Declined invite to "${invite.projectName}"`);
+      setActiveInvite(null);
+      activeInviteRef.current = null;
+    } catch {
+      toast.error('Failed to decline invite');
+    }
+  };
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -129,7 +211,15 @@ export default function HeaderActions() {
                 notifications.map((n) => (
                   <button
                     key={n.id}
-                    onClick={() => { markRead(n.id); if (n.link) window.location.href = n.link; }}
+                    onClick={() => {
+                      markRead(n.id);
+                      if (n.id.startsWith('invite:')) {
+                        setActiveInvite(resolveInviteFromNotification(n));
+                        setShowNotifications(false);
+                        return;
+                      }
+                      if (n.link) window.location.href = n.link;
+                    }}
                     className={cn(
                       'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted',
                       !n.read && 'bg-indigo-50/50'
@@ -157,6 +247,49 @@ export default function HeaderActions() {
           </div>
         ), document.body)}
       </div>
+
+      {/* Invite Alert Dialog */}
+      <AlertDialog
+        open={!!activeInvite}
+        onOpenChange={(open) => {
+          if (!open) {
+            setActiveInvite(null);
+            activeInviteRef.current = null;
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {activeInvite?.inviterName} invited you to join
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 pt-1">
+                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3">
+                  <p className="text-sm font-medium text-[#101828]">{activeInvite?.projectName || 'Project'}</p>
+                  <p className="text-xs text-[#6A7282] mt-0.5">
+                    Role: <span className="capitalize font-medium">{activeInvite?.role || 'member'}</span>
+                  </p>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Would you like to accept this invitation?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleDeclineInvite}>
+              Decline
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleAcceptInvite}
+              className="bg-[#155DFC] text-white hover:bg-blue-700"
+            >
+              Accept
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Settings */}
       <div ref={settingsRef} className="relative">

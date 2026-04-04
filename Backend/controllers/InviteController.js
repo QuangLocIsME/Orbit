@@ -278,10 +278,19 @@ class InviteController {
             }
 
             const invites = await ProjectInviteRepository.listByProject(normalizedProjectId);
+            const normalizedInvites = invites.map((inviteDoc) => {
+                const invite = typeof inviteDoc.toObject === 'function'
+                    ? inviteDoc.toObject()
+                    : inviteDoc;
+                return {
+                    ...invite,
+                    publicId: String(invite._id),
+                };
+            });
 
             return res.status(200).json({
                 success: true,
-                data: invites,
+                data: normalizedInvites,
             });
         } catch (error) {
             return errorResponse(res, 500, 'Failed to load invites');
