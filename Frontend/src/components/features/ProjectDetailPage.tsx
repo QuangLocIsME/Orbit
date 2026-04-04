@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-client';
+import { toast } from '@/components/ui/sonner';
 import type { Project } from '@/types';
 import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
@@ -12,6 +14,11 @@ import ClashesTab from './ClashesTab';
 import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
+import TaskDetailPage from './TaskDetailPage';
+import {
+  AlertDialog,
+  AlertDialogContent,
+} from '@/components/ui/alert-dialog';
 
 
 interface ProjectDetailPageProps {
@@ -159,77 +166,7 @@ interface Task {
   assigneeId: string;
 }
 
-const mockTasks: Task[] = [
-  {
-    id: '1',
-    title: 'Model revision for Level 3',
-    priority: 'medium',
-    status: 'backlog',
-    tags: ['modeling', '3d'],
-    comments: 0,
-    attachments: 0,
-    dueDate: '',
-    assigneeId: '2',
-  },
-  {
-    id: '2',
-    title: 'Resolve MEP clash #CH-045',
-    priority: 'urgent',
-    status: 'todo',
-    tags: ['mep', 'clash'],
-    linkedItem: { type: 'link', name: 'Duct-Beam Intersection' },
-    comments: 5,
-    attachments: 0,
-    dueDate: 'Dec 10',
-    assigneeId: '2',
-  },
-  {
-    id: '3',
-    title: 'Prepare site inspection checklist',
-    priority: 'low',
-    status: 'todo',
-    tags: ['site', 'quality'],
-    comments: 0,
-    attachments: 0,
-    dueDate: 'Dec 20',
-    assigneeId: '1',
-  },
-  {
-    id: '4',
-    title: 'Review foundation drawings',
-    priority: 'high',
-    status: 'in-progress',
-    tags: ['structural', 'drawings'],
-    linkedItem: { type: 'link', name: 'Foundation Plan A1' },
-    comments: 3,
-    attachments: 2,
-    dueDate: 'Dec 15',
-    assigneeId: '2',
-  },
-  {
-    id: '5',
-    title: 'Update architectural elevations',
-    priority: 'medium',
-    status: 'review',
-    tags: ['architecture', 'drawings'],
-    linkedItem: { type: 'link', name: 'Facade Material Change' },
-    comments: 2,
-    attachments: 4,
-    dueDate: 'Dec 12',
-    assigneeId: '4',
-  },
-  {
-    id: '6',
-    title: 'Submit permit documents',
-    priority: 'high',
-    status: 'done',
-    tags: ['permits', 'compliance'],
-    comments: 1,
-    attachments: 0,
-    dueDate: 'Dec 5',
-    assigneeId: '5',
-  },
-];
+
 
 const taskColumns = [
   { id: 'backlog', label: 'Backlog', icon: 'circle' },
@@ -559,6 +496,9 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const [tasksViewMode, setTasksViewMode] = useState<'board' | 'list' | 'calendar'>('board');
   const [tasksSearchQuery, setTasksSearchQuery] = useState('');
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [tasksData, setTasksData] = useState<Task[]>([]);
+  const [isTasksLoading, setIsTasksLoading] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Get current folder based on path
   const getCurrentFolder = (): DocFolder => {
@@ -650,6 +590,60 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
         return <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />;
     }
   };
+
+  const loadProjectTasks = useCallback(async () => {
+    setIsTasksLoading(true);
+    try {
+      const response = await apiFetch('/api/tasks/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: project.publicId }),
+      });
+
+      // Tasks API is not ready yet in backend/frontend proxy; keep UI stable without crashing.
+      if (response.status === 404) {
+        setTasksData([]);
+        return;
+      }
+
+      if (!response.ok) {
+        setTasksData([]);
+        return;
+      }
+
+      const payload = await response.json();
+      const rawTasks = Array.isArray(payload?.data) ? payload.data : [];
+
+      const mapped: Task[] = rawTasks.map((t: any) => ({
+        id: String(t.publicId || t.id || ''),
+        title: String(t.title || 'Untitled task'),
+        priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as Task['priority'],
+        status: (['backlog', 'todo', 'in-progress', 'review', 'done'].includes(t.status) ? t.status : 'backlog') as Task['status'],
+        tags: Array.isArray(t.tags) ? t.tags : [],
+        linkedItem: t.linkedUrl ? { type: 'link', name: t.linkedUrl } : undefined,
+        comments: Number(t.commentsCount || 0),
+        attachments: Number(t.attachmentsCount || 0),
+        dueDate: t.dueDate ? formatDate(t.dueDate) : '',
+        assigneeId: String(t.assigneeId || ''),
+      }));
+
+      setTasksData(mapped);
+    } catch {
+      setTasksData([]);
+    } finally {
+      setIsTasksLoading(false);
+    }
+  }, [project.publicId]);
+
+  useEffect(() => {
+    if (activeTab !== 'tasks') return;
+    loadProjectTasks();
+  }, [activeTab, loadProjectTasks]);
+
+  const filteredTasks = useMemo(
+    () => tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase())),
+    [tasksData, tasksSearchQuery]
+  );
 
   // Mock extended data
   const projectStats = {
@@ -1342,12 +1336,12 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
             {/* Board View */}
             {tasksViewMode === 'board' && (
               <div className="flex-1 overflow-x-auto">
+                {isTasksLoading ? (
+                  <div className="py-12 text-center text-[14px] text-[#6A7282]">Loading tasks...</div>
+                ) : (
                 <div className="flex gap-4 min-w-max pb-4">
                   {taskColumns.map((column) => {
-                    const columnTasks = mockTasks.filter(t => 
-                      t.status === column.id && 
-                      t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase())
-                    );
+                    const columnTasks = filteredTasks.filter((t) => t.status === column.id);
                     return (
                       <div key={column.id} className="w-[280px] flex flex-col">
                         {/* Column Header */}
@@ -1381,7 +1375,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                         {/* Tasks */}
                         <div className="flex flex-col gap-2">
                           {columnTasks.map((task) => {
-                            const assignee = mockTeamMembers.find(m => m.id === task.assigneeId);
+                            const assignee = teamMembers.find(m => m.id === task.assigneeId);
                             return (
                               <div key={task.id} className="bg-white rounded-[10px] border border-[#E5E7EB] p-3 hover:shadow-sm transition-shadow cursor-pointer">
                                 {/* Priority badge */}
@@ -1396,7 +1390,13 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                                 </span>
 
                                 {/* Title */}
-                                <h4 className="text-[14px] font-normal text-[#101828] mb-2">{task.title}</h4>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTaskId(task.id)}
+                                  className="text-left text-[14px] font-normal text-[#101828] mb-2 block hover:text-[#155DFC] hover:underline"
+                                >
+                                  {task.title}
+                                </button>
 
                                 {/* Tags */}
                                 <div className="flex flex-wrap gap-1 mb-2">
@@ -1456,7 +1456,10 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                           })}
 
                           {/* Add task button */}
-                          <button className="w-full py-2 rounded-[10px] border border-dashed border-[#D1D5DC] text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors">
+                          <button
+                            onClick={() => setIsNewTaskModalOpen(true)}
+                            className="w-full py-2 rounded-[10px] border border-dashed border-[#D1D5DC] text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors"
+                          >
                             + Add task
                           </button>
                         </div>
@@ -1464,6 +1467,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                     );
                   })}
                 </div>
+                )}
               </div>
             )}
 
@@ -1482,15 +1486,19 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                   </div>
 
                   {/* Table Body */}
-                  {mockTasks
-                    .filter(t => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase()))
-                    .map((task) => {
-                      const assignee = mockTeamMembers.find(m => m.id === task.assigneeId);
+                  {filteredTasks.map((task) => {
+                      const assignee = teamMembers.find(m => m.id === task.assigneeId);
                       const column = taskColumns.find(c => c.id === task.status);
                       return (
                         <div key={task.id} className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 border-b border-[#E5E7EB] hover:bg-gray-50 items-center">
                           <div className="flex flex-col gap-1">
-                            <span className="text-[14px] text-[#101828]">{task.title}</span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTaskId(task.id)}
+                              className="text-left text-[14px] text-[#101828] hover:text-[#155DFC] hover:underline"
+                            >
+                              {task.title}
+                            </button>
                             <div className="flex gap-1">
                               {task.tags.map((tag) => (
                                 <span key={tag} className="inline-flex items-center rounded-[6px] bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#4A5565]">
@@ -1685,7 +1693,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                       </svg>
                       <select className="w-full h-[37px] appearance-none rounded-[10px] border border-[#E5E7EB] bg-white pl-9 pr-10 text-[14px] text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]">
                         <option value=""></option>
-                        {mockTeamMembers.map((member) => (
+                        {teamMembers.map((member) => (
                           <option key={member.id} value={member.id}>{member.name}</option>
                         ))}
                       </select>
@@ -2484,11 +2492,54 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
           </div>
         )}
 
+        {/* Task Detail Dialog */}
+        <AlertDialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
+          <AlertDialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
+            {selectedTaskId && (
+              <TaskDetailPage projectPublicId={project.publicId} taskId={selectedTaskId} />
+            )}
+          </AlertDialogContent>
+        </AlertDialog>
+
         {/* Create Task Modal */}
         <CreateTaskModal
           isOpen={isNewTaskModalOpen}
           onClose={() => setIsNewTaskModalOpen(false)}
-          onSubmit={(task) => console.log('New task created:', task)}
+          assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
+          onSubmit={async (task) => {
+            try {
+              const response = await apiFetch('/api/tasks/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({
+                  projectId: project.publicId,
+                  title: task.title,
+                  status: task.status,
+                  priority: task.priority,
+                  description: task.description,
+                  assigneeId: task.assignee || undefined,
+                  dueDate: task.dueDate || undefined,
+                  linkedUrl: task.linkedItems || undefined,
+                  tags: task.tags,
+                }),
+              });
+
+              if (response.status === 404) {
+                toast.error('Tasks API is not available yet');
+                return;
+              }
+
+              if (!response.ok) {
+                toast.error('Failed to create task');
+                return;
+              }
+
+              toast.success('Task created');
+              await loadProjectTasks();
+            } catch {
+              toast.error('Failed to create task');
+            }
+          }}
         />
       </div>
     </div>

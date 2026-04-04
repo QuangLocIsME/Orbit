@@ -1,0 +1,31 @@
+const mongoose = require('mongoose');
+const crypto = require('crypto');
+
+const TaskSchema = new mongoose.Schema({
+    publicId: {
+        type: String,
+        unique: true,
+        index: true,
+        default: () => crypto.randomUUID(),
+    },
+    projectId: { type: String, required: true, index: true },
+    title: { type: String, required: true, trim: true },
+    description: { type: String, default: '', trim: true },
+    status: { type: String, default: 'backlog', trim: true },
+    priority: {
+        type: String,
+        enum: ['low', 'medium', 'high', 'urgent'],
+        default: 'medium',
+    },
+    assigneeId: { type: String, default: '', index: true },
+    dueDate: { type: Date, default: null },
+    linkedUrl: { type: String, default: '', trim: true },
+    tags: { type: [String], default: [] },
+    commentsCount: { type: Number, default: 0 },
+    attachmentsCount: { type: Number, default: 0 },
+    createdBy: { type: String, required: true, index: true },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model('Task', TaskSchema);

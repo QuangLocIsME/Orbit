@@ -401,3 +401,4 @@ export const useAppStore = create<AppState>((set, get) => ({
 export const hydrateApp = () => useAppStore.getState().hydrate();
 export const initAppSocket = () => useAppStore.getState().initSocket();
 export const destroyAppSocket = () => useAppStore.getState().destroySocket();
+export const clearAll = () => useAppStore.getState().clearAll();
