@@ -1,14 +1,14 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { navigate } from 'astro:transitions/client';
-import { toast } from 'sonner';
-import { apiFetch } from '@/lib/api-client';
-import { cn } from '@/lib/utils';
-import { PackagesSkeleton } from '@/components/ui/skeletons';
-import { Search, LayoutGrid, List, Plus, Calendar, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from "react";
+import { navigate } from "astro:transitions/client";
+import { toast } from "sonner";
+import { apiFetch } from "src/lib/api-client";
+import { cn } from "@/lib/utils";
+import { PackagesSkeleton } from "src/components/ui/skeletons";
+import { Search, LayoutGrid, List, Plus, Calendar, Users } from "lucide-react";
 
-type PackageStatus = 'Draft' | 'Active' | 'Archived';
+type PackageStatus = "Draft" | "Active" | "Archived";
 
 interface ProjectOption {
   publicId: string;
@@ -37,78 +37,95 @@ interface PackageItem {
 }
 
 const statusBadge: Record<PackageStatus, string> = {
-  Draft: 'bg-gray-100 text-gray-700',
-  Active: 'bg-emerald-100 text-emerald-700',
-  Archived: 'bg-orange-100 text-orange-700',
+  Draft: "bg-gray-100 text-gray-700",
+  Active: "bg-emerald-100 text-emerald-700",
+  Archived: "bg-orange-100 text-orange-700",
 };
 
-const SELECTED_PROJECT_KEY = 'orbit:selected-project-id';
+const SELECTED_PROJECT_KEY = "orbit:selected-project-id";
 
 interface PackagesManagerProps {
   fixedProjectId?: string;
   fixedProjectName?: string;
 }
 
-export default function PackagesManager({ fixedProjectId, fixedProjectName }: PackagesManagerProps) {
+export default function PackagesManager({
+  fixedProjectId,
+  fixedProjectName,
+}: PackagesManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [packages, setPackages] = useState<PackageItem[]>([]);
-  const [projectMembers, setProjectMembers] = useState<ProjectMemberOption[]>([]);
+  const [projectMembers, setProjectMembers] = useState<ProjectMemberOption[]>(
+    [],
+  );
 
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [isMemberDropdownOpen, setIsMemberDropdownOpen] = useState(false);
   const [newPackage, setNewPackage] = useState({
-    name: '',
-    description: '',
-    type: 'construction',
-    initialStatus: 'Active',
-    dueDate: '',
+    name: "",
+    description: "",
+    type: "construction",
+    initialStatus: "Active",
+    dueDate: "",
     teamMemberIds: [] as string[],
   });
 
   const selectedProjectName = useMemo(() => {
     if (fixedProjectId) {
-      return fixedProjectName || projects.find((p) => p.publicId === fixedProjectId)?.name || '';
+      return (
+        fixedProjectName ||
+        projects.find((p) => p.publicId === fixedProjectId)?.name ||
+        ""
+      );
     }
-    return projects.find((p) => p.publicId === selectedProjectId)?.name || '';
+    return projects.find((p) => p.publicId === selectedProjectId)?.name || "";
   }, [projects, selectedProjectId, fixedProjectId, fixedProjectName]);
 
   const filteredPackages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return packages;
     return packages.filter((item) =>
-      `${item.name} ${item.description || ''} ${item.packageType || ''}`.toLowerCase().includes(q)
+      `${item.name} ${item.description || ""} ${item.packageType || ""}`
+        .toLowerCase()
+        .includes(q),
     );
   }, [packages, searchQuery]);
 
   const loadProjects = async () => {
-    const res = await apiFetch('/api/projects/me');
-    if (!res.ok) throw new Error('Không thể tải project');
+    const res = await apiFetch("/api/projects/me");
+    if (!res.ok) throw new Error("Không thể tải project");
 
     const payload = await res.json();
     const items = Array.isArray(payload?.data) ? payload.data : [];
-    const mapped: ProjectOption[] = items.map((p: any) => ({ publicId: p.publicId, name: p.name }));
+    const mapped: ProjectOption[] = items.map((p: any) => ({
+      publicId: p.publicId,
+      name: p.name,
+    }));
 
     setProjects(mapped);
 
     if (!mapped.length) {
-      setSelectedProjectId('');
+      setSelectedProjectId("");
       return;
     }
 
     if (fixedProjectId) {
       const exists = mapped.some((p) => p.publicId === fixedProjectId);
-      setSelectedProjectId(exists ? fixedProjectId : '');
+      setSelectedProjectId(exists ? fixedProjectId : "");
       return;
     }
 
-    const saved = typeof window !== 'undefined' ? localStorage.getItem(SELECTED_PROJECT_KEY) : null;
+    const saved =
+      typeof window !== "undefined"
+        ? localStorage.getItem(SELECTED_PROJECT_KEY)
+        : null;
     const hasSaved = saved && mapped.some((p) => p.publicId === saved);
     const nextProjectId = hasSaved ? String(saved) : mapped[0].publicId;
     setSelectedProjectId(nextProjectId);
@@ -120,25 +137,38 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       return;
     }
 
-    const res = await apiFetch('/api/projects/packages/list', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ projectId, listType: 'active' }),
+    const res = await apiFetch("/api/projects/packages/list", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ projectId, listType: "active" }),
     });
 
-    if (!res.ok) throw new Error('Không thể tải packages');
+    if (!res.ok) throw new Error("Không thể tải packages");
 
     const payload = await res.json();
     const items = Array.isArray(payload?.data) ? payload.data : [];
     setPackages(items);
   };
 
-  const memberColors = ['#EC4899', '#06B6D4', '#3B82F6', '#8B5CF6', '#F59E0B', '#10B981'];
+  const memberColors = [
+    "#EC4899",
+    "#06B6D4",
+    "#3B82F6",
+    "#8B5CF6",
+    "#F59E0B",
+    "#10B981",
+  ];
 
   const toInitials = (name: string) => {
-    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-    if (!parts.length) return 'U';
-    return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+    const parts = String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!parts.length) return "U";
+    return (parts[0][0] + (parts[1]?.[0] || "")).toUpperCase();
   };
 
   const loadProjectMembers = async (projectId: string) => {
@@ -147,9 +177,12 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       return;
     }
 
-    const res = await apiFetch('/api/projects/member-list', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    const res = await apiFetch("/api/projects/member-list", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body: JSON.stringify({ projectId }),
     });
 
@@ -162,11 +195,11 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     const members = Array.isArray(payload?.data) ? payload.data : [];
 
     const mappedMembers = members
-      .filter((m: any) => m?.status === 'accepted' && m?.userId)
+      .filter((m: any) => m?.status === "accepted" && m?.userId)
       .map((m: any) => ({
         userId: m.userId,
         name: m?.user?.fullName || m?.user?.email || m.userId,
-        role: m.role || 'member',
+        role: m.role || "member",
       }));
 
     setProjectMembers(
@@ -174,7 +207,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
         ...m,
         initials: toInitials(m.name),
         color: memberColors[index % memberColors.length],
-      }))
+      })),
     );
   };
 
@@ -193,7 +226,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
     setLoading(true);
     loadProjects()
-      .catch((err) => toast.error(err?.message || 'Không thể tải dữ liệu'))
+      .catch((err) => toast.error(err?.message || "Không thể tải dữ liệu"))
       .finally(() => setLoading(false));
   }, [fixedProjectId]);
 
@@ -204,7 +237,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     }
     setLoading(true);
     refreshData(selectedProjectId)
-      .catch((err) => toast.error(err?.message || 'Không thể tải packages'))
+      .catch((err) => toast.error(err?.message || "Không thể tải packages"))
       .finally(() => setLoading(false));
   }, [selectedProjectId, fixedProjectId]);
 
@@ -218,33 +251,55 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
   };
 
   const resetCreateForm = () => {
-    setNewPackage({ name: '', description: '', type: 'construction', initialStatus: 'Active', dueDate: '', teamMemberIds: [] });
+    setNewPackage({
+      name: "",
+      description: "",
+      type: "construction",
+      initialStatus: "Active",
+      dueDate: "",
+      teamMemberIds: [],
+    });
   };
 
   const packageTypeOptions = [
-    { id: 'design', label: 'Design', color: 'bg-purple-100 text-purple-600' },
-    { id: 'development', label: 'Development', color: 'bg-blue-100 text-blue-600' },
-    { id: 'marketing', label: 'Marketing', color: 'bg-pink-100 text-pink-600' },
-    { id: 'construction', label: 'Construction', color: 'bg-orange-100 text-orange-600' },
-    { id: 'research', label: 'Research', color: 'bg-emerald-100 text-emerald-600' },
-    { id: 'other', label: 'Other', color: 'bg-gray-100 text-gray-600' },
+    { id: "design", label: "Design", color: "bg-purple-100 text-purple-600" },
+    {
+      id: "development",
+      label: "Development",
+      color: "bg-blue-100 text-blue-600",
+    },
+    { id: "marketing", label: "Marketing", color: "bg-pink-100 text-pink-600" },
+    {
+      id: "construction",
+      label: "Construction",
+      color: "bg-orange-100 text-orange-600",
+    },
+    {
+      id: "research",
+      label: "Research",
+      color: "bg-emerald-100 text-emerald-600",
+    },
+    { id: "other", label: "Other", color: "bg-gray-100 text-gray-600" },
   ] as const;
 
   const handleCreatePackage = async () => {
     if (!selectedProjectId) {
-      toast.error('Vui lòng chọn project');
+      toast.error("Vui lòng chọn project");
       return;
     }
     if (!newPackage.name.trim()) {
-      toast.error('Tên package là bắt buộc');
+      toast.error("Tên package là bắt buộc");
       return;
     }
 
     setCreating(true);
     try {
-      const res = await apiFetch('/api/projects/packages/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      const res = await apiFetch("/api/projects/packages/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify({
           projectId: selectedProjectId,
           name: newPackage.name.trim(),
@@ -257,15 +312,18 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
       const payload = await res.json().catch(() => null);
       if (!res.ok || !payload?.success) {
-        throw new Error(payload?.message || 'Tạo package thất bại');
+        throw new Error(payload?.message || "Tạo package thất bại");
       }
 
-      if (newPackage.initialStatus && newPackage.initialStatus !== 'Draft') {
+      if (newPackage.initialStatus && newPackage.initialStatus !== "Draft") {
         const createdPackageId = payload?.data?.publicId;
         if (createdPackageId) {
-          await apiFetch('/api/projects/packages/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          await apiFetch("/api/projects/packages/update", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
             body: JSON.stringify({
               projectId: selectedProjectId,
               packageId: createdPackageId,
@@ -275,12 +333,12 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
         }
       }
 
-      toast.success('Tạo package thành công');
+      toast.success("Tạo package thành công");
       setShowCreateModal(false);
       resetCreateForm();
       await refreshData(selectedProjectId);
     } catch (err: any) {
-      toast.error(err?.message || 'Tạo package thất bại');
+      toast.error(err?.message || "Tạo package thất bại");
     } finally {
       setCreating(false);
     }
@@ -289,7 +347,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
   if (!isHydrated || loading) return <PackagesSkeleton />;
 
   return (
-    <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+    <div className="space-y-6 py-10 px-6 lg:px-[80px] xl:px-[160px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-[24px] font-normal text-[#101828]">Packages</h1>
@@ -300,7 +358,9 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               className="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm"
             >
               {projects.map((p) => (
-                <option key={p.publicId} value={p.publicId}>{p.name}</option>
+                <option key={p.publicId} value={p.publicId}>
+                  {p.name}
+                </option>
               ))}
             </select>
           )}
@@ -329,14 +389,24 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
         </div>
         <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
           <button
-            onClick={() => setViewMode('grid')}
-            className={cn('rounded-md p-2', viewMode === 'grid' ? 'bg-gray-100 text-gray-900' : 'text-gray-400')}
+            onClick={() => setViewMode("grid")}
+            className={cn(
+              "rounded-md p-2",
+              viewMode === "grid"
+                ? "bg-gray-100 text-gray-900"
+                : "text-gray-400",
+            )}
           >
             <LayoutGrid className="h-4 w-4" />
           </button>
           <button
-            onClick={() => setViewMode('list')}
-            className={cn('rounded-md p-2', viewMode === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-400')}
+            onClick={() => setViewMode("list")}
+            className={cn(
+              "rounded-md p-2",
+              viewMode === "list"
+                ? "bg-gray-100 text-gray-900"
+                : "text-gray-400",
+            )}
           >
             <List className="h-4 w-4" />
           </button>
@@ -348,10 +418,10 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           <p className="text-sm text-gray-600">
             {selectedProjectId
               ? `Project "${selectedProjectName}" chưa có package nào.`
-              : 'Bạn chưa có project nào để quản lý package.'}
+              : "Bạn chưa có project nào để quản lý package."}
           </p>
         </div>
-      ) : viewMode === 'grid' ? (
+      ) : viewMode === "grid" ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filteredPackages.map((item) => (
             <button
@@ -360,15 +430,32 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               className="w-full rounded-xl border border-gray-200 bg-white p-5 text-left transition-all hover:border-gray-300 hover:shadow-lg"
             >
               <div className="flex items-center justify-between gap-3">
-                <h3 className="truncate font-medium text-gray-900">{item.name}</h3>
-                <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', statusBadge[item.status] || statusBadge.Draft)}>
+                <h3 className="truncate font-medium text-gray-900">
+                  {item.name}
+                </h3>
+                <span
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-xs font-medium",
+                    statusBadge[item.status] || statusBadge.Draft,
+                  )}
+                >
                   {item.status}
                 </span>
               </div>
-              <p className="mt-2 line-clamp-2 text-sm text-gray-600">{item.description || 'No description'}</p>
+              <p className="mt-2 line-clamp-2 text-sm text-gray-600">
+                {item.description || "No description"}
+              </p>
               <div className="mt-4 flex items-center gap-4 text-xs text-gray-500">
-                <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" />{item.teamMemberIds?.length || 0}</span>
-                <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{item.dueDate ? new Date(item.dueDate).toLocaleDateString() : 'No due date'}</span>
+                <span className="inline-flex items-center gap-1">
+                  <Users className="h-3.5 w-3.5" />
+                  {item.teamMemberIds?.length || 0}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {item.dueDate
+                    ? new Date(item.dueDate).toLocaleDateString()
+                    : "No due date"}
+                </span>
               </div>
             </button>
           ))}
@@ -382,12 +469,25 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               className="group flex w-full items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white p-4 text-left transition-all hover:border-gray-300 hover:shadow-md"
             >
               <div className="min-w-0">
-                <p className="truncate font-medium text-gray-900">{item.name}</p>
-                <p className="truncate text-sm text-gray-500">{item.description || 'No description'}</p>
+                <p className="truncate font-medium text-gray-900">
+                  {item.name}
+                </p>
+                <p className="truncate text-sm text-gray-500">
+                  {item.description || "No description"}
+                </p>
               </div>
               <div className="flex items-center gap-4">
-                <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', statusBadge[item.status] || statusBadge.Draft)}>{item.status}</span>
-                <span className="text-xs text-gray-500">{item.teamMemberIds?.length || 0} members</span>
+                <span
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-xs font-medium",
+                    statusBadge[item.status] || statusBadge.Draft,
+                  )}
+                >
+                  {item.status}
+                </span>
+                <span className="text-xs text-gray-500">
+                  {item.teamMemberIds?.length || 0} members
+                </span>
               </div>
             </button>
           ))}
@@ -395,34 +495,60 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       )}
 
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowCreateModal(false)}>
-          <div className="relative w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowCreateModal(false)}
+        >
+          <div
+            className="relative w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-start justify-between p-6 pb-4">
               <div>
-                <h2 className="text-[40px] font-semibold text-[#1F2937]">Create New Package</h2>
-                <p className="mt-1 text-[16px] text-[#6B7280]">Add a new package to organize project components</p>
+                <h2 className="text-[40px] font-semibold text-[#1F2937]">
+                  Create New Package
+                </h2>
+                <p className="mt-1 text-[16px] text-[#6B7280]">
+                  Add a new package to organize project components
+                </p>
               </div>
-              <button onClick={() => setShowCreateModal(false)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              >
+                ×
+              </button>
             </div>
 
             <div className="border-t border-gray-100" />
 
             <div className="space-y-5 p-6">
               <div>
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Package Name <span className="text-red-500">*</span></label>
+                <label className="mb-2 block text-sm font-medium text-[#1F2937]">
+                  Package Name <span className="text-red-500">*</span>
+                </label>
                 <input
                   value={newPackage.name}
-                  onChange={(e) => setNewPackage((prev) => ({ ...prev, name: e.target.value }))}
+                  onChange={(e) =>
+                    setNewPackage((prev) => ({ ...prev, name: e.target.value }))
+                  }
                   placeholder="e.g., Architectural Design, MEP Systems..."
                   className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Description <span className="text-red-500">*</span></label>
+                <label className="mb-2 block text-sm font-medium text-[#1F2937]">
+                  Description <span className="text-red-500">*</span>
+                </label>
                 <textarea
                   value={newPackage.description}
-                  onChange={(e) => setNewPackage((prev) => ({ ...prev, description: e.target.value }))}
+                  onChange={(e) =>
+                    setNewPackage((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
                   placeholder="Describe the package scope, deliverables, and objectives..."
                   rows={4}
                   className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
@@ -430,7 +556,9 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Package Type <span className="text-red-500">*</span></label>
+                <label className="mb-2 block text-sm font-medium text-[#1F2937]">
+                  Package Type <span className="text-red-500">*</span>
+                </label>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                   {packageTypeOptions.map((opt) => {
                     const active = newPackage.type === opt.id;
@@ -438,16 +566,27 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                       <button
                         key={opt.id}
                         type="button"
-                        onClick={() => setNewPackage((prev) => ({ ...prev, type: opt.id }))}
+                        onClick={() =>
+                          setNewPackage((prev) => ({ ...prev, type: opt.id }))
+                        }
                         className={cn(
-                          'flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors',
-                          active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                          "flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors",
+                          active
+                            ? "border-blue-500 bg-blue-50"
+                            : "border-gray-200 hover:border-gray-300",
                         )}
                       >
-                        <span className={cn('inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold', opt.color)}>
+                        <span
+                          className={cn(
+                            "inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold",
+                            opt.color,
+                          )}
+                        >
                           {opt.label.charAt(0)}
                         </span>
-                        <span className="text-sm font-medium text-[#374151]">{opt.label}</span>
+                        <span className="text-sm font-medium text-[#374151]">
+                          {opt.label}
+                        </span>
                       </button>
                     );
                   })}
@@ -456,10 +595,17 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#1F2937]">Initial Status <span className="text-red-500">*</span></label>
+                  <label className="mb-2 block text-sm font-medium text-[#1F2937]">
+                    Initial Status <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={newPackage.initialStatus}
-                    onChange={(e) => setNewPackage((prev) => ({ ...prev, initialStatus: e.target.value }))}
+                    onChange={(e) =>
+                      setNewPackage((prev) => ({
+                        ...prev,
+                        initialStatus: e.target.value,
+                      }))
+                    }
                     className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
                   >
                     <option value="Draft">Draft</option>
@@ -468,34 +614,49 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#1F2937]">Due Date <span className="text-red-500">*</span></label>
+                  <label className="mb-2 block text-sm font-medium text-[#1F2937]">
+                    Due Date <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="date"
                     value={newPackage.dueDate}
-                    onChange={(e) => setNewPackage((prev) => ({ ...prev, dueDate: e.target.value }))}
+                    onChange={(e) =>
+                      setNewPackage((prev) => ({
+                        ...prev,
+                        dueDate: e.target.value,
+                      }))
+                    }
                     className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
                   />
                 </div>
               </div>
 
               <div className="relative">
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Assign Team Members <span className="text-red-500">*</span></label>
+                <label className="mb-2 block text-sm font-medium text-[#1F2937]">
+                  Assign Team Members <span className="text-red-500">*</span>
+                </label>
                 <button
                   type="button"
                   onClick={() => setIsMemberDropdownOpen((v) => !v)}
                   className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-4 py-3 text-left"
                 >
-                  <span className="text-sm text-gray-700">{newPackage.teamMemberIds.length} members selected</span>
+                  <span className="text-sm text-gray-700">
+                    {newPackage.teamMemberIds.length} members selected
+                  </span>
                   <span className="text-gray-400">⌃</span>
                 </button>
 
                 {isMemberDropdownOpen && (
                   <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg">
                     {projectMembers.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-gray-500">Không có member nào trong project.</p>
+                      <p className="px-4 py-3 text-sm text-gray-500">
+                        Không có member nào trong project.
+                      </p>
                     ) : (
                       projectMembers.map((member) => {
-                        const checked = newPackage.teamMemberIds.includes(member.userId);
+                        const checked = newPackage.teamMemberIds.includes(
+                          member.userId,
+                        );
                         return (
                           <button
                             key={member.userId}
@@ -509,10 +670,22 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                             >
                               {member.initials}
                             </div>
-                            <span className="flex-1 text-sm text-gray-900">{member.name}</span>
+                            <span className="flex-1 text-sm text-gray-900">
+                              {member.name}
+                            </span>
                             {checked && (
-                              <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                              <svg
+                                className="h-5 w-5 text-blue-600"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2"
+                                  d="M5 13l4 4L19 7"
+                                />
                               </svg>
                             )}
                           </button>
@@ -539,7 +712,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                 disabled={creating || !newPackage.name.trim()}
                 className="rounded-xl bg-[#8FB1FF] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#7ea4fb] disabled:opacity-50"
               >
-                {creating ? 'Creating...' : 'Create Package'}
+                {creating ? "Creating..." : "Create Package"}
               </button>
             </div>
           </div>
