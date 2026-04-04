@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from '@/components/ui/sonner';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
+import { Calendar, MessageSquare, User, Briefcase, Clock, Send } from 'lucide-react';
 
 type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
@@ -25,6 +26,7 @@ interface CommentItem {
   author: string;
   content: string;
   createdAt: string;
+  avatar?: string;
 }
 
 interface WorkflowStage {
@@ -37,11 +39,23 @@ interface TaskDetailPageProps {
   taskId: string;
 }
 
-const priorityStyles: Record<TaskPriority, string> = {
-  low: 'bg-gray-100 text-gray-700',
-  medium: 'bg-blue-100 text-blue-700',
-  high: 'bg-orange-100 text-orange-700',
-  urgent: 'bg-red-100 text-red-700',
+const statusToneById: Record<string, string> = {
+  backlog: 'bg-slate-100 text-slate-600',
+  todo: 'bg-blue-50 text-blue-600',
+  'in-progress': 'bg-amber-50 text-amber-600',
+  review: 'bg-orange-50 text-orange-600',
+  done: 'bg-emerald-50 text-emerald-600',
+  approved: 'bg-emerald-50 text-emerald-600',
+  draft: 'bg-slate-100 text-slate-600',
+  revision: 'bg-purple-50 text-purple-600',
+  testing: 'bg-cyan-50 text-cyan-600',
+};
+
+const priorityConfig: Record<TaskPriority, { label: string; color: string }> = {
+  low: { label: 'Low', color: 'bg-teal-50 text-teal-700' },
+  medium: { label: 'Medium', color: 'bg-amber-50 text-amber-700' },
+  high: { label: 'High', color: 'bg-red-50 text-red-700' },
+  urgent: { label: 'Urgent', color: 'bg-red-50 text-red-700' },
 };
 
 const fallbackStages: WorkflowStage[] = [
@@ -57,6 +71,12 @@ const normalizeStageId = (value: string) =>
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '-');
+
+const toDisplayTime = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString();
+};
 
 export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPageProps) {
   const [loading, setLoading] = useState(true);
@@ -125,6 +145,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
                 author: String(c.authorName || c.author?.fullName || 'Unknown'),
                 content: String(c.content || ''),
                 createdAt: String(c.createdAt || ''),
+                avatar: c.author?.avatar || '',
               }))
             );
           }
@@ -202,6 +223,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
           author: String(c?.authorName || c?.author?.fullName || 'You'),
           content: String(c?.content || content),
           createdAt: String(c?.createdAt || new Date().toISOString()),
+          avatar: c?.author?.avatar || '',
         },
         ...prev,
       ]);
@@ -241,124 +263,182 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
   };
 
   if (loading) {
-    return <div className="px-6 py-6 text-sm text-muted-foreground">Loading task detail...</div>;
+    return <div className="p-6 text-sm text-muted-foreground">Loading task detail...</div>;
   }
 
   if (!task) {
-    return <div className="px-6 py-6 text-sm text-muted-foreground">Task not found.</div>;
+    return <div className="p-6 text-sm text-muted-foreground">Task not found.</div>;
   }
 
   return (
-    <div className="space-y-6 px-6 py-6 lg:px-[80px] xl:px-[160px]">
-      <div className="rounded-xl border border-[#E5E7EB] bg-white p-5">
+    <div className="space-y-5 p-6">
+      <div className="space-y-3 pb-2">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[22px] font-medium text-[#101828]">{task.title}</h1>
-            <p className="mt-2 text-sm text-[#4A5565]">{task.description || 'No description.'}</p>
+          <div className="space-y-1">
+            <h2 className="text-xl font-semibold text-foreground">{task.title}</h2>
+            <p className="text-sm text-muted-foreground">{task.description || 'No description.'}</p>
           </div>
-          <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium capitalize', priorityStyles[task.priority])}>
-            {task.priority}
+          <span className={cn('shrink-0 rounded-md border-0 px-2.5 py-1 text-xs font-medium', priorityConfig[task.priority].color)}>
+            {priorityConfig[task.priority].label}
           </span>
         </div>
+      </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-[#4A5565] md:grid-cols-2">
-          <p>
-            Status:{' '}
-            <span className="font-medium text-[#101828] capitalize">{currentStage?.label || task.status}</span>
-          </p>
-          <p>
-            Assignee: <span className="font-medium text-[#101828]">{task.assigneeName || 'Unassigned'}</span>
-          </p>
-          <p>
-            Due Date: <span className="font-medium text-[#101828]">{dueDateLabel}</span>
-          </p>
-          <p>
-            Role: <span className="font-medium text-[#101828] capitalize">{projectRole}</span>
-          </p>
+      <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/40 p-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background shadow-sm">
+            <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground">Status</p>
+            <p className={cn('text-sm font-medium', statusToneById[task.status] || 'text-foreground')}>
+              {currentStage?.label || task.status}
+            </p>
+          </div>
         </div>
 
-        {canReviewAndMoveStage && (
-          <div className="mt-4 rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[#6A7282]">Review & Stage Control</p>
-            <div className="flex flex-wrap gap-2">
-              {workflowStages.map((stage) => (
-                <button
-                  key={stage.id}
-                  disabled={updatingStage || task.status === stage.id}
-                  onClick={() => updateStage(stage.id)}
-                  className={cn(
-                    'rounded-[8px] border px-3 py-1.5 text-xs transition-colors',
-                    task.status === stage.id
-                      ? 'border-[#155DFC] bg-[#EFF6FF] text-[#155DFC]'
-                      : 'border-[#D1D5DC] bg-white text-[#364153] hover:bg-gray-50',
-                    (updatingStage || task.status === stage.id) && 'cursor-not-allowed opacity-70'
-                  )}
-                >
-                  {stage.label}
-                </button>
-              ))}
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background shadow-sm">
+            <User className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground">Assignee</p>
+            <p className="text-sm font-medium">{task.assigneeName || 'Unassigned'}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background shadow-sm">
+            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground">Due Date</p>
+            <p className="text-sm font-medium">{dueDateLabel}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background shadow-sm">
+            <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+          </div>
+          <div>
+            <p className="text-[11px] text-muted-foreground">Role</p>
+            <p className="text-sm font-medium capitalize">{projectRole}</p>
+          </div>
+        </div>
+      </div>
+
+      {canReviewAndMoveStage ? (
+        <div className="space-y-2.5">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Review & Stage Control
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {workflowStages.map((stage) => (
+              <button
+                key={stage.id}
+                disabled={updatingStage || task.status === stage.id}
+                onClick={() => updateStage(stage.id)}
+                className={cn(
+                  'h-8 rounded-md border px-3 text-xs transition-all',
+                  task.status === stage.id
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'border-border bg-background hover:bg-muted',
+                  (updatingStage || task.status === stage.id) && 'cursor-not-allowed opacity-70'
+                )}
+              >
+                {stage.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Only Admin/Owner can review and move stage.</p>
+      )}
+
+      {(task.tags.length > 0 || task.linkedUrl) && <div className="h-px bg-border" />}
+
+      {task.tags.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {task.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-[#F3F4F6] px-2.5 py-1 text-xs text-[#4A5565]">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {task.linkedUrl && (
+        <a href={task.linkedUrl} target="_blank" rel="noreferrer" className="inline-flex text-sm text-[#155DFC] hover:underline">
+          Linked Drawing / Model
+        </a>
+      )}
+
+      <div className="h-px bg-border" />
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">Comments</h3>
+          {comments.length > 0 && (
+            <span className="ml-auto inline-flex h-5 items-center rounded bg-muted px-1.5 text-[10px]">{comments.length}</span>
+          )}
+        </div>
+
+        <div className="flex gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+            Y
+          </div>
+          <div className="flex flex-1 flex-col gap-2">
+            <textarea
+              placeholder="Write a comment..."
+              value={commentInput}
+              onChange={(e) => setCommentInput(e.target.value)}
+              className="min-h-[70px] resize-none rounded-md border border-muted bg-muted/30 px-3 py-2 text-sm focus:bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  submitComment();
+                }
+              }}
+            />
+            <div className="flex justify-end">
+              <button
+                onClick={submitComment}
+                disabled={!commentInput.trim()}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-xs text-background disabled:opacity-50"
+              >
+                <Send className="h-3 w-3" />
+                Post
+              </button>
             </div>
           </div>
-        )}
+        </div>
 
-        {!canReviewAndMoveStage && (
-          <p className="mt-4 text-xs text-[#6A7282]">
-            You can view and comment on this task. Only Admin/Owner can review and move stage.
-          </p>
-        )}
-
-        {task.tags.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {task.tags.map((tag) => (
-              <span key={tag} className="rounded-full bg-[#F3F4F6] px-2.5 py-1 text-xs text-[#4A5565]">
-                {tag}
-              </span>
+        {comments.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-6 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+              <MessageSquare className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">No comments yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-3 pt-1">
+            {comments.map((comment) => (
+              <div key={comment.id} className="flex gap-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+                  {String(comment.author || 'U').charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{comment.author}</span>
+                    <span className="text-[11px] text-muted-foreground">{toDisplayTime(comment.createdAt)}</span>
+                  </div>
+                  <p className="text-sm text-foreground/80">{comment.content}</p>
+                </div>
+              </div>
             ))}
           </div>
         )}
-
-        {task.linkedUrl && (
-          <a
-            href={task.linkedUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 inline-flex text-sm text-[#155DFC] hover:underline"
-          >
-            Linked Drawing / Model
-          </a>
-        )}
-      </div>
-
-      <div className="rounded-xl border border-[#E5E7EB] bg-white p-5">
-        <h2 className="text-[16px] font-medium text-[#101828]">Comments</h2>
-
-        <div className="mt-4 flex gap-2">
-          <input
-            value={commentInput}
-            onChange={(e) => setCommentInput(e.target.value)}
-            placeholder="Write a comment..."
-            className="h-10 flex-1 rounded-[10px] border border-[#E5E7EB] px-3 text-sm focus:border-[#2B7FFF] focus:outline-none"
-          />
-          <button onClick={submitComment} className="rounded-[10px] bg-[#155DFC] px-4 text-sm text-white hover:bg-blue-700">
-            Post
-          </button>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {comments.length === 0 ? (
-            <p className="text-sm text-[#6A7282]">No comments yet.</p>
-          ) : (
-            comments.map((c) => (
-              <div key={c.id} className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-[#101828]">{c.author}</p>
-                  <p className="text-xs text-[#6A7282]">{new Date(c.createdAt).toLocaleString()}</p>
-                </div>
-                <p className="mt-1 text-sm text-[#4A5565]">{c.content}</p>
-              </div>
-            ))
-          )}
-        </div>
       </div>
     </div>
   );

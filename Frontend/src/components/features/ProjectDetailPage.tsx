@@ -16,9 +16,9 @@ import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import TaskDetailPage from './TaskDetailPage';
 import {
-  AlertDialog,
-  AlertDialogContent,
-} from '@/components/ui/alert-dialog';
+  Dialog,
+  DialogContent,
+} from '@/components/ui/dialog';
 
 
 interface ProjectDetailPageProps {
@@ -498,6 +498,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [tasksData, setTasksData] = useState<Task[]>([]);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
+  const [projectTaskTags, setProjectTaskTags] = useState<string[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Get current folder based on path
@@ -644,6 +645,35 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
     () => tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase())),
     [tasksData, tasksSearchQuery]
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProjectTaskTags = async () => {
+      try {
+        const res = await apiFetch('/api/projects/workflow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: project.publicId }),
+        });
+
+        if (!res.ok) return;
+
+        const payload = await res.json();
+        const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
+        if (!cancelled) {
+          setProjectTaskTags(tags.map((t: any) => String(t?.name || '').toLowerCase()).filter(Boolean));
+        }
+      } catch {
+        // keep empty => CreateTaskModal fallback handles it
+      }
+    };
+
+    loadProjectTaskTags();
+    return () => {
+      cancelled = true;
+    };
+  }, [project.publicId]);
 
   // Mock extended data
   const projectStats = {
@@ -1377,7 +1407,11 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                           {columnTasks.map((task) => {
                             const assignee = teamMembers.find(m => m.id === task.assigneeId);
                             return (
-                              <div key={task.id} className="bg-white rounded-[10px] border border-[#E5E7EB] p-3 hover:shadow-sm transition-shadow cursor-pointer">
+                              <div
+                                key={task.id}
+                                onClick={() => setSelectedTaskId(task.id)}
+                                className="bg-white rounded-[10px] border border-[#E5E7EB] p-3 hover:shadow-sm transition-shadow cursor-pointer"
+                              >
                                 {/* Priority badge */}
                                 <span className={cn(
                                   "inline-flex items-center rounded px-2 py-0.5 text-[12px] mb-2",
@@ -1392,7 +1426,10 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
                                 {/* Title */}
                                 <button
                                   type="button"
-                                  onClick={() => setSelectedTaskId(task.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedTaskId(task.id);
+                                  }}
                                   className="text-left text-[14px] font-normal text-[#101828] mb-2 block hover:text-[#155DFC] hover:underline"
                                 >
                                   {task.title}
@@ -2476,7 +2513,12 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
         {/* Settings Tab */}
         {activeTab === 'settings' && (
-          <SettingsTab projectName={project.name} projectCode={project.publicId} projectDescription={project.description} />
+          <SettingsTab
+            projectName={project.name}
+            projectCode={project.publicId}
+            projectDescription={project.description}
+            projectPublicId={project.publicId}
+          />
         )}
   
         {/* Other Tabs - Placeholder (only for tabs without content yet) */}
@@ -2493,19 +2535,20 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
         )}
 
         {/* Task Detail Dialog */}
-        <AlertDialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
-          <AlertDialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
+        <Dialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
+          <DialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
             {selectedTaskId && (
               <TaskDetailPage projectPublicId={project.publicId} taskId={selectedTaskId} />
             )}
-          </AlertDialogContent>
-        </AlertDialog>
+          </DialogContent>
+        </Dialog>
 
         {/* Create Task Modal */}
         <CreateTaskModal
           isOpen={isNewTaskModalOpen}
           onClose={() => setIsNewTaskModalOpen(false)}
           assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
+          tagOptions={projectTaskTags}
           onSubmit={async (task) => {
             try {
               const response = await apiFetch('/api/tasks/create', {

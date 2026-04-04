@@ -1,10 +1,11 @@
 'use client';
 // Settings Tab v1.0.72
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-client';
+import { toast } from '@/components/ui/sonner';
 import { Settings, FileText, ListTodo, GitBranch, Shield, Users, Bell, Plug, Plus, Pencil, X, Trash2, GripVertical, Eye, EyeOff, LayoutGrid, FolderOpen, FileText as FileDoc, GitCompare, RefreshCcw, AlertTriangle, Puzzle, Save, Tag, Lock, Check, Mail, MessageSquare, Clock, Zap, Link2, Calendar, FileUp, Box, Globe, Scissors, Database, BookOpen, BarChart3, Folder, Code, Loader2, Upload, ChevronRight, CheckCircle2, UserPlus, Copy, Key, Circle } from 'lucide-react';
-import CreateTaskModal from './CreateTaskModal';
 
 // Project Templates data
 interface ProjectTemplate {
@@ -244,6 +245,7 @@ interface SettingsTabProps {
   projectName?: string;
   projectCode?: string;
   projectDescription?: string;
+  projectPublicId?: string;
 }
 
 const settingsMenuItems = [
@@ -268,7 +270,8 @@ const defaultDisciplines: Discipline[] = [
 export default function SettingsTab({ 
   projectName = 'Metro Station - Phase 2',
   projectCode = 'MS-P2-2025',
-  projectDescription = ''
+  projectDescription = '',
+  projectPublicId = ''
 }: SettingsTabProps) {
   const [activeMenu, setActiveMenu] = useState('general');
   const [name, setName] = useState(projectName);
@@ -277,6 +280,7 @@ export default function SettingsTab({
   const [disciplines, setDisciplines] = useState<Discipline[]>(defaultDisciplines);
   const [navigationPages, setNavigationPages] = useState<NavigationPage[]>(defaultNavigationPages);
   const [taskTags, setTaskTags] = useState<TaskTag[]>(defaultTaskTags);
+  const [isLoadingTaskTags, setIsLoadingTaskTags] = useState(false);
   const [roles, setRoles] = useState<Role[]>(defaultRoles);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>(defaultTeamMembers);
   const [selectedRole, setSelectedRole] = useState('Admin');
@@ -330,10 +334,11 @@ export default function SettingsTab({
   const [showEditPageModal, setShowEditPageModal] = useState(false);
   const [editingPage, setEditingPage] = useState<NavigationPage | null>(null);
   
-  // Task Modal state
-  const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTag, setEditingTag] = useState<TaskTag | null>(null);
   const [showEditTagModal, setShowEditTagModal] = useState(false);
+  const [editTagName, setEditTagName] = useState('');
+  const [editTagDescription, setEditTagDescription] = useState('');
+  const [editTagColor, setEditTagColor] = useState('#6366F1');
   
   // Workflow state
   const [selectedWorkflow, setSelectedWorkflow] = useState('construction');
@@ -395,6 +400,7 @@ export default function SettingsTab({
   const [newTagName, setNewTagName] = useState('');
   const [newTagDescription, setNewTagDescription] = useState('');
   const [newTagColor, setNewTagColor] = useState('#6366F1');
+  const [isSavingTag, setIsSavingTag] = useState(false);
   
   // API Key state
   const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
@@ -504,19 +510,125 @@ export default function SettingsTab({
   // Handle Edit Tag
   const handleEditTag = (tag: TaskTag) => {
     setEditingTag(tag);
+    setEditTagName(tag.name);
+    setEditTagDescription(tag.description);
+    setEditTagColor(tag.color);
     setShowEditTagModal(true);
   };
   
-  const handleSaveEditedTag = () => {
-    if (editingTag) {
-      // Save the tag (for now just close the modal)
-      setShowEditTagModal(false);
-      setEditingTag(null);
+  const handleSaveEditedTag = async () => {
+    if (!editingTag || !editTagName.trim()) return;
+
+    const previous = taskTags;
+    const next = taskTags.map((tag) =>
+      tag.id === editingTag.id
+        ? {
+            ...tag,
+            name: editTagName.trim().toLowerCase(),
+            description: editTagDescription.trim(),
+            color: editTagColor,
+          }
+        : tag
+    );
+
+    setTaskTags(next);
+
+    try {
+      const ok = await persistTaskTags(next);
+      if (!ok) {
+        setTaskTags(previous);
+        toast.error('Failed to update tag');
+        return;
+      }
+    } catch {
+      setTaskTags(previous);
+      toast.error('Failed to update tag');
+      return;
     }
+
+    setShowEditTagModal(false);
+    setEditingTag(null);
+    setEditTagName('');
+    setEditTagDescription('');
+    setEditTagColor('#6366F1');
   };
 
-  const handleDeleteTag = (id: string) => {
-    setTaskTags(taskTags.filter(t => t.id !== id));
+  const persistTaskTags = async (nextTags: TaskTag[]) => {
+    if (!projectPublicId) return true;
+
+    const response = await apiFetch('/api/projects/workflow/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        projectId: projectPublicId,
+        taskTags: nextTags.map((t) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          color: t.color,
+        })),
+      }),
+    });
+
+    return response.ok;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTaskTags = async () => {
+      if (!projectPublicId) return;
+
+      setIsLoadingTaskTags(true);
+      try {
+        const response = await apiFetch('/api/projects/workflow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: projectPublicId }),
+        });
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
+        if (!cancelled && tags.length > 0) {
+          setTaskTags(
+            tags.map((t: any) => ({
+              id: String(t.id || Date.now()),
+              name: String(t.name || '').toLowerCase(),
+              description: String(t.description || ''),
+              color: String(t.color || '#6366F1'),
+            }))
+          );
+        }
+      } catch {
+        // keep default tags
+      } finally {
+        if (!cancelled) setIsLoadingTaskTags(false);
+      }
+    };
+
+    loadTaskTags();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPublicId]);
+
+  const handleDeleteTag = async (id: string) => {
+    const previous = taskTags;
+    const next = taskTags.filter((t) => t.id !== id);
+    setTaskTags(next);
+
+    try {
+      const ok = await persistTaskTags(next);
+      if (!ok) {
+        setTaskTags(previous);
+        toast.error('Failed to delete tag');
+      }
+    } catch {
+      setTaskTags(previous);
+      toast.error('Failed to delete tag');
+    }
   };
 
   const handleDeleteRole = (id: string) => {
@@ -2239,7 +2351,8 @@ export default function SettingsTab({
               <label className="block text-[14px] font-medium text-[#374151] mb-2">Tag Name</label>
               <input
                 type="text"
-                defaultValue={editingTag.name}
+                value={editTagName}
+                onChange={(e) => setEditTagName(e.target.value)}
                 placeholder="e.g., urgent, review"
                 className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#9CA3AF] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
               />
@@ -2249,7 +2362,8 @@ export default function SettingsTab({
             <div className="mb-5">
               <label className="block text-[14px] font-medium text-[#374151] mb-2">Description</label>
               <textarea
-                defaultValue={editingTag.description}
+                value={editTagDescription}
+                onChange={(e) => setEditTagDescription(e.target.value)}
                 placeholder="Brief description of this tag..."
                 rows={3}
                 className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#9CA3AF] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
@@ -2260,13 +2374,20 @@ export default function SettingsTab({
             <div className="mb-2">
               <label className="block text-[14px] font-medium text-[#374151] mb-2">Color</label>
               <div className="flex items-center gap-3">
-                <div 
+                <div
                   className="h-12 w-16 rounded-[10px] border border-[#E5E7EB]"
-                  style={{ backgroundColor: editingTag.color }}
+                  style={{ backgroundColor: editTagColor }}
+                />
+                <input
+                  type="color"
+                  value={editTagColor}
+                  onChange={(e) => setEditTagColor(e.target.value)}
+                  className="h-12 w-16 rounded-[10px] border border-[#E5E7EB] cursor-pointer"
                 />
                 <input
                   type="text"
-                  defaultValue={editingTag.color}
+                  value={editTagColor}
+                  onChange={(e) => setEditTagColor(e.target.value)}
                   className="flex-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
                 />
               </div>
@@ -2276,7 +2397,13 @@ export default function SettingsTab({
           {/* Modal Footer */}
           <div className="flex items-center gap-3 p-6 pt-2">
             <button
-              onClick={() => { setShowEditTagModal(false); setEditingTag(null); }}
+              onClick={() => {
+                setShowEditTagModal(false);
+                setEditingTag(null);
+                setEditTagName('');
+                setEditTagDescription('');
+                setEditTagColor('#6366F1');
+              }}
               className="flex-1 h-11 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -2292,15 +2419,6 @@ export default function SettingsTab({
       </div>
     )}
     
-    {/* Create Task Modal */}
-    <CreateTaskModal 
-      isOpen={showTaskModal} 
-      onClose={() => setShowTaskModal(false)}
-      onSubmit={(task) => {
-        console.log('New task created:', task);
-        setShowTaskModal(false);
-      }}
-    />
     
     {/* Invite Team Member Modal */}
     {showInviteModal && (
@@ -2482,20 +2600,37 @@ export default function SettingsTab({
               Cancel
             </button>
             <button
-              onClick={() => {
-                if (newTagName.trim()) {
-                  const newTag: TaskTag = {
-                    id: Date.now().toString(),
-                    name: newTagName.trim().toLowerCase(),
-                    description: newTagDescription.trim(),
-                    color: newTagColor
-                  };
-                  setTaskTags([...taskTags, newTag]);
-                  setShowAddTagModal(false);
-                  setNewTagName('');
-                  setNewTagDescription('');
-                  setNewTagColor('#6366F1');
+              onClick={async () => {
+                if (!newTagName.trim()) return;
+
+                const newTag: TaskTag = {
+                  id: Date.now().toString(),
+                  name: newTagName.trim().toLowerCase(),
+                  description: newTagDescription.trim(),
+                  color: newTagColor,
+                };
+
+                const previous = taskTags;
+                const next = [...taskTags, newTag];
+                setTaskTags(next);
+
+                try {
+                  const ok = await persistTaskTags(next);
+                  if (!ok) {
+                    setTaskTags(previous);
+                    toast.error('Failed to add tag');
+                    return;
+                  }
+                } catch {
+                  setTaskTags(previous);
+                  toast.error('Failed to add tag');
+                  return;
                 }
+
+                setShowAddTagModal(false);
+                setNewTagName('');
+                setNewTagDescription('');
+                setNewTagColor('#6366F1');
               }}
               className="flex-1 h-11 rounded-[10px] bg-[#818CF8] text-[14px] font-medium text-white hover:bg-[#6366F1] transition-colors"
             >

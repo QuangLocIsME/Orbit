@@ -36,6 +36,21 @@ const ProjectSchema = new mongoose.Schema({
             notifyOnStatusChange: { type: Boolean, default: true },
             requireApprovalForCompletion: { type: Boolean, default: false },
         },
+        taskTags: {
+            type: [
+                {
+                    id: { type: String, required: true },
+                    name: { type: String, required: true },
+                    description: { type: String, default: '' },
+                    color: { type: String, default: '#6366F1' },
+                },
+            ],
+            default: [
+                { id: '1', name: 'structural', description: 'Structural engineering tasks', color: '#6366F1' },
+                { id: '2', name: 'mep', description: 'MEP related tasks', color: '#3B82F6' },
+                { id: '3', name: 'architecture', description: 'Architectural design tasks', color: '#10B981' },
+            ],
+        },
     },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },

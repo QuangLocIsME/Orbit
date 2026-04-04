@@ -582,10 +582,11 @@ class ProjectController {
                 notifyOnStatusChange: true,
                 requireApprovalForCompletion: false,
             };
+            const taskTags = Array.isArray(project.workflow?.taskTags) ? project.workflow.taskTags : [];
 
             return res.status(200).json({
                 success: true,
-                data: { template, stages, settings },
+                data: { template, stages, settings, taskTags },
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load workflow');
@@ -595,7 +596,7 @@ class ProjectController {
     async updateWorkflow(req, res) {
         try {
             const normalizedProjectId = getNormalizedProjectId(req);
-            const { template, stages, settings } = req.body || {};
+            const { template, stages, settings, taskTags } = req.body || {};
             if (!normalizedProjectId) {
                 return badRequest(res, 'Missing projectId');
             }
@@ -628,6 +629,25 @@ class ProjectController {
                 requireApprovalForCompletion: Boolean(settings?.requireApprovalForCompletion),
             };
 
+            const normalizedTaskTags = Array.isArray(taskTags)
+                ? taskTags
+                    .map((t) => {
+                        const id = normalizeString(t?.id) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                        const name = normalizeString(t?.name);
+                        if (!name) return null;
+                        return {
+                            id,
+                            name,
+                            description: normalizeString(t?.description) || '',
+                            color: normalizeString(t?.color) || '#6366F1',
+                        };
+                    })
+                    .filter(Boolean)
+                : null;
+
+            const existingProject = await Project.findOne({ publicId: normalizedProjectId }).select('workflow');
+            if (!existingProject) return notFound(res, 'Project not found');
+
             const project = await Project.findOneAndUpdate(
                 { publicId: normalizedProjectId },
                 {
@@ -635,6 +655,7 @@ class ProjectController {
                         template: nextTemplate,
                         stages: nextStages,
                         settings: nextSettings,
+                        taskTags: normalizedTaskTags || existingProject?.workflow?.taskTags || [],
                     },
                     updatedAt: new Date(),
                 },
