@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState, type PointerEventHandler, type WheelEventHandler } from 'react';
 import { cn } from '@/lib/utils';
-import type { Clash, ViewerInteractionState } from '@/data/clashes';
-import { useObjectInteraction } from '@/hooks/useObjectInteraction';
-import type { ViewerAdapter } from '../../lib/viewerAdapter';
+import type { Clash, ViewerInteractionState } from '../types/clashes';
+import { useObjectInteraction } from '../hooks/useObjectInteraction';
+import type { SceneObject } from '../lib/clashScene';
+import type { ViewerAdapter } from '../lib/viewerAdapter';
 
 interface Viewer3DProps {
   clash: Clash | null;
@@ -12,6 +13,11 @@ interface Viewer3DProps {
   onSelectObject: (objectId: string) => void;
   onFocusClash?: (clash: Clash) => void;
   onCollisionChange?: (isColliding: boolean, message: string | null) => void;
+  hiddenObjectIds?: string[];
+  /** When there is no clash: overview scene from federated model (bbox). `undefined` disables overview. */
+  overviewScene?: SceneObject[] | null;
+  /** When false, objects cannot be dragged; use zoom / orbit / pan only. Default true. */
+  allowObjectMove?: boolean;
   /**
    * Optional ViewerAdapter. Khi được truyền vào, viewer sẽ delegate
    * highlightObjects / focusObject sang adapter.
@@ -28,6 +34,9 @@ export default function Viewer3D({
   onSelectObject,
   onFocusClash,
   onCollisionChange,
+  hiddenObjectIds = [],
+  overviewScene,
+  allowObjectMove = true,
   adapter,
 }: Viewer3DProps) {
   const [interaction, setInteraction] = useState<ViewerInteractionState>({
@@ -51,11 +60,18 @@ export default function Viewer3D({
     beginDrag,
     updateDrag,
     endDrag,
-  } = useObjectInteraction(clash, selectedObjectId);
+  } = useObjectInteraction(clash, selectedObjectId, {
+    overviewScene: !clash ? overviewScene ?? undefined : undefined,
+    allowObjectDrag: allowObjectMove,
+  });
+
+  const modelOverview = Boolean(!clash && overviewScene !== undefined);
 
   useEffect(() => {
     onCollisionChange?.(hasCollision, collisionMessage);
   }, [collisionMessage, hasCollision, onCollisionChange]);
+
+  const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
 
   // Notify adapter when selection changes (forward-compatible with XeoKit)
   useEffect(() => {
@@ -75,8 +91,10 @@ export default function Viewer3D({
     const objectId = (event.target as HTMLElement).closest<HTMLElement>('[data-object-id]')?.dataset.objectId;
     if (objectId) {
       event.preventDefault();
-      beginDrag(objectId, event.clientX, event.clientY);
-      event.currentTarget.setPointerCapture(event.pointerId);
+      if (!modelOverview && allowObjectMove) {
+        beginDrag(objectId, event.clientX, event.clientY);
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
       onSelectObject(objectId);
       return;
     }
@@ -95,7 +113,7 @@ export default function Viewer3D({
   };
 
   const handlePointerMove: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (draggingObjectId) {
+    if (allowObjectMove && draggingObjectId) {
       updateDrag(event.clientX, event.clientY);
       return;
     }
@@ -124,7 +142,7 @@ export default function Viewer3D({
   };
 
   const stopDragging: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (draggingObjectId) {
+    if (allowObjectMove && draggingObjectId) {
       endDrag();
     }
 
@@ -137,6 +155,77 @@ export default function Viewer3D({
   };
 
   if (!clash) {
+    if (modelOverview && overviewScene!.length === 0) {
+      return (
+        <div className="relative flex min-h-0 flex-1 items-center justify-center p-6 text-center text-slate-400">
+          <p className="max-w-sm text-sm">
+            No elements to show (hidden by model/category filters or missing bounding boxes).
+          </p>
+        </div>
+      );
+    }
+    if (modelOverview && overviewScene!.length > 0) {
+      return (
+        <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 text-white md:p-3">
+          <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-2 border-b border-slate-700/60 pb-2">
+            <p className="text-[11px] font-medium text-slate-200">3D overview</p>
+            <p className="max-w-[min(100%,28rem)] truncate text-[10px] text-slate-500" title="Orbit / pan; click to select.">
+              Orbit · pan · click to select · {visibleObjects.length} elements
+            </p>
+          </div>
+          <div
+            onContextMenu={(event) => event.preventDefault()}
+            onWheel={handleWheel}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={stopDragging}
+            onPointerCancel={stopDragging}
+            className="relative min-h-[200px] flex-1 overflow-hidden rounded-lg border border-[#4A5565] bg-[#111827]"
+          >
+            <div
+              className="absolute inset-0 transition-transform duration-75"
+              style={{
+                transform: `translate(${interaction.offset.x}px, ${interaction.offset.y}px) scale(${interaction.scale}) perspective(1200px) rotateX(12deg) rotateY(${interaction.orbitAngle}deg)`,
+                transformOrigin: 'center center',
+              }}
+            >
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.12),transparent_55%)]" />
+              {visibleObjects.map((object) => {
+                const left = `calc(50% + ${object.position.x}px - ${object.size.width / 2}px)`;
+                const top = `calc(50% + ${object.position.z}px - ${object.size.depth / 2}px)`;
+                return (
+                  <button
+                    key={object.id}
+                    type="button"
+                    data-object-id={object.id}
+                    onClick={() => {
+                      selectObject(object.id);
+                      onSelectObject(object.id);
+                    }}
+                    className={cn(
+                      'absolute rounded-xl border border-slate-500/80 bg-slate-800/70 shadow-lg transition-all duration-150',
+                      object.isSelected ? 'ring-2 ring-sky-400/80' : '',
+                      'cursor-default'
+                    )}
+                    style={{
+                      left,
+                      top,
+                      width: `${object.size.width}px`,
+                      height: `${object.size.depth}px`,
+                      transform: 'rotate(2deg)',
+                    }}
+                  >
+                    <span className="absolute left-2 top-2 max-w-[calc(100%-12px)] truncate rounded bg-slate-950/90 px-2 py-1 text-[10px] font-medium text-slate-200">
+                      {object.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="relative flex min-h-0 flex-1 items-center justify-center p-6 text-center text-slate-400">
         <div>
@@ -152,20 +241,23 @@ export default function Viewer3D({
   }
 
   return (
-    <div className="relative flex flex-1 flex-col gap-4 p-4 text-white md:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">3D Clash Preview</p>
-          <h4 className="mt-2 text-base font-medium">{clash.title}</h4>
-          <p className="mt-2 text-sm text-slate-300">Left drag empty space to orbit, middle/right drag to pan, drag object cards to move on the X/Z plane.</p>
+    <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 text-white md:p-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-700/60 pb-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[12px] font-medium text-slate-100">{clash.title}</p>
+          <p className="mt-0.5 text-[10px] text-slate-500">
+            {allowObjectMove
+              ? 'Drag objects · orbit (LMB empty) · pan (MMB/RMB)'
+              : 'Wheel zoom · orbit (LMB empty) · pan (MMB/RMB) · click objects'}
+          </p>
         </div>
         <div
           className={cn(
-            'rounded-lg border px-3 py-2 text-xs',
-            hasCollision ? 'border-red-400/60 bg-red-500/10 text-red-100' : 'border-slate-700 text-slate-200'
+            'shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-medium',
+            hasCollision ? 'border-red-400/60 bg-red-500/10 text-red-100' : 'border-slate-600 text-slate-300'
           )}
         >
-          {hasCollision ? 'Collision detected' : clash.resolved ? 'Resolved clash' : 'Active clash'}
+          {hasCollision ? 'Collision' : clash.resolved ? 'Resolved' : 'Active'}
         </div>
       </div>
 
@@ -177,7 +269,7 @@ export default function Viewer3D({
         onPointerUp={stopDragging}
         onPointerCancel={stopDragging}
         onDoubleClick={() => onFocusClash?.(clash)}
-        className="relative mx-auto h-[360px] w-full max-w-3xl shrink-0 overflow-hidden rounded-xl border border-[#4A5565] bg-[#111827]"
+        className="relative min-h-[220px] flex-1 overflow-hidden rounded-lg border border-[#4A5565] bg-[#111827]"
       >
         <div
           className="absolute inset-0 transition-transform duration-75"
@@ -187,7 +279,7 @@ export default function Viewer3D({
           }}
         >
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.18),transparent_55%)]" />
-          {draggingObjectId && dragPreviewPosition && (
+          {allowObjectMove && draggingObjectId && dragPreviewPosition && (
             <div
               className={cn(
                 'pointer-events-none absolute rounded-xl border-2 border-dashed transition-all duration-75',
@@ -204,7 +296,7 @@ export default function Viewer3D({
               }}
             />
           )}
-          {draggingObjectId && lastValidPosition && (
+          {allowObjectMove && draggingObjectId && lastValidPosition && (
             <div
               className="pointer-events-none absolute rounded-full border border-emerald-300/80 bg-emerald-400/15 px-2 py-1 text-[10px] font-medium text-emerald-200 shadow-[0_0_18px_rgba(52,211,153,0.35)]"
               style={{
@@ -215,7 +307,7 @@ export default function Viewer3D({
               Snap back
             </div>
           )}
-          {objects.map((object) => {
+          {visibleObjects.map((object) => {
             const left = `calc(50% + ${object.position.x}px - ${object.size.width / 2}px)`;
             const top = `calc(50% + ${object.position.z}px - ${object.size.depth / 2}px)`;
             const isPrimary = object.id === clash.objectA;
@@ -237,9 +329,9 @@ export default function Viewer3D({
                   object.isColliding
                     ? 'border-red-400 bg-red-500/20 shadow-red-900/50'
                     : isPrimary
-                      ? 'border-sky-400/60 bg-sky-500/10 shadow-sky-900/30'
+                      ? 'border-rose-400/60 bg-rose-500/10 shadow-rose-900/30'
                       : 'border-emerald-400/50 bg-emerald-500/10 shadow-emerald-900/30',
-                  draggingObjectId === object.id ? 'cursor-grabbing' : 'cursor-grab'
+                  allowObjectMove ? (draggingObjectId === object.id ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
                 )}
                 style={{
                   left,
@@ -255,7 +347,7 @@ export default function Viewer3D({
                     object.isColliding
                       ? 'bg-slate-950/90 text-red-200'
                       : isPrimary
-                        ? 'bg-slate-950/80 text-sky-200'
+                        ? 'bg-slate-950/80 text-rose-200'
                         : 'bg-slate-950/80 text-emerald-200'
                   )}
                 >
@@ -276,48 +368,52 @@ export default function Viewer3D({
           <div className="absolute left-1/2 top-[46%] -translate-x-1/2 rounded bg-slate-900/90 px-2 py-1 text-[10px] font-medium text-cyan-200 shadow-lg">
             {clash.distance ?? '0.00 m'}
           </div>
-          <div className={cn('absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-3 py-1 text-xs font-medium text-white shadow-lg', hasCollision ? 'bg-[#DC2626]' : 'bg-[#155DFC]')}>
-            {hasCollision ? 'Invalid position' : 'Highlight'}
+          <div
+            className={cn(
+              'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-3 py-1 text-xs font-medium text-white shadow-lg',
+              allowObjectMove && hasCollision ? 'bg-[#DC2626]' : 'bg-[#155DFC]'
+            )}
+          >
+            {allowObjectMove && hasCollision ? 'Invalid position' : 'Clash'}
           </div>
         </div>
       </div>
 
-      {collisionMessage && (
-        <div className="rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-sm text-red-100">
-          {collisionMessage}
-        </div>
-      )}
-      {draggingObjectId && !collisionMessage && (
-        <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
-          Ghost preview shows the current drop target. Snap indicator marks the last valid placement.
+      {allowObjectMove && (collisionMessage || (draggingObjectId && !collisionMessage)) && (
+        <div
+          className={cn(
+            'shrink-0 rounded-md border px-2 py-1.5 text-[11px] leading-snug',
+            collisionMessage
+              ? 'border-red-400/35 bg-red-500/10 text-red-100'
+              : 'border-cyan-400/25 bg-cyan-500/10 text-cyan-100/90'
+          )}
+        >
+          {collisionMessage ?? 'Ghost preview · green marker = last valid position'}
         </div>
       )}
 
-      <div className="grid gap-3 text-sm md:grid-cols-2">
-        <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
-          <p className="text-xs text-slate-400">Entity IDs</p>
-          <p className="mt-1 font-medium">{clash.objectA}</p>
-          <p className="text-slate-400">{clash.objectB}</p>
-        </div>
-        <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
-          <p className="text-xs text-slate-400">Camera Target</p>
-          <p className="mt-1 font-medium">{clash.location}</p>
-          <p className="text-slate-400">Orbit {interaction.orbitAngle.toFixed(0)}deg</p>
-        </div>
-        <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
-          <p className="text-xs text-slate-400">Viewport</p>
-          <p className="mt-1 font-medium">x {interaction.scale.toFixed(2)}</p>
-          <p className="text-slate-400">{interaction.offset.x}px, {interaction.offset.y}px</p>
-          <p className="mt-1 text-xs text-slate-500">Resize only affects layout. Object world positions stay fixed.</p>
-        </div>
-        <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
-          <p className="text-xs text-slate-400">Interaction State</p>
-          <p className="mt-1 font-medium">{draggingObjectId ? `Dragging ${draggingObjectId}` : 'Idle'}</p>
-          <p className="text-slate-400">{hasCollision ? 'Collision is blocking resolve.' : 'Placement is valid.'}</p>
-          {lastValidPosition && (
-            <p className="mt-1 text-xs text-slate-500">
-              Last valid: X {lastValidPosition.x.toFixed(0)}, Z {lastValidPosition.z.toFixed(0)}
-            </p>
+      <div className="shrink-0 border-t border-slate-700/60 pt-2">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] leading-tight text-slate-500">
+          <span className="max-w-[min(100%,14rem)] truncate font-mono text-slate-400" title={clash.objectA}>
+            A <span className="text-slate-300">{clash.objectA}</span>
+          </span>
+          <span className="max-w-[min(100%,14rem)] truncate font-mono text-slate-400" title={clash.objectB}>
+            B <span className="text-slate-300">{clash.objectB}</span>
+          </span>
+          <span className="max-w-[min(100%,12rem)] truncate" title={clash.location}>
+            Loc <span className="text-slate-400">{clash.location}</span>
+          </span>
+          <span>
+            View ×{interaction.scale.toFixed(2)} · orbit {interaction.orbitAngle.toFixed(0)}°
+          </span>
+          {allowObjectMove && (
+            <span>
+              {draggingObjectId ? `Drag ${draggingObjectId.slice(0, 12)}…` : 'Idle'}
+              {hasCollision ? ' · blocked' : ' · OK'}
+              {lastValidPosition
+                ? ` · snap ${lastValidPosition.x.toFixed(0)},${lastValidPosition.z.toFixed(0)}`
+                : ''}
+            </span>
           )}
         </div>
       </div>

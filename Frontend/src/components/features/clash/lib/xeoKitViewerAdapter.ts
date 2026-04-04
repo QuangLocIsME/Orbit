@@ -6,7 +6,7 @@
  *
  * Cách dùng (sau khi xeokit viewer xong):
  * ```ts
- * import { XeoKitViewerAdapter } from '@/lib/xeoKitViewerAdapter';
+ * import { XeoKitViewerAdapter } from '@/components/features/clash/lib/xeoKitViewerAdapter';
  *
  * // Trong component, sau khi xeokit Viewer instance được khởi tạo:
  * const adapter = new XeoKitViewerAdapter(viewer);
@@ -25,7 +25,7 @@ import type {
   UnsubscribeFn,
   Vec3,
   ViewerAdapter,
-} from '../../lib/viewerAdapter';
+} from './viewerAdapter';
 
 /**
  * XeoKit Viewer type — sẽ import từ @xeokit/xeokit-sdk khi tích hợp thật.

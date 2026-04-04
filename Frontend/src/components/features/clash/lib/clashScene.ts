@@ -1,9 +1,19 @@
 'use client';
 
-import type { BBox, Clash, ViewerObjectState } from '@/data/clashes';
+import type { BBox, Clash, ViewerObjectState } from '../types/clashes';
+
+/** Minimal shape for building an overview scene from federated IFC objects */
+export type FederatedOverviewObject = {
+  id: string;
+  type: string;
+  category: string;
+  boundingBox: BBox;
+  sourceModel: string;
+  hidden?: boolean;
+};
 
 export const WORLD_LIMIT = 220;
-/** Scale từ meter (IFC world unit) sang viewer world unit */
+/** Scale from meters (IFC world units) to viewer world units */
 export const WORLD_SCALE = 30;
 /** Alias for backward compat with useObjectInteraction */
 export const PIXELS_TO_WORLD = WORLD_SCALE;
@@ -17,7 +27,7 @@ export type SceneObject = {
   label: string;
   position: ScenePosition;
   size: SceneSize;
-  /** Tọa độ gốc trong IFC world (meters) */
+  /** Origin position in IFC world space (meters) */
   worldPosition?: [number, number, number];
 };
 
@@ -40,8 +50,8 @@ const bboxSize = (bbox: BBox): SceneSize => ({
 });
 
 /**
- * Chuyển world coordinates (meters) sang viewer X/Z screen coords.
- * Căn chỉnh quanh origin (midpoint của 2 object).
+ * Convert world coordinates (meters) to viewer X/Z screen coordinates.
+ * Centered on origin (midpoint of the two objects for clash scenes).
  */
 const worldToViewer = (
   worldPos: [number, number, number],
@@ -57,9 +67,9 @@ const worldToViewer = (
 // ---------------------------------------------------------------------------
 
 /**
- * Xây dựng scene objects từ clash.
- * - Nếu clash có objectABBox/objectBBBox → dùng tọa độ thật từ IFC model.
- * - Nếu không có → fallback về mock layout (backward compat với dữ liệu cũ).
+ * Build scene objects from a clash.
+ * - If the clash has objectABBox/objectBBBox, use real coordinates from the IFC model.
+ * - Otherwise fall back to a mock layout (backward compatible with older data).
  */
 export const buildSceneObjectsFromClash = (clash: Clash): SceneObject[] => {
   const bboxA = clash.objectABBox;
@@ -110,7 +120,7 @@ export const buildSceneObjectsFromClash = (clash: Clash): SceneObject[] => {
 };
 
 // ---------------------------------------------------------------------------
-// Collision detection (2D X/Z plane) — dùng cho viewer drag
+// Collision detection (2D X/Z plane) — used for viewer drag
 // ---------------------------------------------------------------------------
 
 export const intersects2D = (a: ViewerObjectState, b: ViewerObjectState) => {
@@ -131,7 +141,11 @@ export const applyCollisionFlags = (objects: ViewerObjectState[]) =>
     isColliding: all.some((other) => other.id !== obj.id && intersects2D(obj, other)),
   }));
 
-export const buildViewerObjects = (scene: SceneObject[], selectedObjectId: string | null): ViewerObjectState[] => {
+export const buildViewerObjects = (
+  scene: SceneObject[],
+  selectedObjectId: string | null,
+  options?: { skipCollision?: boolean }
+): ViewerObjectState[] => {
   const mapped: ViewerObjectState[] = scene.map((obj) => ({
     id: obj.id,
     label: obj.label,
@@ -141,5 +155,68 @@ export const buildViewerObjects = (scene: SceneObject[], selectedObjectId: strin
     isColliding: false,
   }));
 
+  if (options?.skipCollision) {
+    return mapped;
+  }
   return applyCollisionFlags(mapped);
 };
+
+const typeShortLabel = (type: string, category: string) => {
+  const c = (category || '').trim();
+  if (c) return c;
+  return type.replace(/^Ifc/, '') || 'Object';
+};
+
+/**
+ * Scene centered on the union bounding box — used when there is no clash to still show the model (no clash highlighting).
+ */
+export function buildOverviewSceneFromFederated(
+  objects: FederatedOverviewObject[],
+  opts: { hiddenModelIds: string[]; hiddenCategories: string[]; maxObjects?: number }
+): SceneObject[] {
+  const max = opts.maxObjects ?? 400;
+  const visible = objects.filter((o) => {
+    if (o.hidden) return false;
+    if (opts.hiddenModelIds.includes(o.sourceModel)) return false;
+    const catKey = (o.category || o.type.replace(/^Ifc/, '')).trim();
+    if (opts.hiddenCategories.length && opts.hiddenCategories.includes(catKey)) return false;
+    return true;
+  });
+
+  const sorted = [...visible].sort((a, b) => a.id.localeCompare(b.id));
+  const capped = sorted.slice(0, max);
+  if (capped.length === 0) return [];
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const o of capped) {
+    const b = o.boundingBox;
+    minX = Math.min(minX, b.min[0]);
+    minY = Math.min(minY, b.min[1]);
+    minZ = Math.min(minZ, b.min[2]);
+    maxX = Math.max(maxX, b.max[0]);
+    maxY = Math.max(maxY, b.max[1]);
+    maxZ = Math.max(maxZ, b.max[2]);
+  }
+  const originWorld: [number, number, number] = [
+    (minX + maxX) / 2,
+    (minY + maxY) / 2,
+    (minZ + maxZ) / 2,
+  ];
+
+  return capped.map((o) => {
+    const bbox = o.boundingBox;
+    const center = bboxCenter(bbox);
+    return {
+      id: o.id,
+      label: typeShortLabel(o.type, o.category),
+      position: worldToViewer(center, originWorld),
+      size: bboxSize(bbox),
+      worldPosition: center,
+    };
+  });
+}

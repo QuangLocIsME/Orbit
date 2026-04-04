@@ -1,9 +1,10 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
-import type { Clash } from '@/data/clashes';
-import { buildSceneObjectsFromClash, clampWorld, type SceneObject, type ScenePosition } from '../../lib/clashScene';
+import type { Clash } from '../types/clashes';
+import { buildSceneObjectsFromClash, clampWorld, type SceneObject, type ScenePosition } from '../lib/clashScene';
 import { apiUrl } from '@/config/api';
+import { apiFetch } from '@/lib/api-client';
 
 type Vec3 = [number, number, number];
 
@@ -303,7 +304,7 @@ export function ClashViewerProvider({ projectSlug, children }: { projectSlug: st
     }));
 
     try {
-      await fetch(
+      await apiFetch(
         apiUrl(`/projects/${encodeURIComponent(projectSlug)}/clashes/${encodeURIComponent(clashId)}/positions`),
         {
           method: 'PATCH',
@@ -319,7 +320,7 @@ export function ClashViewerProvider({ projectSlug, children }: { projectSlug: st
 
   const loadClashSceneFromServer = useCallback(async (clashId: string, projectSlug: string): Promise<boolean> => {
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         apiUrl(`/projects/${encodeURIComponent(projectSlug)}/clashes/${encodeURIComponent(clashId)}/positions`)
       );
       if (!res.ok) return false;

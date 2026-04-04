@@ -4,16 +4,15 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
-import type { Project } from '@/types';
 import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
 import packagesData from '@/data/packages.json';
 import ProjectTopBar from '../../components/layout/ProjectTopBar';
 import CreateTaskModal from './CreateTaskModal';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
-import ClashesTab from './ClashesTab';
+import ClashesTab from './clash/ClashesTab';
 import UnsavedChangesDialog from 'components/ui/UnsavedChangesDialog.tsx';
-import { ClashViewerProvider, useClashViewerStore } from '@/store/clashStore';
+import { ClashViewerProvider, useClashViewerStore } from './clash/state/clashStore';
 import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
@@ -47,6 +46,10 @@ interface TeamMemberView {
 }
 
 const avatarColors = ['bg-pink-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-blue-500', 'bg-teal-500', 'bg-orange-500'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Workspace mẫu trên disk (Backend/data/navisworks/projects/4/) khi chưa map API project. */
+const NAVISWORKS_DISK_SAMPLE_KEY = '4';
 
 const getInitials = (name: string) => {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -55,6 +58,21 @@ const getInitials = (name: string) => {
 };
 
 const mockTeamMembers: TeamMemberView[] = [];
+
+/**
+ * Dùng publicId nếu đã là UUID; fallback về workspace mẫu disk.
+ */
+function computeNavisworksApiKey(projectPublicId?: string): string {
+  if (projectPublicId && UUID_RE.test(projectPublicId)) return projectPublicId;
+  return NAVISWORKS_DISK_SAMPLE_KEY;
+}
+const mockTeamMembersForReviewers = [
+  { id: '1', name: 'Thao Duyen', role: 'Design Lead', avatar: 'TD', color: 'bg-pink-500', isOnline: true },
+  { id: '2', name: 'Minh Anh', role: 'Project Manager', avatar: 'MA', color: 'bg-emerald-500', isOnline: true },
+  { id: '3', name: 'Hoang Nam', role: 'Lead Architect', avatar: 'HN', color: 'bg-indigo-500', isOnline: true },
+  { id: '4', name: 'Thu Trang', role: 'Structural Engineer', avatar: 'TT', color: 'bg-blue-500', isOnline: false },
+  { id: '5', name: 'Tuan Kiet', role: 'MEP Engineer', avatar: 'TK', color: 'bg-teal-500', isOnline: true },
+  ];
 
 const mockActivities = [
   { id: '1', action: 'Version 3.2 approved', user: 'Minh Anh', time: '2 hours ago', icon: 'check', color: 'bg-emerald-100 text-emerald-600' },
@@ -470,9 +488,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     fetchProjectOverviewData();
     return () => { cancelled = true; };
   }, [project.publicId]);
+  const navisworksApiKey = computeNavisworksApiKey(project.publicId);
   const [pendingTabSwitch, setPendingTabSwitch] = useState<string | null>(null);
   const clashStore = useClashViewerStore();
-  const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
   
   // Check for stored tab on mount (used when navigating back from package detail)
   useEffect(() => {
@@ -773,8 +791,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         </div>
       )}
 
-      {/* Content - With 300px left/right margins */}
-      <div className="px-[300px] py-6">
+      {/* Content — wide side margins except Clashes (full-width workspace + viewer) */}
+      <div className={cn('py-6', activeTab === 'clashes' ? 'px-0' : 'px-[300px]')}>
         {/* Packages Tab Content */}
         {activeTab === 'packages' && (
           <PackagesManager fixedProjectId={project.publicId} fixedProjectName={project.name} />
@@ -1844,7 +1862,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                 <div className="flex flex-col gap-2">
                   <label className="text-[14px] font-normal text-[#101828]">Reviewers</label>
                   <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#E5E7EB]">
-                    {mockTeamMembers.map((member) => (
+                    {mockTeamMembersForReviewers.map((member) => (
                       <label key={member.id} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50">
                         <input type="checkbox" className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500" />
                         <svg className="h-4 w-4 text-[#99A1AF]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
@@ -2538,7 +2556,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Clashes Tab */}
         {activeTab === 'clashes' && (
-          <ClashesTab projectSlug={project.slug} />
+          <ClashesTab projectPublicId={navisworksApiKey} projectDisplayName={project.name} />
         )}
 
         {/* Teams Tab */}
@@ -2629,10 +2647,15 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   );
 }
 
-export default function ProjectDetailPage(props: ProjectDetailPageProps) {
+function ProjectDetailPageWithClashProvider(props: ProjectDetailPageProps) {
+  const { project } = props;
+  const clashViewerKey = computeNavisworksApiKey(project.publicId);
+
   return (
-    <ClashViewerProvider projectSlug={props.project.slug}>
+    <ClashViewerProvider projectSlug={clashViewerKey}>
       <ProjectDetailPageContent {...props} />
     </ClashViewerProvider>
   );
 }
+
+export default ProjectDetailPageWithClashProvider;

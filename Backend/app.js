@@ -23,6 +23,7 @@ const teamRoutes = require('./routes/teamRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const wsRoutes = require('./routes/wsRoutes');
 const clashRoutes = require('./routes/clash.routes');
+const navisworksRoutes = require('./routes/navisworks.routes');
 const connectDB = require('./config/database');
 const { attachSocket } = require('./services/socketService');
 
@@ -87,6 +88,7 @@ app.use('/api/teams', teamRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/ws', wsRoutes);
 app.use('/api', clashLimiter, clashRoutes);
+app.use('/api', clashLimiter, navisworksRoutes);
 
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError) {

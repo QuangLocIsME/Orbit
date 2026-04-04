@@ -1,9 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Clash, ViewerObjectState } from '@/data/clashes';
-import { useClashViewerStore } from '@/store/clashStore';
-import { applyCollisionFlags, buildViewerObjects, clampWorld, PIXELS_TO_WORLD } from '../../lib/clashScene';
+import type { Clash, ViewerObjectState } from '../types/clashes';
+import { useClashViewerStore } from '../state/clashStore';
+import {
+  applyCollisionFlags,
+  buildViewerObjects,
+  clampWorld,
+  PIXELS_TO_WORLD,
+  type SceneObject,
+} from '../lib/clashScene';
 
 interface DragStartState {
   pointerX: number;
@@ -11,7 +17,13 @@ interface DragStartState {
   objectPosition: { x: number; y: number; z: number };
 }
 
-export function useObjectInteraction(clash: Clash | null, selectedObjectId: string | null) {
+export function useObjectInteraction(
+  clash: Clash | null,
+  selectedObjectId: string | null,
+  options?: { overviewScene?: SceneObject[] | null; allowObjectDrag?: boolean }
+) {
+  const overviewScene = options?.overviewScene ?? null;
+  const allowObjectDrag = options?.allowObjectDrag !== false;
   const clashStore = useClashViewerStore();
   const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null);
   const [collisionMessage, setCollisionMessage] = useState<string | null>(null);
@@ -34,12 +46,16 @@ export function useObjectInteraction(clash: Clash | null, selectedObjectId: stri
   }, [clash?.id]);
 
   const objects = useMemo<ViewerObjectState[]>(() => {
-    if (!clash) return [];
-
-    const scene = clashStore.getScene(clash.id);
-    if (!scene) return [];
-    return buildViewerObjects(scene, selectedObjectId);
-  }, [clash, clashStore, selectedObjectId]);
+    if (clash) {
+      const scene = clashStore.getScene(clash.id);
+      if (!scene) return [];
+      return buildViewerObjects(scene, selectedObjectId);
+    }
+    if (overviewScene?.length) {
+      return buildViewerObjects(overviewScene, selectedObjectId, { skipCollision: true });
+    }
+    return [];
+  }, [clash, clashStore, overviewScene, selectedObjectId]);
 
   const selectedObject = useMemo(
     () => objects.find((object) => object.id === selectedObjectId) ?? null,
@@ -54,7 +70,7 @@ export function useObjectInteraction(clash: Clash | null, selectedObjectId: stri
   }, []);
 
   const beginDrag = useCallback((objectId: string, pointerX: number, pointerY: number) => {
-    if (!clash) return;
+    if (!allowObjectDrag || !clash) return;
     const scene = clashStore.getScene(clash.id);
     const obj = scene?.find((entry) => entry.id === objectId);
     if (!obj) return;
@@ -65,10 +81,10 @@ export function useObjectInteraction(clash: Clash | null, selectedObjectId: stri
     setDragPreviewPosition({ x: obj.position.x, z: obj.position.z });
     // Seed snap-back baseline immediately from the shared scene.
     lastValidPositionsRef.current[objectId] = obj.position;
-  }, [clash, clashStore, selectObject]);
+  }, [allowObjectDrag, clash, clashStore, selectObject]);
 
   const updateDrag = useCallback((pointerX: number, pointerY: number) => {
-    if (!clash || !draggingObjectId || !dragStartRef.current) {
+    if (!allowObjectDrag || !clash || !draggingObjectId || !dragStartRef.current) {
       return;
     }
 
@@ -99,18 +115,25 @@ export function useObjectInteraction(clash: Clash | null, selectedObjectId: stri
     }
 
     clashStore.updateObjectPosition(clash.id, draggingObjectId, nextPosition);
-  }, [clash, clashStore, draggingObjectId, objects]);
+  }, [allowObjectDrag, clash, clashStore, draggingObjectId, objects]);
 
   const endDrag = useCallback(() => {
-    if (!clash || !draggingObjectId) {
+    if (!allowObjectDrag || !clash || !draggingObjectId) {
       return;
     }
 
-    const draggedObject = objects.find((object) => object.id === draggingObjectId);
-    if (draggedObject?.isColliding) {
-      const lastValid = lastValidPositionsRef.current[draggingObjectId];
-      if (lastValid) {
-        clashStore.updateObjectPosition(clash.id, draggingObjectId, lastValid);
+    // Use the latest scene from the store — `objects` from the last render can be one frame
+    // behind the final UPDATE_OBJECT_POSITION from the last pointermove, which caused false
+    // "still colliding" snap-back and left the parent stuck on viewerHasCollision === true.
+    const scene = clashStore.getScene(clash.id);
+    if (scene) {
+      const viewerObjects = buildViewerObjects(scene, selectedObjectId);
+      const draggedObject = viewerObjects.find((object) => object.id === draggingObjectId);
+      if (draggedObject?.isColliding) {
+        const lastValid = lastValidPositionsRef.current[draggingObjectId];
+        if (lastValid) {
+          clashStore.updateObjectPosition(clash.id, draggingObjectId, lastValid);
+        }
       }
     }
 
@@ -118,7 +141,7 @@ export function useObjectInteraction(clash: Clash | null, selectedObjectId: stri
     setDraggingObjectId(null);
     setCollisionMessage(null);
     setDragPreviewPosition(null);
-  }, [clash, clashStore, draggingObjectId, objects]);
+  }, [allowObjectDrag, clash, clashStore, draggingObjectId, selectedObjectId]);
 
   return {
     objects,

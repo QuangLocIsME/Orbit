@@ -6,10 +6,10 @@
  *   - XeoKitViewerAdapter (implement khi xeokit viewer hoàn thành)
  *   - ClashesTab chỉ phụ thuộc vào interface này, không phụ thuộc viewer cụ thể
  *
- * Khi nối xeokit:
- *   1. Implement XeoKitViewerAdapter (đã có skeleton ở xeoKitViewerAdapter.ts)
- *   2. Truyền instance vào <Viewer3D adapter={xeoKitAdapter} />
- *   3. Không cần thay đổi ClashesTab hay clashStore
+ * Wiring Xeokit:
+ *   1. Implement XeoKitViewerAdapter (skeleton in ./xeoKitViewerAdapter.ts)
+ *   2. Pass adapter into <Viewer3D adapter={xeoKitAdapter} /> (under components/features/clash/viewer/)
+ *   3. ClashesTab / clashStore need no changes
  */
 
 export type Vec3 = [number, number, number];
