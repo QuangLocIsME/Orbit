@@ -911,21 +911,53 @@ class PackageController {
                 return forbidden(res, 'Only project members can delete folders');
             }
 
-            const folder = await DocumentFolderRepository.findByPublicId(normalizedFolderId);
-            if (!folder || folder.projectId !== normalizedProjectId) {
+            // folderId is a tree node path (e.g. "root/SS", "root/pkg/<uuid>/sub")
+            // Parse to derive packageId + folderPath for DB query
+            const pkgMarker = '/pkg/';
+            const pkgIndex = normalizedFolderId.indexOf(pkgMarker);
+            let packageId = null;
+            let folderPath = '';
+
+            if (pkgIndex !== -1) {
+                const pathAfterPkg = normalizedFolderId.slice(pkgIndex + pkgMarker.length);
+                const slashIdx = pathAfterPkg.indexOf('/');
+                if (slashIdx === -1) {
+                    packageId = pathAfterPkg;
+                    folderPath = '';
+                } else {
+                    packageId = pathAfterPkg.slice(0, slashIdx);
+                    folderPath = pathAfterPkg.slice(slashIdx + 1);
+                }
+            } else {
+                const rootPrefix = 'root/';
+                folderPath = normalizedFolderId.startsWith(rootPrefix)
+                    ? normalizedFolderId.slice(rootPrefix.length)
+                    : normalizedFolderId;
+            }
+
+            if (packageId && folderPath === '') {
+                return badRequest(res, 'Folder này thuộc về một package và không thể xóa. Hãy xóa package để xóa folder tự động.');
+            }
+
+            const existing = await DocumentFolderRepository.findOneByPath({
+                projectId: normalizedProjectId,
+                packageId,
+                folderPath,
+            });
+            if (!existing) {
                 return notFound(res, 'Folder not found');
             }
 
             await DocumentFolderRepository.deleteByPathPrefix({
-                projectId: folder.projectId,
-                packageId: folder.packageId || null,
-                pathPrefix: folder.folderPath,
+                projectId: normalizedProjectId,
+                packageId,
+                pathPrefix: folderPath,
             });
 
             await DocumentRepository.deleteByFolderPathPrefix({
-                projectId: folder.projectId,
-                packageId: folder.packageId || null,
-                pathPrefix: folder.folderPath,
+                projectId: normalizedProjectId,
+                packageId,
+                pathPrefix: folderPath,
             });
 
             return res.status(200).json({ success: true, message: 'Folder deleted' });
@@ -978,6 +1010,9 @@ class PackageController {
                 normalizedPackageId,
                 normalizedProjectId
             );
+
+            await DocumentFolderRepository.deleteByPackageId(normalizedPackageId);
+            await DocumentRepository.deleteByPackageId(normalizedPackageId);
 
             return res.status(200).json({
                 success: true,

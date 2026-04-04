@@ -17,6 +17,14 @@ class DocumentFolderRepository {
         return await DocumentFolder.findOne({ publicId });
     }
 
+    async findOneByPath({ projectId, packageId = null, folderPath }) {
+        return await DocumentFolder.findOne({
+            projectId,
+            packageId: { $in: [packageId, packageId === null ? '' : null] },
+            folderPath,
+        });
+    }
+
     async deleteByPublicId(publicId) {
         return await DocumentFolder.findOneAndDelete({ publicId });
     }
@@ -43,9 +51,13 @@ class DocumentFolderRepository {
     async deleteByPathPrefix({ projectId, packageId = null, pathPrefix }) {
         return await DocumentFolder.deleteMany({
             projectId,
-            packageId,
+            packageId: { $in: [packageId, packageId === null ? '' : null] },
             folderPath: { $regex: `^${pathPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|/)` },
         });
+    }
+
+    async deleteByPackageId(packageId) {
+        return await DocumentFolder.deleteMany({ packageId });
     }
 }
 

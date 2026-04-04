@@ -97,7 +97,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ projectId }),
     });
-    if (!res.ok) throw new Error('Không thể tải documents');
+    if (!res.ok) throw new Error('Failed to load documents');
 
     const payload = await res.json();
     setRootTree(payload?.data?.tree || null);
@@ -108,7 +108,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     try {
       await loadDocuments();
     } catch (err: any) {
-      toast.error(err?.message || 'Không thể tải documents');
+      toast.error(err?.message || 'Failed to load documents');
     } finally {
       setLoading(false);
     }
@@ -141,7 +141,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
   const createFolder = async () => {
     if (!folderName.trim()) {
-      toast.error('Vui lòng nhập tên folder');
+      toast.error('Please enter a folder name');
       return;
     }
     const location = deriveLocation(currentFolder, packageNode);
@@ -163,7 +163,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
     const payload = await res.json().catch(() => null);
     if (!res.ok || !payload?.success) {
-      throw new Error(payload?.message || 'Tạo folder thất bại');
+      throw new Error(payload?.message || 'Failed to create folder');
     }
 
     setFolderName('');
@@ -193,10 +193,10 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
       const payload = await res.json().catch(() => null);
       if (!res.ok || !payload?.success) {
-        throw new Error(payload?.message || 'Upload thất bại');
+        throw new Error(payload?.message || 'Upload failed');
       }
 
-      toast.success(payload?.mode === 'queue' ? 'File lớn đã đưa vào queue xử lý nền' : 'Upload thành công');
+      toast.success(payload?.mode === 'queue' ? 'Large file queued for background processing' : 'File uploaded successfully');
       await loadDocuments();
     } finally {
       setIsUploading(false);
@@ -223,9 +223,10 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
     const payload = await res.json().catch(() => null);
     if (!res.ok || !payload?.success) {
-      throw new Error(payload?.message || 'Xóa thất bại');
+      throw new Error(payload?.message || 'Delete failed');
     }
 
+    toast.success(node.type === 'folder' ? 'Folder deleted successfully' : 'File deleted successfully');
     await loadDocuments();
   };
 
@@ -257,7 +258,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
     const payload = await res.json().catch(() => null);
     if (!res.ok || !payload?.success) {
-      throw new Error(payload?.message || 'Rename thất bại');
+      throw new Error(payload?.message || 'Rename failed');
     }
 
     setRenamingNodeId('');
@@ -267,7 +268,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
   useEffect(() => {
     if (pendingUploadFile) {
-      uploadFile(pendingUploadFile).catch((err: any) => toast.error(err?.message || 'Upload thất bại'));
+      uploadFile(pendingUploadFile).catch((err: any) => toast.error(err?.message || 'Upload failed'));
     }
   }, [pendingUploadFile]);
 
@@ -327,9 +328,9 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
         <h3 className="mb-3 text-[22px] font-medium text-[#101828]">{currentFolder?.name || 'All Files'}</h3>
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
           {!currentFolder ? (
-            <p className="p-4 text-sm text-gray-500">Package này chưa có dữ liệu documents.</p>
+            <p className="p-4 text-sm text-gray-500">No documents in this package yet.</p>
           ) : (currentFolder.children || []).length === 0 ? (
-            <p className="p-4 text-sm text-gray-500">Folder trống.</p>
+            <p className="p-4 text-sm text-gray-500">This folder is empty.</p>
           ) : (
             <ul>
               {(currentFolder.children || []).map((child, idx) => {
@@ -448,7 +449,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setIsCreateFolderOpen(false)}>
           <div className="w-full max-w-md rounded-xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900">Create Folder</h3>
-            <p className="mt-1 text-sm text-gray-500">Folder sẽ được tạo tại vị trí hiện tại.</p>
+            <p className="mt-1 text-sm text-gray-500">Folder will be created at the current location.</p>
 
             <input
               value={folderName}

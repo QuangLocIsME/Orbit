@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
 import { toast } from '@/components/ui/sonner';
-import AddMemberModal from './AddMemberModal';
+import AddMemberModal, { type TeamOption } from './AddMemberModal';
 
-type MemberRole = 'admin' | 'member' | 'viewer';
+type MemberRole = 'admin' | 'owner' | 'member' | 'viewer';
 type MemberStatus = 'invited' | 'accepted' | 'blocked';
 type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
 
@@ -39,7 +39,8 @@ interface PendingInvite {
 }
 
 const roleBadgeStyles: Record<MemberRole, { bg: string; text: string }> = {
-  admin: { bg: 'bg-[#DCFCE7]', text: 'text-[#16A34A]' },
+  owner:  { bg: 'bg-[#FEF9C3]', text: 'text-[#A16207]' },
+  admin:  { bg: 'bg-[#DCFCE7]', text: 'text-[#16A34A]' },
   member: { bg: 'bg-[#DBEAFE]', text: 'text-[#2563EB]' },
   viewer: { bg: 'bg-[#F3F4F6]', text: 'text-[#4B5563]' },
 };
@@ -158,6 +159,15 @@ function RoleEditModal({ isOpen, member, onClose, onConfirm }: RoleEditModalProp
   );
 }
 
+interface Team extends TeamOption {
+  memberIds: string[];
+}
+
+const TEAM_COLORS = [
+  'bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-purple-500',
+  'bg-teal-500', 'bg-pink-500', 'bg-indigo-500', 'bg-amber-500',
+];
+
 interface TeamsTabProps {
   projectPublicId: string;
   currentUserRole?: MemberRole;
@@ -169,14 +179,23 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   const [currentUserRole, setCurrentUserRole] = useState<MemberRole>(initialRole ?? 'member');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeView, setActiveView] = useState<'members' | 'invites'>('members');
+  const [activeView, setActiveView] = useState<'members' | 'teams' | 'invites'>('members');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newTeamDesc, setNewTeamDesc] = useState('');
+  const [addMemberToTeamId, setAddMemberToTeamId] = useState<string | null>(null);
   const [roleEditMember, setRoleEditMember] = useState<MemberWithUser | null>(null);
   const [removeTarget, setRemoveTarget] = useState<MemberWithUser | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<PendingInvite | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  // Pending team assignments: when an invite is sent with team IDs, store by email so we can
+  // apply them once the member accepts and appears in the members list.
+  const [pendingTeamAssignments, setPendingTeamAssignments] = useState<{ email: string; teamIds: string[] }[]>([]);
 
+  const fetchTeamsRef = useRef<() => Promise<void>>(async () => {});
   const socket = useAppStore((s) => s.socket);
 
   // Sync with store (fallback if prop wasn't provided — e.g. navigation without full hydration)
@@ -187,7 +206,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
     if (project?.role) setCurrentUserRole(project.role as MemberRole);
   }, [projects, projectPublicId, initialRole]);
 
-  const canManage = currentUserRole === 'admin';
+  const canManage = currentUserRole === 'admin' || currentUserRole === 'owner';
   const canEditRole = (memberRole: MemberRole) => canManage && memberRole !== 'admin';
   const canRemove = (memberRole: MemberRole) => canManage && memberRole !== 'admin';
 
@@ -200,7 +219,27 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
       });
       if (!res.ok) return;
       const data = await res.json();
-      setMembers(Array.isArray(data?.data) ? data.data : []);
+      const fetched: MemberWithUser[] = Array.isArray(data?.data) ? data.data : [];
+      setMembers(fetched);
+      // Apply any pending team assignments via API once the invited member appears
+      setPendingTeamAssignments((pending) => {
+        if (pending.length === 0) return pending;
+        const remaining = pending.filter(({ email, teamIds }) => {
+          const match = fetched.find((m) => m.user?.email === email);
+          if (match) {
+            Promise.all(teamIds.map((teamId) =>
+              apiFetch('/api/teams/members/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ teamId, userId: match.userId }),
+              })
+            )).then(() => fetchTeamsRef.current()).catch(() => {});
+            return false;
+          }
+          return true;
+        });
+        return remaining;
+      });
     } catch { /* network error — leave stale data */ }
   }, [projectPublicId]);
 
@@ -213,11 +252,26 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
     } catch { /* network error */ }
   }, [projectPublicId]);
 
+  const fetchTeams = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/teams/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: projectPublicId }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setTeams(Array.isArray(data?.data) ? data.data : []);
+    } catch { /* network error */ }
+  }, [projectPublicId]);
+  // Keep ref in sync so fetchMembers can call fetchTeams without circular deps
+  fetchTeamsRef.current = fetchTeams;
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    await Promise.all([fetchMembers(), fetchInvites()]);
+    await Promise.all([fetchMembers(), fetchInvites(), fetchTeams()]);
     setLoading(false);
-  }, [fetchMembers, fetchInvites]);
+  }, [fetchMembers, fetchInvites, fetchTeams]);
 
   useEffect(() => {
     fetchAll();
@@ -340,13 +394,13 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
         </div>
         {canManage && (
           <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors"
+            onClick={() => activeView === 'teams' ? setIsCreateTeamOpen(true) : setIsAddModalOpen(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-[#155DFC] h-10 w-[136px] text-[14px] font-normal text-white hover:bg-blue-700 transition-colors"
           >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
-            Add Member
+            <span className="inline-block min-w-[80px] text-left whitespace-nowrap">{activeView === 'teams' ? 'Add Team' : 'Add Member'}</span>
           </button>
         )}
       </div>
@@ -381,6 +435,18 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
               <span>Members</span>
               <span className="text-[12px] text-[#6A7282]">({members.length})</span>
             </button>
+            <button
+              onClick={() => setActiveView('teams')}
+              className={cn(
+                "flex items-center gap-1 px-4 py-2 rounded-lg text-[14px] transition-colors",
+                activeView === 'teams'
+                  ? "bg-[#F3F4F6] text-[#101828] font-medium"
+                  : "text-[#4A5565] hover:text-[#101828]"
+              )}
+            >
+              <span>Teams</span>
+              <span className="text-[12px] text-[#6A7282]">({teams.length})</span>
+            </button>
             {canManage && (
               <button
                 onClick={() => setActiveView('invites')}
@@ -397,8 +463,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
             )}
           </div>
 
-          {activeView === 'members' && (
-            <div className="flex items-center rounded-[10px] border border-[#E5E7EB] bg-white p-1">
+          <div className="flex items-center rounded-[10px] border border-[#E5E7EB] bg-white p-1">
               <button
                 onClick={() => setViewMode('grid')}
                 className={cn("p-1.5 rounded transition-colors", viewMode === 'grid' ? "bg-[#F3F4F6]" : "hover:bg-gray-50")}
@@ -416,7 +481,6 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                 </svg>
               </button>
             </div>
-          )}
         </div>
       </div>
 
@@ -564,6 +628,161 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
             </div>
           </div>
         )
+      ) : activeView === 'teams' ? (
+        /* Teams tab */
+        <div className="space-y-4">
+          {teams.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="h-16 w-16 rounded-full bg-[#F3F4F6] flex items-center justify-center mb-4">
+                <svg className="h-8 w-8 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                </svg>
+              </div>
+              <p className="text-[16px] font-medium text-[#101828] mb-1">No teams yet</p>
+              <p className="text-[14px] text-[#6A7282]">
+                {canManage ? 'Create a team to group members by discipline or role' : 'Teams will appear here once created by an admin'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              {teams.map((team) => {
+                const teamMembers = members.filter((m) => team.memberIds.includes(m.userId));
+                return (
+                  <div key={team.id} className="rounded-xl border border-[#E5E7EB] bg-white overflow-hidden">
+                    {/* Team Header */}
+                    <div className="flex items-start gap-3 p-4 border-b border-[#F3F4F6]">
+                      <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0", team.color)}>
+                        <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 00.75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 00-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0112 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 01-.673-.38m0 0A2.18 2.18 0 013 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 013.413-.387m7.5 0V5.25A2.25 2.25 0 0013.5 3h-3a2.25 2.25 0 00-2.25 2.25v.894m7.5 0a48.667 48.667 0 00-7.5 0M12 12.75h.008v.008H12v-.008z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-[14px] font-medium text-[#101828] truncate">{team.name}</h3>
+                        <p className="text-[12px] text-[#6A7282] truncate">{team.description}</p>
+                      </div>
+                      {canManage && (
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Delete team "${team.name}"?`)) return;
+                            try {
+                              const r = await apiFetch('/api/teams/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ teamId: team.id }) });
+                              const d = await r.json();
+                              if (!r.ok) { toast.error(d.message || 'Failed to delete team'); return; }
+                              toast.success(`Team "${team.name}" deleted`);
+                              setTeams((prev) => prev.filter((t) => t.id !== team.id));
+                            } catch { toast.error('Failed to delete team'); }
+                          }}
+                          className="p-1 text-[#99A1AF] hover:text-red-500 transition-colors flex-shrink-0"
+                          title="Delete team"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    {/* Members count */}
+                    <div className="px-4 py-2 bg-[#FAFAFA] border-b border-[#F3F4F6]">
+                      <span className="text-[12px] font-medium text-[#6A7282]">{teamMembers.length} Member{teamMembers.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    {/* Member list */}
+                    <div className="divide-y divide-[#F3F4F6]">
+                      {teamMembers.map((m) => {
+                        const name = m.user?.fullName ?? m.user?.email ?? 'Unknown';
+                        const email = m.user?.email ?? '';
+                        const color = getAvatarColor(email);
+                        return (
+                          <div key={m.userId} className="flex items-center gap-3 px-4 py-3">
+                            <div className={cn("h-8 w-8 rounded-full flex items-center justify-center text-white text-[12px] font-medium flex-shrink-0", color)}>
+                              {getInitials(name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[13px] font-medium text-[#101828] truncate">{name}</p>
+                              <p className="text-[11px] text-[#6A7282] truncate capitalize">{m.role}</p>
+                            </div>
+                            {canManage && (
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    const r = await apiFetch('/api/teams/members/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ teamId: team.id, userId: m.userId }) });
+                                    const d = await r.json();
+                                    if (!r.ok) { toast.error(d.message || 'Failed to remove member'); return; }
+                                    setTeams((prev) => prev.map((t) =>
+                                      t.id === team.id ? { ...t, memberIds: t.memberIds.filter((id) => id !== m.userId) } : t
+                                    ));
+                                  } catch { toast.error('Failed to remove member'); }
+                                }}
+                                className="p-1 text-[#99A1AF] hover:text-red-500 transition-colors flex-shrink-0"
+                                title="Remove from team"
+                              >
+                                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Add member to team */}
+                    {canManage && (
+                      <div className="px-4 py-3 border-t border-[#F3F4F6]">
+                        {addMemberToTeamId === team.id ? (
+                          <div className="space-y-2">
+                            <select
+                              className="w-full rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] focus:border-[#2B7FFF] focus:outline-none"
+                              defaultValue=""
+                              onChange={async (e) => {
+                                const userId = e.target.value;
+                                if (!userId) return;
+                                try {
+                                  const r = await apiFetch('/api/teams/members/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ teamId: team.id, userId }) });
+                                  const d = await r.json();
+                                  if (!r.ok) { toast.error(d.message || 'Failed to add member'); return; }
+                                  setTeams((prev) => prev.map((t) =>
+                                    t.id === team.id && !t.memberIds.includes(userId)
+                                      ? { ...t, memberIds: [...t.memberIds, userId] }
+                                      : t
+                                  ));
+                                } catch { toast.error('Failed to add member'); }
+                                setAddMemberToTeamId(null);
+                              }}
+                            >
+                              <option value="" disabled>Select a member…</option>
+                              {members
+                                .filter((m) => !team.memberIds.includes(m.userId))
+                                .map((m) => (
+                                  <option key={m.userId} value={m.userId}>
+                                    {m.user?.fullName ?? m.user?.email ?? m.userId}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              onClick={() => setAddMemberToTeamId(null)}
+                              className="text-[12px] text-[#6A7282] hover:text-[#101828]"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setAddMemberToTeamId(team.id)}
+                            className="flex items-center gap-2 text-[13px] text-[#6A7282] hover:text-[#2B7FFF] transition-colors"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                            Add Member
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       ) : (
         /* Invites tab (admin only) */
         showSkeleton ? (
@@ -622,7 +841,13 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
         projectId={projectPublicId}
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
-        onSuccess={fetchInvites}
+        teams={teams}
+        onSuccess={(assignedTeamIds, invitedEmail) => {
+          fetchInvites();
+          if (assignedTeamIds?.length && invitedEmail) {
+            setPendingTeamAssignments((prev) => [...prev, { email: invitedEmail, teamIds: assignedTeamIds }]);
+          }
+        }}
       />
 
       {/* Role Edit Modal */}
@@ -651,6 +876,113 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                 className="px-4 py-2 rounded-[10px] bg-red-500 text-[14px] text-white hover:bg-red-600 transition-colors disabled:opacity-50"
               >
                 {actionLoading ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Team Modal */}
+      {isCreateTeamOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setIsCreateTeamOpen(false)}>
+          <div
+            className="relative w-full max-w-[440px] bg-white rounded-[14px] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-4 px-6 py-4 border-b border-[#E5E7EB]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[#2B7FFF]">
+                <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h2 className="text-[18px] font-normal text-[#101828]">Create Team</h2>
+                <p className="text-[14px] text-[#6A7282]">Group members by discipline or role</p>
+              </div>
+              <button
+                onClick={() => setIsCreateTeamOpen(false)}
+                className="rounded-[10px] p-2 hover:bg-gray-100 transition-colors"
+              >
+                <svg className="h-5 w-5 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="space-y-2">
+                <label className="block text-[14px] text-[#364153]">Team Name</label>
+                <input
+                  type="text"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                  placeholder="e.g. Design, Engineering, QA"
+                  autoFocus
+                  className="w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[14px] placeholder:text-[#10182880] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[14px] text-[#364153]">Description <span className="text-[#99A1AF]">(optional)</span></label>
+                <input
+                  type="text"
+                  value={newTeamDesc}
+                  onChange={(e) => setNewTeamDesc(e.target.value)}
+                  placeholder="Brief description of this team"
+                  className="w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[14px] placeholder:text-[#10182880] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+                />
+              </div>
+              {/* Color preview */}
+              <div className="space-y-2">
+                <label className="block text-[14px] text-[#364153]">Team Color</label>
+                <div className="flex items-center gap-2">
+                  {TEAM_COLORS.map((color) => {
+                    const nextColorForNew = TEAM_COLORS[teams.length % TEAM_COLORS.length];
+                    return (
+                      <div
+                        key={color}
+                        className={cn(
+                          "h-7 w-7 rounded-lg cursor-pointer ring-2 transition-all",
+                          color,
+                          color === nextColorForNew ? "ring-[#2B7FFF] ring-offset-1" : "ring-transparent"
+                        )}
+                      />
+                    );
+                  })}
+                </div>
+                <p className="text-[12px] text-[#99A1AF]">Color is assigned automatically based on creation order</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E5E7EB] bg-[#F9FAFB] rounded-b-[14px]">
+              <button
+                onClick={() => { setIsCreateTeamOpen(false); setNewTeamName(''); setNewTeamDesc(''); }}
+                className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!newTeamName.trim() || actionLoading}
+                onClick={async () => {
+                  const name = newTeamName.trim();
+                  const color = TEAM_COLORS[teams.length % TEAM_COLORS.length];
+                  setActionLoading(true);
+                  try {
+                    const r = await apiFetch('/api/teams/create', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ projectId: projectPublicId, name, description: newTeamDesc.trim(), color }),
+                    });
+                    const d = await r.json();
+                    if (!r.ok) { toast.error(d.message || 'Failed to create team'); return; }
+                    setTeams((prev) => [...prev, d.data]);
+                    setNewTeamName('');
+                    setNewTeamDesc('');
+                    setIsCreateTeamOpen(false);
+                    toast.success(`Team "${name}" created`);
+                  } catch { toast.error('Failed to create team'); }
+                  finally { setActionLoading(false); }
+                }}
+                className="px-4 py-2 rounded-[10px] bg-[#2B7FFF] text-[14px] text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Create Team
               </button>
             </div>
           </div>

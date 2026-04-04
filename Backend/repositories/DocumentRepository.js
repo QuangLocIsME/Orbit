@@ -51,9 +51,13 @@ class DocumentRepository {
     async deleteByFolderPathPrefix({ projectId, packageId = null, pathPrefix }) {
         return await Document.deleteMany({
             projectId,
-            packageId,
+            packageId: { $in: [packageId, packageId === null ? '' : null] },
             folderPath: { $regex: `^${pathPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|/)` },
         });
+    }
+
+    async deleteByPackageId(packageId) {
+        return await Document.deleteMany({ packageId });
     }
 }
 

@@ -32,11 +32,19 @@ const permissions = [
   },
 ];
 
+export interface TeamOption {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+}
+
 interface AddMemberModalProps {
   projectId: string;
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (assignedTeamIds?: string[], invitedEmail?: string) => void;
+  teams?: TeamOption[];
 }
 
 export default function AddMemberModal({
@@ -44,12 +52,29 @@ export default function AddMemberModal({
   isOpen,
   onClose,
   onSuccess,
+  teams = [],
 }: AddMemberModalProps) {
   const [email, setEmail] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
   const [selectedPermission, setSelectedPermission] = useState('member');
+  const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
+
+  const toggleTeam = (teamId: string) => {
+    setSelectedTeams((prev) =>
+      prev.includes(teamId) ? prev.filter((id) => id !== teamId) : [...prev, teamId]
+    );
+  };
+
+  const handleClose = () => {
+    setEmail('');
+    setJobTitle('');
+    setSelectedPermission('member');
+    setSelectedTeams([]);
+    onClose();
+  };
 
   const handleSubmit = async () => {
     if (!email.trim()) return;
@@ -58,7 +83,12 @@ export default function AddMemberModal({
       const res = await apiFetch('/api/invites', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, email: email.trim(), role: selectedPermission }),
+        body: JSON.stringify({
+          projectId,
+          email: email.trim(),
+          role: selectedPermission,
+          jobTitle: jobTitle.trim() || undefined,
+        }),
       });
       const data = await res.json();
 
@@ -68,10 +98,8 @@ export default function AddMemberModal({
       }
 
       toast.success(`Invitation sent to ${email.trim()}`);
-      setEmail('');
-      setSelectedPermission('member');
-      onSuccess();
-      onClose();
+      onSuccess(selectedTeams.length > 0 ? selectedTeams : undefined, email.trim());
+      handleClose();
     } catch {
       toast.error('Failed to send invitation. Please try again.');
     } finally {
@@ -80,7 +108,7 @@ export default function AddMemberModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleClose}>
       <div
         className="relative flex w-full max-w-[480px] max-h-[90vh] flex-col bg-white rounded-[14px] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -96,7 +124,7 @@ export default function AddMemberModal({
             <h2 className="text-[18px] font-normal text-[#101828]">Invite Member</h2>
             <p className="text-[14px] text-[#6A7282]">Send an invitation to join this project</p>
           </div>
-          <button onClick={onClose} className="rounded-[10px] p-2 hover:bg-gray-100 transition-colors">
+          <button onClick={handleClose} className="rounded-[10px] p-2 hover:bg-gray-100 transition-colors">
             <svg className="h-5 w-5 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -104,7 +132,7 @@ export default function AddMemberModal({
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
           {/* Email Address */}
           <div className="space-y-2">
             <label className="block text-[14px] text-[#364153]">Email Address</label>
@@ -115,6 +143,18 @@ export default function AddMemberModal({
               onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
               placeholder="e.g. john.doe@example.com"
               className="w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[16px] placeholder:text-[#10182880] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+            />
+          </div>
+
+          {/* Job Title */}
+          <div className="space-y-2">
+            <label className="block text-[14px] text-[#364153]">Job Title <span className="text-[#99A1AF]">(optional)</span></label>
+            <input
+              type="text"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              placeholder="e.g. Project Manager, Lead Architect"
+              className="w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[14px] placeholder:text-[#10182880] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
             />
           </div>
 
@@ -137,9 +177,7 @@ export default function AddMemberModal({
                   <div className="pt-0.5">
                     <div className={cn(
                       "h-4 w-4 rounded-full border-2 flex items-center justify-center",
-                      selectedPermission === permission.id
-                        ? "border-[#2B7FFF]"
-                        : "border-[#D1D5DC]"
+                      selectedPermission === permission.id ? "border-[#2B7FFF]" : "border-[#D1D5DC]"
                     )}>
                       {selectedPermission === permission.id && (
                         <div className="h-2 w-2 rounded-full bg-[#2B7FFF]" />
@@ -168,12 +206,54 @@ export default function AddMemberModal({
               ))}
             </div>
           </div>
+
+          {/* Assign to Teams */}
+          {teams.length > 0 && (
+            <div className="space-y-3">
+              <label className="block text-[14px] text-[#364153]">Assign to Teams <span className="text-[#99A1AF]">(optional)</span></label>
+              <div className="space-y-2">
+                {teams.map((team) => (
+                  <button
+                    key={team.id}
+                    type="button"
+                    onClick={() => toggleTeam(team.id)}
+                    className={cn(
+                      "flex w-full items-center gap-3 rounded-[10px] border-2 p-3.5 text-left transition-colors",
+                      selectedTeams.includes(team.id)
+                        ? "border-[#2B7FFF] bg-[#EFF6FF]"
+                        : "border-[#E5E7EB] hover:border-[#D1D5DC]"
+                    )}
+                  >
+                    <div className={cn(
+                      "h-4 w-4 rounded border-2 flex items-center justify-center flex-shrink-0",
+                      selectedTeams.includes(team.id) ? "border-[#2B7FFF] bg-[#2B7FFF]" : "border-[#D1D5DC]"
+                    )}>
+                      {selectedTeams.includes(team.id) && (
+                        <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className={cn("h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0", team.color)}>
+                      <svg className="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 00.75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 00-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0112 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 01-.673-.38m0 0A2.18 2.18 0 013 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 013.413-.387m7.5 0V5.25A2.25 2.25 0 0013.5 3h-3a2.25 2.25 0 00-2.25 2.25v.894m7.5 0a48.667 48.667 0 00-7.5 0M12 12.75h.008v.008H12v-.008z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[14px] font-medium text-[#101828] truncate">{team.name}</p>
+                      <p className="text-[12px] text-[#6A7282] truncate">{team.description}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E5E7EB] bg-[#F9FAFB] rounded-b-[14px]">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
           >
             Cancel
@@ -183,7 +263,7 @@ export default function AddMemberModal({
             disabled={!email.trim() || isSubmitting}
             className="px-4 py-2 rounded-[10px] bg-[#2B7FFF] text-[14px] text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? 'Sending…' : 'Send Invitation'}
+            {isSubmitting ? 'Sending…' : 'Invite Member'}
           </button>
         </div>
       </div>
