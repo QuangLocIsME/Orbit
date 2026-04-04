@@ -8,6 +8,7 @@ interface CreateTaskModalProps {
   onClose: () => void;
   onSubmit?: (task: TaskFormData) => void;
   assigneeOptions?: { id: string; name: string }[];
+  tagOptions?: string[];
 }
 
 interface TaskFormData {
@@ -36,23 +37,14 @@ const priorityOptions = [
   { id: 'urgent', label: 'Urgent' },
 ];
 
-const tagOptions = [
-  'structural',
-  'mep',
-  'architecture',
-  'civil',
-  'drawings',
-  'clash',
-  'review',
-  'urgent',
-  'design',
-  'coordination',
-];
-
-export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions }: CreateTaskModalProps) {
+export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions }: CreateTaskModalProps) {
   const teamMembers = assigneeOptions && assigneeOptions.length > 0
     ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
     : [{ id: '', name: 'Unassigned' }];
+
+  const resolvedTagOptions = Array.isArray(tagOptions)
+    ? tagOptions
+    : [];
   const [formData, setFormData] = useState<TaskFormData>({
     title: '',
     status: 'todo',
@@ -254,21 +246,25 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
           <div className="space-y-2">
             <label className="text-[14px] text-[#101828]">Tags</label>
             <div className="flex flex-wrap gap-2">
-              {tagOptions.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => handleTagToggle(tag)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-[12px] transition-all",
-                    formData.tags.includes(tag)
-                      ? "bg-[#1F2937] text-white"
-                      : "bg-[#F3F4F6] text-[#4A5565] hover:bg-gray-200"
-                  )}
-                >
-                  {tag}
-                </button>
-              ))}
+              {resolvedTagOptions.length === 0 ? (
+                <span className="text-[12px] text-[#6A7282]">No task tags configured. Add tags in Settings → Tasks.</span>
+              ) : (
+                resolvedTagOptions.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => handleTagToggle(tag)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-[12px] transition-all",
+                      formData.tags.includes(tag)
+                        ? "bg-[#1F2937] text-white"
+                        : "bg-[#F3F4F6] text-[#4A5565] hover:bg-gray-200"
+                    )}
+                  >
+                    {tag}
+                  </button>
+                ))
+              )}
             </div>
           </div>
 
