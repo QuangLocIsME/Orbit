@@ -1,6 +1,21 @@
 ---
+export const prerender = false;
+
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/auth/AuthForm';
+import { redirectIfAuthenticated } from '../lib/auth-page-guard';
+
+const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
+const accessToken = Astro.cookies.get('accessToken')?.value;
+
+const redirected = await redirectIfAuthenticated({
+  accessToken,
+  backendUrl,
+  redirect: (path) => Astro.redirect(path),
+  to: '/home',
+});
+
+if (redirected) return redirected;
 ---
 
 <BaseLayout title="Create Account - ORBIT" description="Create your ORBIT account and start collaborating">
