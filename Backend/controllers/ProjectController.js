@@ -36,6 +36,30 @@ const invalidateUserCaches = async (userId) => {
     invalidateUserCache(userId, ['projects', 'folders']);
 };
 
+const workflowTemplates = {
+    'construction-standard': [
+        { id: 'backlog', label: 'Backlog' },
+        { id: 'todo', label: 'To Do' },
+        { id: 'in-progress', label: 'In Progress' },
+        { id: 'review', label: 'Review' },
+        { id: 'done', label: 'Done' },
+    ],
+    'agile-scrum': [
+        { id: 'product-backlog', label: 'Product Backlog' },
+        { id: 'sprint-backlog', label: 'Sprint Backlog' },
+        { id: 'in-progress', label: 'In Progress' },
+        { id: 'testing', label: 'Testing' },
+        { id: 'review', label: 'Review' },
+        { id: 'done', label: 'Done' },
+    ],
+    'design-review': [
+        { id: 'draft', label: 'Draft' },
+        { id: 'review', label: 'Review' },
+        { id: 'revision', label: 'Revision' },
+        { id: 'approved', label: 'Approved' },
+    ],
+};
+
 class ProjectController {
     async createProject(req, res) {
         try {
@@ -530,6 +554,108 @@ class ProjectController {
             });
         } catch (error) {
             return handleServerError(res, 'Remove member failed');
+        }
+    }
+
+    async getWorkflow(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member) return forbidden(res);
+
+            const project = await Project.findOne({ publicId: normalizedProjectId }).select('publicId workflow');
+            if (!project) return notFound(res, 'Project not found');
+
+            const template = project.workflow?.template || 'construction-standard';
+            const stages = Array.isArray(project.workflow?.stages) && project.workflow.stages.length > 0
+                ? project.workflow.stages
+                : (workflowTemplates[template] || workflowTemplates['construction-standard']);
+            const settings = project.workflow?.settings || {
+                autoAssignTasks: false,
+                notifyOnStatusChange: true,
+                requireApprovalForCompletion: false,
+            };
+
+            return res.status(200).json({
+                success: true,
+                data: { template, stages, settings },
+            });
+        } catch (error) {
+            return handleServerError(res, 'Failed to load workflow');
+        }
+    }
+
+    async updateWorkflow(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            const { template, stages, settings } = req.body || {};
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.role !== 'admin') return forbidden(res);
+
+            const nextTemplate = normalizeString(template) || 'construction-standard';
+            const normalizedStages = Array.isArray(stages)
+                ? stages
+                    .map((s) => {
+                        const id = normalizeString(s?.id || s?.key || s?.name);
+                        const label = normalizeString(s?.label || s?.name || s?.id);
+                        if (!id || !label) return null;
+                        return { id, label };
+                    })
+                    .filter(Boolean)
+                : null;
+
+            const nextStages = normalizedStages && normalizedStages.length > 0
+                ? normalizedStages
+                : (workflowTemplates[nextTemplate] || workflowTemplates['construction-standard']);
+
+            const nextSettings = {
+                autoAssignTasks: Boolean(settings?.autoAssignTasks),
+                notifyOnStatusChange: settings?.notifyOnStatusChange !== false,
+                requireApprovalForCompletion: Boolean(settings?.requireApprovalForCompletion),
+            };
+
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                {
+                    workflow: {
+                        template: nextTemplate,
+                        stages: nextStages,
+                        settings: nextSettings,
+                    },
+                    updatedAt: new Date(),
+                },
+                { returnDocument: 'after' }
+            );
+
+            if (!project) return notFound(res, 'Project not found');
+
+            await invalidateUserCaches(userId);
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { workflow: project.workflow },
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Workflow updated',
+                data: project.workflow,
+            });
+        } catch (error) {
+            return handleServerError(res, 'Failed to update workflow');
         }
     }
 }

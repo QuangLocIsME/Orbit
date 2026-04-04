@@ -47,6 +47,7 @@ export interface Notification {
   title: string;
   message?: string;
   link?: string;
+  inviteData?: InviteNotification;
   createdAt: string;
   read: boolean;
 }

@@ -13,6 +13,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { getSocket, type Notification, type InviteNotification } from '@/lib/socket';
 import { isAuthenticated } from '@/lib/auth';
 import { toast } from '@/components/ui/sonner';
+import { useAppStore } from '@/stores/appStore';
 
 const STORAGE_KEY = 'orbit_notifications';
 const MAX_NOTIFICATIONS = 50;
@@ -44,6 +45,7 @@ export interface UseNotificationsReturn {
 export function useNotifications(): UseNotificationsReturn {
   const [notifications, setNotifications] = useState<Notification[]>(loadFromStorage);
   const [inviteUnreadCount, setInviteUnreadCount] = useState(0);
+  const projects = useAppStore((s) => s.projects);
 
   // Use ref to avoid stale closure in socket handlers
   const setInviteCountRef = useRef(setInviteUnreadCount);
@@ -61,15 +63,25 @@ export function useNotifications(): UseNotificationsReturn {
 
   const handleInviteNew = useCallback((data: InviteNotification) => {
     const id = `invite:${data.inviteId}`;
+    const resolvedProjectName =
+      data.projectName && data.projectName !== 'a project'
+        ? data.projectName
+        : projects.find((p) => String(p.publicId) === String(data.projectId))?.name || 'a project';
+
     // Dedupe: only add if not already in list
     setNotifications((prev) => {
       if (prev.some((x) => x.id === id)) return prev;
+      const normalizedInviteData: InviteNotification = {
+        ...data,
+        projectName: resolvedProjectName,
+      };
       const n: Notification = {
         id,
         type: 'info',
         title: `${data.inviterName} invited you`,
-        message: `Join "${data.projectName}" as ${data.role}`,
+        message: `Join "${resolvedProjectName}" as ${data.role}`,
         link: data.acceptUrl,
+        inviteData: normalizedInviteData,
         createdAt: data.createdAt || new Date().toISOString(),
         read: false,
       };
@@ -78,10 +90,39 @@ export function useNotifications(): UseNotificationsReturn {
       return next;
     });
     setInviteUnreadCount((prev) => prev + 1);
-  }, []);
+  }, [projects]);
 
   useEffect(() => {
     if (!isAuthenticated()) return;
+
+    // Migrate old invite notifications in storage: replace "a project" with real project name when possible
+    setNotifications((prev) => {
+      const next = prev.map((n) => {
+        if (!n.id.startsWith('invite:')) return n;
+
+        const invite = n.inviteData;
+        const resolvedFromStore = invite?.projectId
+          ? projects.find((p) => String(p.publicId) === String(invite.projectId))?.name
+          : undefined;
+
+        const currentNameFromMessage = n.message?.match(/Join\s+"([^"]+)"/)?.[1];
+        const shouldReplace = currentNameFromMessage === 'a project' || invite?.projectName === 'a project';
+        if (!shouldReplace || !resolvedFromStore) return n;
+
+        const updatedInvite = invite
+          ? { ...invite, projectName: resolvedFromStore }
+          : invite;
+
+        return {
+          ...n,
+          message: n.message?.replace(/Join\s+"[^"]+"/, `Join "${resolvedFromStore}"`),
+          inviteData: updatedInvite,
+        };
+      });
+
+      saveToStorage(next);
+      return next;
+    });
 
     const socket = getSocket();
 

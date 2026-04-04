@@ -41,6 +41,7 @@ export interface TeamOption {
 
 interface AddMemberModalProps {
   projectId: string;
+  projectName?: string;
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (assignedTeamIds?: string[], invitedEmail?: string) => void;
@@ -49,6 +50,7 @@ interface AddMemberModalProps {
 
 export default function AddMemberModal({
   projectId,
+  projectName,
   isOpen,
   onClose,
   onSuccess,
@@ -85,6 +87,7 @@ export default function AddMemberModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId,
+          projectName: projectName?.trim() || undefined,
           email: email.trim(),
           role: selectedPermission,
           jobTitle: jobTitle.trim() || undefined,

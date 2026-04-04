@@ -7,6 +7,7 @@ interface CreateTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit?: (task: TaskFormData) => void;
+  assigneeOptions?: { id: string; name: string }[];
 }
 
 interface TaskFormData {
@@ -48,21 +49,10 @@ const tagOptions = [
   'coordination',
 ];
 
-const teamMembers = [
-  { id: '', name: 'Unassigned' },
-  { id: 'thao-duyen', name: 'Thao Duyen' },
-  { id: 'minh-anh', name: 'Minh Anh' },
-  { id: 'hoang-nam', name: 'Hoàng Nam' },
-  { id: 'thu-trang', name: 'Thu Trang' },
-  { id: 'tuan-kiet', name: 'Tuấn Kiệt' },
-  { id: 'mike-johnson', name: 'Mike Johnson' },
-  { id: 'sarah-wilson', name: 'Sarah Wilson' },
-  { id: 'david-chen', name: 'David Chen' },
-  { id: 'emma-taylor', name: 'Emma Taylor' },
-  { id: 'alex-rodriguez', name: 'Alex Rodriguez' },
-];
-
-export default function CreateTaskModal({ isOpen, onClose, onSubmit }: CreateTaskModalProps) {
+export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions }: CreateTaskModalProps) {
+  const teamMembers = assigneeOptions && assigneeOptions.length > 0
+    ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
+    : [{ id: '', name: 'Unassigned' }];
   const [formData, setFormData] = useState<TaskFormData>({
     title: '',
     status: 'todo',
