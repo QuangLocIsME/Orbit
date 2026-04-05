@@ -80,7 +80,9 @@ export default function Viewer3D({
   }, [adapter, selectedObjectId]);
 
   const handleWheel: WheelEventHandler<HTMLDivElement> = (event) => {
-    event.preventDefault();
+    if (event.cancelable) {
+      event.preventDefault();
+    }
     setInteraction((current) => ({
       ...current,
       scale: clampScale(current.scale + (event.deltaY < 0 ? 0.1 : -0.1)),

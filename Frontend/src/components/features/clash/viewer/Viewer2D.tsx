@@ -81,7 +81,9 @@ export default function Viewer2D({
   const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
 
   const handleWheel: WheelEventHandler<HTMLDivElement> = (event) => {
-    event.preventDefault();
+    if (event.cancelable) {
+      event.preventDefault();
+    }
     setInteraction((current) => ({
       ...current,
       scale: clampScale(current.scale + (event.deltaY < 0 ? 0.1 : -0.1)),

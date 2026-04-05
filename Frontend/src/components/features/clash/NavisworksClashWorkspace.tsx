@@ -340,13 +340,23 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
 
   const zeroClashesAfterRun = Boolean(runPayload?.run && runPayload.run.summary.total === 0);
 
+  const normalizeAssigneeForDisplay = useCallback(
+    (rawAssignee?: string | null) => {
+      const value = (rawAssignee || '').trim();
+      if (!value || value === 'Unassigned') return 'Unassigned';
+      const matchedMember = projectMembers.find((member) => member.userId === value);
+      return matchedMember ? memberLabel(matchedMember) : value;
+    },
+    [projectMembers]
+  );
+
   useEffect(() => {
     if (!selectedResult) return;
     clearInspectorActionBanner();
     setSelectedObjectId(selectedResult.objectA);
     setNoteDraft(selectedResult.note || '');
-    setAssigneeDraft(selectedResult.assignee || 'Unassigned');
-  }, [clearInspectorActionBanner, selectedResult?.clashId]);
+    setAssigneeDraft(normalizeAssigneeForDisplay(selectedResult.assignee));
+  }, [clearInspectorActionBanner, normalizeAssigneeForDisplay, selectedResult?.assignee, selectedResult?.clashId]);
 
   useEffect(() => {
     if (!selectedResult) clearInspectorActionBanner();
@@ -1074,13 +1084,22 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                     </button>
                     <div className="space-y-2">
                       {workspace?.clashTests.map((test: ClashTest) => (
-                        <button
+                        <div
                           key={test.id}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
                             setSelectedTestId(test.id);
                             setSelectedClashId(null);
                             setShowClashInMainViewer(true);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              setSelectedTestId(test.id);
+                              setSelectedClashId(null);
+                              setShowClashInMainViewer(true);
+                            }
                           }}
                           className={cn(
                             'w-full rounded-lg border p-3 text-left',
@@ -1110,7 +1129,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                               <span>Resolved {test.latestRun.summary.resolved}</span>
                             </div>
                           )}
-                        </button>
+                        </div>
                       ))}
                     </div>
                     <div className="rounded-lg border border-dashed border-[#D1D5DC] p-3">
@@ -1762,56 +1781,58 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
             onDragLeave={handleStageDragLeave}
             onDrop={handleStageDrop}
           >
-            <div className="pointer-events-none absolute left-3 right-3 top-3 z-10 flex flex-wrap items-center justify-between gap-2 md:left-4 md:right-4">
-              <div className="pointer-events-auto max-w-[min(100%,20rem)] rounded-lg border border-[#E5E7EB] bg-white/95 px-3 py-2 shadow-sm backdrop-blur-sm">
-                <p className="truncate text-xs font-medium text-[#101828]">{selectedTest?.name || 'No test'}</p>
-                <p className="text-[11px] text-[#6A7282]">
-                  {runPayload?.run
-                    ? `${new Date(runPayload.run.completedAt).toLocaleString()} · ${runPayload.run.summary.total} clashes`
-                    : 'Run a test from the sidebar.'}
-                </p>
-              </div>
-              <div className="pointer-events-auto flex items-center gap-2">
-                <div className="flex rounded-lg border border-[#E5E7EB] bg-white/95 p-0.5 shadow-sm backdrop-blur-sm">
-                  <button
-                    type="button"
-                    onClick={() => setPlaneView('2d')}
-                    className={cn('rounded-md px-3 py-1.5 text-xs font-medium', planeView === '2d' ? 'bg-[#155DFC] text-white' : 'text-[#4A5565] hover:bg-[#F3F4F6]')}
-                  >
-                    2D
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPlaneView('3d')}
-                    className={cn('rounded-md px-3 py-1.5 text-xs font-medium', planeView === '3d' ? 'bg-[#155DFC] text-white' : 'text-[#4A5565] hover:bg-[#F3F4F6]')}
-                  >
-                    3D
-                  </button>
+            {models.length > 0 && (
+              <div className="pointer-events-none absolute left-3 right-3 top-3 z-10 flex flex-wrap items-center justify-between gap-2 md:left-4 md:right-4">
+                <div className="pointer-events-auto max-w-[min(100%,20rem)] rounded-lg border border-[#E5E7EB] bg-white/95 px-3 py-2 shadow-sm backdrop-blur-sm">
+                  <p className="truncate text-xs font-medium text-[#101828]">{selectedTest?.name || 'No test'}</p>
+                  <p className="text-[11px] text-[#6A7282]">
+                    {runPayload?.run
+                      ? `${new Date(runPayload.run.completedAt).toLocaleString()} · ${runPayload.run.summary.total} clashes`
+                      : 'Run a test from the sidebar.'}
+                  </p>
                 </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    {/* <button
+                <div className="pointer-events-auto flex items-center gap-2">
+                  <div className="flex rounded-lg border border-[#E5E7EB] bg-white/95 p-0.5 shadow-sm backdrop-blur-sm">
+                    <button
                       type="button"
-                      className="rounded-lg border border-[#E5E7EB] bg-white/95 p-2 shadow-sm backdrop-blur-sm text-[#364153] hover:bg-gray-50"
-                      aria-expanded={sidebarOpen}
-                      aria-controls={sidebarPanelId}
-                      onClick={() => {
-                        setSidebarOpen(true);
-                        setSidebarTab('select');
-                      }}
+                      onClick={() => setPlaneView('2d')}
+                      className={cn('rounded-md px-3 py-1.5 text-xs font-medium', planeView === '2d' ? 'bg-[#155DFC] text-white' : 'text-[#4A5565] hover:bg-[#F3F4F6]')}
                     >
-                      <PanelLeft className="size-5" aria-hidden />
-                    </button> */}
-                  </TooltipTrigger>
-                  <TooltipContent side="left">Open sidebar</TooltipContent>
-                </Tooltip>
+                      2D
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlaneView('3d')}
+                      className={cn('rounded-md px-3 py-1.5 text-xs font-medium', planeView === '3d' ? 'bg-[#155DFC] text-white' : 'text-[#4A5565] hover:bg-[#F3F4F6]')}
+                    >
+                      3D
+                    </button>
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      {/* <button
+                        type="button"
+                        className="rounded-lg border border-[#E5E7EB] bg-white/95 p-2 shadow-sm backdrop-blur-sm text-[#364153] hover:bg-gray-50"
+                        aria-expanded={sidebarOpen}
+                        aria-controls={sidebarPanelId}
+                        onClick={() => {
+                          setSidebarOpen(true);
+                          setSidebarTab('select');
+                        }}
+                      >
+                        <PanelLeft className="size-5" aria-hidden />
+                      </button> */}
+                    </TooltipTrigger>
+                    <TooltipContent side="left">Open sidebar</TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
-            </div>
+            )}
 
             {models.length === 0 && (
               <div className={cn(
-                'absolute inset-0 z-[1] flex flex-col items-center justify-center gap-3 p-6 text-center transition-colors',
-                dragActive ? 'bg-[#EFF6FF]/95' : 'bg-[#F9FAFB]/90'
+                'absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#F9FAFB] p-6 text-center transition-colors',
+                dragActive && 'bg-[#EFF6FF]'
               )}>
                 <p className="text-sm font-medium text-[#101828]">Drop IFC or JSON here</p>
                 <p className="max-w-sm text-xs text-[#6A7282]">Or use Import in the header / sidebar. The Clash Detective panel opens after a successful import.</p>

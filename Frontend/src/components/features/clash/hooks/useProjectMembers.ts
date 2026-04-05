@@ -13,6 +13,12 @@ export interface ProjectMemberRow {
   fullName: string | null;
   email: string | null;
   avatar: string | null;
+  user?: {
+    fullName?: string | null;
+    name?: string | null;
+    email?: string | null;
+    avatar?: string | null;
+  } | null;
 }
 
 async function fetchProjectMembers(projectId: string): Promise<ProjectMemberRow[]> {
@@ -26,7 +32,14 @@ async function fetchProjectMembers(projectId: string): Promise<ProjectMemberRow[
   });
   if (!response.ok) return [];
   const payload = await response.json();
-  return Array.isArray(payload?.data) ? payload.data : [];
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.map((row: ProjectMemberRow) => ({
+    ...row,
+    // Some API responses nest profile fields under `user`.
+    fullName: row.fullName ?? row.user?.fullName ?? row.user?.name ?? null,
+    email: row.email ?? row.user?.email ?? null,
+    avatar: row.avatar ?? row.user?.avatar ?? null,
+  }));
 }
 
 export function memberLabel(member: ProjectMemberRow): string {
@@ -34,7 +47,7 @@ export function memberLabel(member: ProjectMemberRow): string {
   if (name) return name;
   const email = member.email?.trim();
   if (email) return email;
-  return member.userId;
+  return 'Unknown member';
 }
 
 export function useProjectMembers(projectId: string | undefined | null) {

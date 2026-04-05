@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
@@ -45,10 +46,6 @@ interface TeamMemberView {
 }
 
 const avatarColors = ['bg-pink-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-blue-500', 'bg-teal-500', 'bg-orange-500'];
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/** Workspace mẫu trên disk (Backend/data/navisworks/projects/4/) khi chưa map API project. */
-const NAVISWORKS_DISK_SAMPLE_KEY = '4';
 
 const getInitials = (name: string) => {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -58,12 +55,9 @@ const getInitials = (name: string) => {
 
 const mockTeamMembers: TeamMemberView[] = [];
 
-/**
- * Dùng publicId nếu đã là UUID; fallback về workspace mẫu disk.
- */
+/** Use project publicId as Navisworks workspace key. */
 function computeNavisworksApiKey(projectPublicId?: string): string {
-  if (projectPublicId && UUID_RE.test(projectPublicId)) return projectPublicId;
-  return NAVISWORKS_DISK_SAMPLE_KEY;
+  return (projectPublicId || '').trim();
 }
 const mockTeamMembersForReviewers = [
   { id: '1', name: 'Thao Duyen', role: 'Design Lead', avatar: 'TD', color: 'bg-pink-500', isOnline: true },
@@ -2649,11 +2643,14 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 function ProjectDetailPageWithClashProvider(props: ProjectDetailPageProps) {
   const { project } = props;
   const clashViewerKey = computeNavisworksApiKey(project.publicId);
+  const [queryClient] = useState(() => new QueryClient());
 
   return (
-    <ClashViewerProvider projectSlug={clashViewerKey}>
-      <ProjectDetailPageContent {...props} />
-    </ClashViewerProvider>
+    <QueryClientProvider client={queryClient}>
+      <ClashViewerProvider projectSlug={clashViewerKey}>
+        <ProjectDetailPageContent {...props} />
+      </ClashViewerProvider>
+    </QueryClientProvider>
   );
 }
 
