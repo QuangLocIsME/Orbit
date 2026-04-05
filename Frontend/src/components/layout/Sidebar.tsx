@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
 import type { Project } from '../../types';
 
