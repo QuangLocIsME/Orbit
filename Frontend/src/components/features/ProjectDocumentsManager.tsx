@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight, Eye, Download, Trash2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
+import { workspaceKeys } from '@/components/features/clash/hooks/useNavisworksWorkspace';
 
 interface ProjectDocumentsManagerProps {
   projectId: string;
@@ -81,6 +83,7 @@ function deriveLocation(
 }
 
 export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsManagerProps) {
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
@@ -215,6 +218,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
       }
 
       toast.success(payload?.mode === 'queue' ? 'Large file queued for background processing' : 'File uploaded successfully');
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.ifcDocuments(projectId) });
       await loadDocuments();
     } finally {
       setIsUploading(false);

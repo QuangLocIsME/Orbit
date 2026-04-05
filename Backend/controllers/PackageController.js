@@ -665,7 +665,8 @@ class PackageController {
                 originalName: file.originalname,
             });
 
-            if (file.size <= SYNC_UPLOAD_MAX_BYTES) {
+            // Shared helper: upload file bytes to S3, create document record, enqueue IFC conversion.
+            const doSyncUpload = async () => {
                 const body = fs.readFileSync(file.path);
                 await s3Client.send(
                     new PutObjectCommand({
@@ -689,7 +690,7 @@ class PackageController {
                     storedName: path.basename(s3Key),
                     mimeType: file.mimetype || '',
                     size: file.size || 0,
-                    extension: path.extname(file.originalname || '').replace('.', '').toLowerCase(),
+                    extension: ext.replace('.', ''),
                     storageProvider: getStorageProvider(),
                     storageEndpoint: S3_ENDPOINT || '',
                     s3Bucket: S3_BUCKET,
@@ -714,17 +715,25 @@ class PackageController {
                 }
 
                 if (isIfcFile) {
-                    await publishIfcConversionJob({
-                        projectId: normalizedProjectId,
-                        documentId: document.publicId,
-                        versionId: document.publicId,
-                        ifcS3Bucket: document.s3Bucket,
-                        ifcS3Key: document.s3Key,
-                    });
+                    try {
+                        await publishIfcConversionJob({
+                            projectId: normalizedProjectId,
+                            documentId: document.publicId,
+                            versionId: document.publicId,
+                            ifcS3Bucket: document.s3Bucket,
+                            ifcS3Key: document.s3Key,
+                        });
+                    } catch (queueErr) {
+                        console.warn('[Upload] RabbitMQ unavailable — IFC conversion job skipped:', queueErr.message);
+                    }
                 }
 
                 fs.unlink(file.path, () => {});
+                return document;
+            };
 
+            if (file.size <= SYNC_UPLOAD_MAX_BYTES) {
+                const document = await doSyncUpload();
                 return res.status(201).json({
                     success: true,
                     mode: 'sync',
@@ -739,36 +748,56 @@ class PackageController {
                 });
             }
 
-            const uploadJob = await UploadJobRepository.createJob({
-                projectId: normalizedProjectId,
-                packageId: targetPackageId,
-                uploaderId: userId,
-                fileOriginalName: file.originalname,
-                mimeType: file.mimetype || '',
-                size: file.size || 0,
-                folderType,
-                folderPath,
-                tempFilePath: file.path,
-                s3Bucket: S3_BUCKET,
-                s3Key,
-                storageProvider: getStorageProvider(),
-                storageEndpoint: S3_ENDPOINT || '',
-                status: 'queued',
-                progress: 0,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-            });
+            // Large file: try queue first, fall back to sync if RabbitMQ unavailable.
+            try {
+                const uploadJob = await UploadJobRepository.createJob({
+                    projectId: normalizedProjectId,
+                    packageId: targetPackageId,
+                    uploaderId: userId,
+                    fileOriginalName: file.originalname,
+                    mimeType: file.mimetype || '',
+                    size: file.size || 0,
+                    folderType,
+                    folderPath,
+                    tempFilePath: file.path,
+                    s3Bucket: S3_BUCKET,
+                    s3Key,
+                    storageProvider: getStorageProvider(),
+                    storageEndpoint: S3_ENDPOINT || '',
+                    status: 'queued',
+                    progress: 0,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                });
 
-            await publishPackageUpload(uploadJob.publicId);
+                await publishPackageUpload(uploadJob.publicId);
 
-            return res.status(202).json({
+                return res.status(202).json({
+                    success: true,
+                    mode: 'queue',
+                    message: 'Upload queued for background processing',
+                    data: {
+                        jobId: uploadJob.publicId,
+                        status: uploadJob.status,
+                        progress: uploadJob.progress,
+                    },
+                });
+            } catch (queueErr) {
+                console.warn('[Upload] Queue unavailable for large file, falling back to sync:', queueErr.message);
+            }
+
+            // Sync fallback for large files when queue is unavailable.
+            const document = await doSyncUpload();
+            return res.status(201).json({
                 success: true,
-                mode: 'queue',
-                message: 'Upload queued for background processing',
+                mode: 'sync',
+                message: 'Upload completed',
                 data: {
-                    jobId: uploadJob.publicId,
-                    status: uploadJob.status,
-                    progress: uploadJob.progress,
+                    documentPublicId: document.publicId,
+                    folderType: document.folderType,
+                    folderPath: document.folderPath,
+                    s3Key: document.s3Key,
+                    s3Url: document.s3Url,
                 },
             });
         } catch (error) {

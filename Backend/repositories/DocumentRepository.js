@@ -21,6 +21,12 @@ class DocumentRepository {
         return await Document.find({ projectId }).sort({ createdAt: -1 });
     }
 
+    async listIfcByProject(projectId) {
+        return await Document.find({ projectId, originalName: { $regex: /\.ifc$/i } })
+            .sort({ createdAt: -1 })
+            .select('publicId originalName folderPath folderType size createdAt s3Bucket s3Key');
+    }
+
     async updateNameByPublicId(publicId, originalName) {
         return await Document.findOneAndUpdate(
             { publicId },
