@@ -1,0 +1,913 @@
+{
+  "mobile-banking-app": {
+    "vault-wall-001__secure-pipe-001": {
+      "resolved": true,
+      "note": "Resolved from backend API test",
+      "severity": "high",
+      "updatedAt": "2026-04-02T04:34:39.927Z",
+      "history": [
+        {
+          "id": "resolved-2026-04-02T04:34:39.927Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T04:34:39.927Z"
+        }
+      ]
+    },
+    "vault-wall-001__security-slab-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "medium",
+      "updatedAt": "2026-04-02T10:29:39.560Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T10:29:21.888Z",
+          "type": "created",
+          "message": "Clash detected between vault-wall-001 and security-slab-001.",
+          "timestamp": "2026-04-02T10:29:21.888Z"
+        },
+        {
+          "id": "focused-2026-04-02T10:29:35.875Z",
+          "type": "focused",
+          "message": "Focused clash vault-wall-001__security-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T10:29:35.875Z"
+        },
+        {
+          "id": "focused-2026-04-02T10:29:38.410Z",
+          "type": "focused",
+          "message": "Focused clash vault-wall-001__security-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T10:29:38.410Z"
+        },
+        {
+          "id": "resolved-2026-04-02T10:29:39.555Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T10:29:39.555Z"
+        },
+        {
+          "id": "resolved-2026-04-02T10:29:39.560Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T10:29:39.560Z"
+        }
+      ]
+    }
+  },
+  "metro-station-phase-2": {
+    "wall-001__pipe-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "low",
+      "updatedAt": "2026-04-02T14:54:57.568Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T04:47:12.148Z",
+          "type": "created",
+          "message": "Clash detected between wall-001 and pipe-001.",
+          "timestamp": "2026-04-02T04:47:12.148Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T04:47:14.947Z",
+          "type": "focused",
+          "message": "Focused clash wall-001__pipe-001 in the viewer.",
+          "timestamp": "2026-04-02T04:47:14.947Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T04:47:23.793Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T04:47:23.793Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T04:47:23.797Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T04:47:23.797Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:49:14.459Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:49:14.459Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:40.974Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:40.974Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:42.051Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:42.051Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:42.669Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:42.669Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:45.795Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:45.795Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:55.618Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:55.618Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:56.896Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:56.896Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:57.568Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:57.568Z",
+          "user": null
+        }
+      ],
+      "stale": true
+    },
+    "wall-001__slab-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "low",
+      "updatedAt": "2026-04-02T14:54:57.568Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T13:14:03.528Z",
+          "type": "created",
+          "message": "Clash detected between wall-001 and slab-001.",
+          "timestamp": "2026-04-02T13:14:03.528Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T13:14:34.261Z",
+          "type": "focused",
+          "message": "Focused clash wall-001__slab-001 in the viewer.",
+          "timestamp": "2026-04-02T13:14:34.261Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T13:16:26.285Z",
+          "type": "focused",
+          "message": "Focused clash wall-001__slab-001 in the viewer.",
+          "timestamp": "2026-04-02T13:16:26.285Z",
+          "user": null
+        },
+        {
+          "id": "severity-changed-2026-04-02T13:18:20.156Z",
+          "type": "severity-changed",
+          "message": "Severity changed to high.",
+          "timestamp": "2026-04-02T13:18:20.156Z",
+          "user": null
+        },
+        {
+          "id": "severity-changed-2026-04-02T13:18:21.478Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T13:18:21.478Z",
+          "user": null
+        },
+        {
+          "id": "severity-changed-2026-04-02T13:18:22.667Z",
+          "type": "severity-changed",
+          "message": "Severity changed to low.",
+          "timestamp": "2026-04-02T13:18:22.667Z",
+          "user": null
+        },
+        {
+          "id": "note-added-2026-04-02T13:18:22.674Z",
+          "type": "note-added",
+          "message": "Updated clash resolution details.",
+          "timestamp": "2026-04-02T13:18:22.674Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T13:33:00.774Z",
+          "type": "focused",
+          "message": "Focused clash wall-001__slab-001 in the viewer.",
+          "timestamp": "2026-04-02T13:33:00.774Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T13:33:05.605Z",
+          "type": "focused",
+          "message": "Focused clash wall-001__slab-001 in the viewer.",
+          "timestamp": "2026-04-02T13:33:05.605Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T13:33:20.126Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T13:33:20.126Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T13:33:20.132Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T13:33:20.132Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:49:14.462Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:49:14.462Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:40.975Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:40.975Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:42.053Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:42.053Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:42.672Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:42.672Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:45.796Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:45.796Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:55.619Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:55.619Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:56.897Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:56.897Z",
+          "user": null
+        },
+        {
+          "id": "stale-2026-04-02T14:54:57.568Z",
+          "type": "stale",
+          "message": "Clash no longer detected — objects may have been moved or modified.",
+          "timestamp": "2026-04-02T14:54:57.568Z",
+          "user": null
+        }
+      ],
+      "stale": true
+    },
+    "pipe-001__wall-001": {
+      "resolved": false,
+      "waived": true,
+      "status": "waived",
+      "note": "",
+      "severity": "medium",
+      "assignedTo": "Unassigned",
+      "dueDate": null,
+      "updatedAt": "2026-04-02T14:55:56.228Z",
+      "createdAt": "2026-04-02T14:55:56.228Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T14:54:57.576Z",
+          "type": "created",
+          "message": "Clash detected between wall-001 and pipe-001.",
+          "timestamp": "2026-04-02T14:54:57.576Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T14:55:15.024Z",
+          "type": "focused",
+          "message": "Focused clash pipe-001__wall-001 in the viewer.",
+          "timestamp": "2026-04-02T14:55:15.024Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T14:55:56.223Z",
+          "type": "resolved",
+          "message": "Clash waived — no fix required.",
+          "timestamp": "2026-04-02T14:55:56.223Z",
+          "user": null
+        },
+        {
+          "id": "waived-2026-04-02T14:55:56.228Z",
+          "type": "waived",
+          "message": "Clash waived (acknowledged, no fix required).",
+          "timestamp": "2026-04-02T14:55:56.228Z",
+          "user": null
+        }
+      ]
+    }
+  },
+  "office-complex-tower-a": {
+    "tower-wall-001__tower-duct-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "medium",
+      "updatedAt": "2026-04-02T05:02:31.769Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T05:01:21.054Z",
+          "type": "created",
+          "message": "Clash detected between tower-wall-001 and tower-duct-001.",
+          "timestamp": "2026-04-02T05:01:21.054Z"
+        },
+        {
+          "id": "focused-2026-04-02T05:02:00.744Z",
+          "type": "focused",
+          "message": "Focused clash tower-wall-001__tower-duct-001 in the viewer.",
+          "timestamp": "2026-04-02T05:02:00.744Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T05:02:10.032Z",
+          "type": "severity-changed",
+          "message": "Severity changed to high.",
+          "timestamp": "2026-04-02T05:02:10.032Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T05:02:10.773Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T05:02:10.773Z"
+        },
+        {
+          "id": "resolved-2026-04-02T05:02:31.766Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T05:02:31.766Z"
+        },
+        {
+          "id": "resolved-2026-04-02T05:02:31.769Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T05:02:31.769Z"
+        }
+      ]
+    },
+    "tower-column-001__tower-cabletray-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "low",
+      "updatedAt": "2026-04-02T13:32:54.413Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T13:32:12.553Z",
+          "type": "created",
+          "message": "Clash detected between tower-column-001 and tower-cabletray-001.",
+          "timestamp": "2026-04-02T13:32:12.553Z"
+        },
+        {
+          "id": "focused-2026-04-02T13:32:14.433Z",
+          "type": "focused",
+          "message": "Focused clash tower-column-001__tower-cabletray-001 in the viewer.",
+          "timestamp": "2026-04-02T13:32:14.433Z"
+        },
+        {
+          "id": "focused-2026-04-02T13:32:34.095Z",
+          "type": "focused",
+          "message": "Focused clash tower-column-001__tower-cabletray-001 in the viewer.",
+          "timestamp": "2026-04-02T13:32:34.095Z"
+        },
+        {
+          "id": "resolved-2026-04-02T13:32:54.406Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T13:32:54.406Z"
+        },
+        {
+          "id": "resolved-2026-04-02T13:32:54.413Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T13:32:54.413Z"
+        }
+      ]
+    }
+  },
+  "ecommerce-platform-v2": {
+    "commerce-column-001__commerce-slab-001": {
+      "resolved": false,
+      "note": "",
+      "severity": "high",
+      "updatedAt": "2026-04-02T05:10:00.110Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T05:05:09.677Z",
+          "type": "created",
+          "message": "Clash detected between commerce-column-001 and commerce-slab-001.",
+          "timestamp": "2026-04-02T05:05:09.677Z"
+        },
+        {
+          "id": "focused-2026-04-02T05:05:32.034Z",
+          "type": "focused",
+          "message": "Focused clash commerce-column-001__commerce-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T05:05:32.034Z"
+        },
+        {
+          "id": "focused-2026-04-02T05:09:05.807Z",
+          "type": "focused",
+          "message": "Focused clash commerce-column-001__commerce-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T05:09:05.807Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T05:09:59.417Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T05:09:59.417Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T05:10:00.107Z",
+          "type": "severity-changed",
+          "message": "Severity changed to high.",
+          "timestamp": "2026-04-02T05:10:00.107Z"
+        },
+        {
+          "id": "note-added-2026-04-02T05:10:00.110Z",
+          "type": "note-added",
+          "message": "Updated clash resolution details.",
+          "timestamp": "2026-04-02T05:10:00.110Z"
+        }
+      ]
+    }
+  },
+  "company-website-redesign": {
+    "website-wall-001__website-pipe-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "low",
+      "updatedAt": "2026-04-02T09:29:36.076Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T09:28:42.281Z",
+          "type": "created",
+          "message": "Clash detected between website-wall-001 and website-pipe-001.",
+          "timestamp": "2026-04-02T09:28:42.281Z"
+        },
+        {
+          "id": "focused-2026-04-02T09:29:18.814Z",
+          "type": "focused",
+          "message": "Focused clash website-wall-001__website-pipe-001 in the viewer.",
+          "timestamp": "2026-04-02T09:29:18.814Z"
+        },
+        {
+          "id": "resolved-2026-04-02T09:29:36.071Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T09:29:36.071Z"
+        },
+        {
+          "id": "resolved-2026-04-02T09:29:36.076Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T09:29:36.076Z"
+        }
+      ]
+    },
+    "website-column-001__website-slab-001": {
+      "resolved": true,
+      "note": "",
+      "severity": "low",
+      "updatedAt": "2026-04-02T09:29:48.677Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T09:29:42.305Z",
+          "type": "created",
+          "message": "Clash detected between website-column-001 and website-slab-001.",
+          "timestamp": "2026-04-02T09:29:42.305Z"
+        },
+        {
+          "id": "focused-2026-04-02T09:29:45.030Z",
+          "type": "focused",
+          "message": "Focused clash website-column-001__website-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T09:29:45.030Z"
+        },
+        {
+          "id": "resolved-2026-04-02T09:29:48.673Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T09:29:48.673Z"
+        },
+        {
+          "id": "resolved-2026-04-02T09:29:48.677Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T09:29:48.677Z"
+        }
+      ]
+    },
+    "website-tray-001__website-beam-001": {
+      "resolved": true,
+      "note": "Test",
+      "severity": "low",
+      "updatedAt": "2026-04-02T10:29:14.747Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T10:24:13.345Z",
+          "type": "created",
+          "message": "Clash detected between website-tray-001 and website-beam-001.",
+          "timestamp": "2026-04-02T10:24:13.345Z"
+        },
+        {
+          "id": "focused-2026-04-02T10:24:16.172Z",
+          "type": "focused",
+          "message": "Focused clash website-tray-001__website-beam-001 in the viewer.",
+          "timestamp": "2026-04-02T10:24:16.172Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:42.854Z",
+          "type": "severity-changed",
+          "message": "Severity changed to high.",
+          "timestamp": "2026-04-02T10:24:42.854Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:43.282Z",
+          "type": "severity-changed",
+          "message": "Severity changed to low.",
+          "timestamp": "2026-04-02T10:24:43.282Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:43.604Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T10:24:43.604Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:43.918Z",
+          "type": "severity-changed",
+          "message": "Severity changed to high.",
+          "timestamp": "2026-04-02T10:24:43.918Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:44.278Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T10:24:44.278Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:44.630Z",
+          "type": "severity-changed",
+          "message": "Severity changed to low.",
+          "timestamp": "2026-04-02T10:24:44.630Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:45.020Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T10:24:45.020Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:45.306Z",
+          "type": "severity-changed",
+          "message": "Severity changed to high.",
+          "timestamp": "2026-04-02T10:24:45.306Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:46.806Z",
+          "type": "severity-changed",
+          "message": "Severity changed to medium.",
+          "timestamp": "2026-04-02T10:24:46.806Z"
+        },
+        {
+          "id": "severity-changed-2026-04-02T10:24:47.300Z",
+          "type": "severity-changed",
+          "message": "Severity changed to low.",
+          "timestamp": "2026-04-02T10:24:47.300Z"
+        },
+        {
+          "id": "note-added-2026-04-02T10:24:47.303Z",
+          "type": "note-added",
+          "message": "Updated clash resolution details.",
+          "timestamp": "2026-04-02T10:24:47.303Z"
+        },
+        {
+          "id": "focused-2026-04-02T10:24:56.192Z",
+          "type": "focused",
+          "message": "Focused clash website-tray-001__website-beam-001 in the viewer.",
+          "timestamp": "2026-04-02T10:24:56.192Z"
+        },
+        {
+          "id": "resolved-2026-04-02T10:29:14.742Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T10:29:14.742Z"
+        },
+        {
+          "id": "resolved-2026-04-02T10:29:14.747Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T10:29:14.747Z"
+        }
+      ]
+    }
+  },
+  "test-proj": {
+    "clash-001": {
+      "resolved": false,
+      "waived": true,
+      "status": "waived",
+      "note": "Acceptable gap",
+      "severity": null,
+      "assignedTo": null,
+      "dueDate": null,
+      "updatedAt": "2026-04-02T14:20:59.704Z",
+      "createdAt": "2026-04-02T14:20:59.704Z",
+      "history": [
+        {
+          "id": "waived-2026-04-02T14:20:59.704Z",
+          "type": "waived",
+          "message": "Clash waived (acknowledged, no fix required).",
+          "timestamp": "2026-04-02T14:20:59.704Z",
+          "user": "Admin"
+        }
+      ]
+    },
+    "clash-002": {
+      "resolved": false,
+      "waived": false,
+      "status": "open",
+      "note": "",
+      "severity": null,
+      "assignedTo": "Minh Anh",
+      "dueDate": "2026-05-01",
+      "updatedAt": "2026-04-02T14:20:59.711Z",
+      "createdAt": "2026-04-02T14:20:59.711Z",
+      "history": [
+        {
+          "id": "assigned-2026-04-02T14:20:59.711Z",
+          "type": "assigned",
+          "message": "Assigned to Minh Anh.",
+          "timestamp": "2026-04-02T14:20:59.711Z",
+          "user": null
+        }
+      ]
+    },
+    "clash-003": {
+      "resolved": true,
+      "waived": false,
+      "status": "resolved",
+      "note": "Fixed clearance",
+      "severity": null,
+      "assignedTo": null,
+      "dueDate": null,
+      "updatedAt": "2026-04-02T14:20:59.711Z",
+      "createdAt": "2026-04-02T14:20:59.711Z",
+      "history": [
+        {
+          "id": "resolved-2026-04-02T14:20:59.711Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T14:20:59.711Z",
+          "user": null
+        }
+      ]
+    }
+  },
+  "__stale_test__": {
+    "fake-pipe-001__fake-beam-001": {
+      "resolved": false,
+      "waived": false,
+      "status": "open",
+      "note": "Looking into it",
+      "severity": null,
+      "assignedTo": "Minh Anh",
+      "dueDate": null,
+      "updatedAt": "2026-04-02T14:47:29.062Z",
+      "createdAt": "2026-04-02T14:47:29.062Z",
+      "history": [
+        {
+          "id": "assigned-2026-04-02T14:47:29.062Z",
+          "type": "assigned",
+          "message": "Assigned to Minh Anh.",
+          "timestamp": "2026-04-02T14:47:29.062Z",
+          "user": null
+        }
+      ]
+    }
+  },
+  "ui-ux-design-system": {
+    "design-pipe-001__design-wall-001": {
+      "resolved": true,
+      "waived": false,
+      "status": "resolved",
+      "note": "",
+      "severity": "medium",
+      "assignedTo": "Minh Anh",
+      "dueDate": "2026-04-17",
+      "updatedAt": "2026-04-02T15:09:29.775Z",
+      "createdAt": "2026-04-02T15:08:49.987Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T15:07:43.184Z",
+          "type": "created",
+          "message": "Clash detected between design-wall-001 and design-pipe-001.",
+          "timestamp": "2026-04-02T15:07:43.184Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T15:07:46.701Z",
+          "type": "focused",
+          "message": "Focused clash design-pipe-001__design-wall-001 in the viewer.",
+          "timestamp": "2026-04-02T15:07:46.701Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T15:07:56.249Z",
+          "type": "focused",
+          "message": "Focused clash design-pipe-001__design-wall-001 in the viewer.",
+          "timestamp": "2026-04-02T15:07:56.249Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:08:49.965Z",
+          "type": "resolved",
+          "message": "Assigned to Thao Duyen.",
+          "timestamp": "2026-04-02T15:08:49.965Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:08:52.048Z",
+          "type": "resolved",
+          "message": "Assigned to Thao Duyen.",
+          "timestamp": "2026-04-02T15:08:52.048Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:08:52.405Z",
+          "type": "resolved",
+          "message": "Assigned to Thao Duyen.",
+          "timestamp": "2026-04-02T15:08:52.405Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:08:52.625Z",
+          "type": "resolved",
+          "message": "Assigned to Thao Duyen.",
+          "timestamp": "2026-04-02T15:08:52.625Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:09:12.392Z",
+          "type": "resolved",
+          "message": "Assigned to Thao Duyen.",
+          "timestamp": "2026-04-02T15:09:12.392Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:09:13.375Z",
+          "type": "resolved",
+          "message": "Assigned to Thao Duyen.",
+          "timestamp": "2026-04-02T15:09:13.375Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:09:16.839Z",
+          "type": "resolved",
+          "message": "Assigned to Minh Anh.",
+          "timestamp": "2026-04-02T15:09:16.839Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:09:29.772Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T15:09:29.772Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:09:29.775Z",
+          "type": "resolved",
+          "message": "Marked clash as resolved.",
+          "timestamp": "2026-04-02T15:09:29.775Z",
+          "user": null
+        }
+      ]
+    },
+    "design-beam-001__design-tray-001": {
+      "resolved": false,
+      "waived": true,
+      "status": "waived",
+      "note": "",
+      "severity": "high",
+      "assignedTo": "Unassigned",
+      "dueDate": null,
+      "updatedAt": "2026-04-02T15:10:40.066Z",
+      "createdAt": "2026-04-02T15:10:40.066Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T15:09:54.634Z",
+          "type": "created",
+          "message": "Clash detected between design-tray-001 and design-beam-001.",
+          "timestamp": "2026-04-02T15:09:54.634Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T15:09:56.024Z",
+          "type": "focused",
+          "message": "Focused clash design-beam-001__design-tray-001 in the viewer.",
+          "timestamp": "2026-04-02T15:09:56.024Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T15:10:12.617Z",
+          "type": "focused",
+          "message": "Focused clash design-beam-001__design-tray-001 in the viewer.",
+          "timestamp": "2026-04-02T15:10:12.617Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:10:40.059Z",
+          "type": "resolved",
+          "message": "Clash waived — no fix required.",
+          "timestamp": "2026-04-02T15:10:40.059Z",
+          "user": null
+        },
+        {
+          "id": "waived-2026-04-02T15:10:40.066Z",
+          "type": "waived",
+          "message": "Clash waived (acknowledged, no fix required).",
+          "timestamp": "2026-04-02T15:10:40.066Z",
+          "user": null
+        }
+      ]
+    },
+    "design-column-001__design-slab-001": {
+      "resolved": false,
+      "waived": true,
+      "status": "waived",
+      "note": "",
+      "severity": "low",
+      "assignedTo": "Unassigned",
+      "dueDate": null,
+      "updatedAt": "2026-04-02T15:11:06.008Z",
+      "createdAt": "2026-04-02T15:11:06.008Z",
+      "history": [
+        {
+          "id": "created-2026-04-02T15:09:54.634Z",
+          "type": "created",
+          "message": "Clash detected between design-column-001 and design-slab-001.",
+          "timestamp": "2026-04-02T15:09:54.634Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T15:11:01.228Z",
+          "type": "focused",
+          "message": "Focused clash design-column-001__design-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T15:11:01.228Z",
+          "user": null
+        },
+        {
+          "id": "focused-2026-04-02T15:11:03.828Z",
+          "type": "focused",
+          "message": "Focused clash design-column-001__design-slab-001 in the viewer.",
+          "timestamp": "2026-04-02T15:11:03.828Z",
+          "user": null
+        },
+        {
+          "id": "resolved-2026-04-02T15:11:06.001Z",
+          "type": "resolved",
+          "message": "Clash waived — no fix required.",
+          "timestamp": "2026-04-02T15:11:06.001Z",
+          "user": null
+        },
+        {
+          "id": "waived-2026-04-02T15:11:06.008Z",
+          "type": "waived",
+          "message": "Clash waived (acknowledged, no fix required).",
+          "timestamp": "2026-04-02T15:11:06.008Z",
+          "user": null
+        }
+      ]
+    }
+  }
+}

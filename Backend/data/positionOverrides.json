@@ -1,0 +1,49 @@
+{
+  "ecommerce-platform-v2": {},
+  "metro-station-phase-2": {
+    "pipe-001__wall-001": {
+      "objects": [
+        {
+          "id": "wall-001",
+          "position": [
+            -220,
+            4.5,
+            220
+          ]
+        },
+        {
+          "id": "pipe-001",
+          "position": [
+            22.5,
+            9,
+            -1.5000000000000013
+          ]
+        }
+      ],
+      "savedAt": "2026-04-02T14:56:24.895Z"
+    }
+  },
+  "ui-ux-design-system": {
+    "design-pipe-001__design-wall-001": {
+      "objects": [
+        {
+          "id": "design-wall-001",
+          "position": [
+            23.501220703124993,
+            4.2,
+            84.1256103515625
+          ]
+        },
+        {
+          "id": "design-pipe-001",
+          "position": [
+            16.499999999999993,
+            7.5,
+            -4.124999999999998
+          ]
+        }
+      ],
+      "savedAt": "2026-04-02T15:09:28.502Z"
+    }
+  }
+}
