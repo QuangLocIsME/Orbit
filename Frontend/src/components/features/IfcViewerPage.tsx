@@ -24,12 +24,14 @@ async function loadXeokitSdk(): Promise<XKTExports> {
       reject(new Error('SDK load timed out after 20s'));
     }, 20000);
 
+    const SDK_URL = 'https://cdn.jsdelivr.net/npm/@xeokit/xeokit-sdk@2.6.108/dist/xeokit-sdk.es.js';
     const script = document.createElement('script');
     script.type = 'module';
-    script.src = 'https://cdn.jsdelivr.net/npm/@xeokit/xeokit-sdk@2.6.108/dist/xeokit-sdk.es.js';
+    script.src = SDK_URL;
     script.onload = () => {
       clearTimeout(timeout);
-      import(script.src)
+      // Suppress Vite dynamic-import-vars warning — URL is fixed at runtime
+      import(/* @vite-ignore */ SDK_URL)
         .then((mod) => {
           if (mod && typeof mod === 'object' && Object.keys(mod).length > 0) {
             win.XKT = mod as XKTExports;
@@ -68,18 +70,12 @@ export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewe
         setStatus('loading');
         setError('');
 
-        console.log('[IfcViewer] Step 1: Fetching model URL', { modelEndpoint });
-
-        // 1. Fetch model URL from backend
         const res = await apiFetch(modelEndpoint, {
           method: 'GET',
           headers: { Accept: 'application/json' },
         });
 
-        console.log('[IfcViewer] Step 2: API response', { status: res.status });
-
         const payload = await res.json().catch(() => null);
-        console.log('[IfcViewer] Step 3: API payload', payload);
 
         if (!res.ok || !payload?.success) {
           const msg = payload?.message || `API error ${res.status}`;
@@ -93,26 +89,20 @@ export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewe
         const originalName: string = payload?.data?.originalName;
         if (!modelUrl) throw new Error('Missing model URL from backend');
 
-        console.log('[IfcViewer] Step 4: Got model URL', { modelUrl });
         setModelName(originalName || versionId);
 
-        // 2. Load xeokit SDK from CDN
         const XKT = await loadXeokitSdk();
-        console.log('[IfcViewer] Step 5: SDK loaded', { XKT_keys: Object.keys(XKT).slice(0, 10) });
 
         if (!XKT.Viewer) {
-          throw new Error(`xeokit SDK missing Viewer. Keys: ${Object.keys(XKT).slice(0, 5).join(', ')}`);
+          throw new Error('Failed to load 3D viewer library');
         }
 
         if (!mounted || !canvasRef.current) return;
-
         const canvas = canvasRef.current;
 
         // Wait until layout has non-zero size (otherwise WebGL buffer stays ~0×0 and fit fails)
         await new Promise<void>((resolve, reject) => {
-          const ok = () => canvas.clientWidth > 0 && canvas.clientHeight > 0;
-          console.log('[IfcViewer] Canvas size check', { w: canvas.clientWidth, h: canvas.clientHeight, ok: ok() });
-          if (ok()) {
+          if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
             resolve();
             return;
           }
@@ -121,7 +111,7 @@ export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewe
             reject(new Error('Viewer canvas has no size — check layout/CSS'));
           }, 10000);
           const ro = new ResizeObserver(() => {
-            if (ok()) {
+            if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
               window.clearTimeout(t);
               ro.disconnect();
               resolve();
@@ -129,7 +119,7 @@ export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewe
           });
           ro.observe(canvas);
           requestAnimationFrame(() => {
-            if (ok()) {
+            if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
               window.clearTimeout(t);
               ro.disconnect();
               resolve();
@@ -139,20 +129,14 @@ export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewe
 
         if (!mounted || !canvasRef.current) return;
 
-        // 3. Create viewer (opaque canvas so background matches UI even without Tailwind)
-        console.log('[IfcViewer] Step 6: Creating viewer');
         const viewer = new XKT.Viewer({
           canvasElement: canvas,
           transparent: false,
           backgroundColor: [0.05, 0.07, 0.125],
         });
         viewerRef.current = viewer;
-        console.log('[IfcViewer] Step 7: Viewer created', { viewer });
 
-        // 4. Load the XKT model (load() returns immediately; geometry loads asynchronously)
-        console.log('[IfcViewer] Step 8: Loading XKT model', { src: modelUrl });
         const xktLoader = new XKT.XKTLoaderPlugin(viewer);
-        console.log('[IfcViewer] XKTLoaderPlugin created', { xktLoader });
 
         const sceneModel = xktLoader.load({
           id: versionId,
@@ -160,60 +144,44 @@ export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewe
           edges: true,
           backfaces: true,
         });
-        console.log('[IfcViewer] Step 9: sceneModel loaded (async)', { sceneModel });
 
+        // Wait for geometry to load before fitting camera
         await new Promise<void>((resolve, reject) => {
           sceneModel.once('error', (msg: unknown) => {
-            console.error('[IfcViewer] sceneModel ERROR event', msg);
             reject(new Error(typeof msg === 'string' ? msg : 'Failed to load XKT model'));
           });
-          sceneModel.once('loaded', () => {
-            console.log('[IfcViewer] sceneModel LOADED event');
-            resolve();
-          });
-          // Also log progress
-          sceneModel.once('progress', (info: unknown) => {
-            console.log('[IfcViewer] sceneModel PROGRESS', info);
-          });
+          sceneModel.once('loaded', () => resolve());
         });
 
         if (!mounted) return;
 
-        console.log('[IfcViewer] Step 10: Model loaded, fitting camera');
-
-        // Fit camera to the loaded model after AABB & canvas are stable (avoids default camera "inside" mesh)
-        await new Promise<void>((requestAnimationFrameResolve) => {
+        // Fit camera to model
+        await new Promise<void>((resolve) => {
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               try {
                 const aabb = sceneModel.aabb as number[] | undefined;
-                console.log('[IfcViewer] Model AABB', aabb);
                 const valid =
                   aabb &&
                   aabb.length === 6 &&
                   aabb[3] > aabb[0] &&
                   aabb[4] > aabb[1] &&
                   aabb[5] > aabb[2];
-                // jumpTo() ignores params.component; use explicit aabb so fit targets this model only
                 if (valid) {
-                  console.log('[IfcViewer] jumpTo with AABB', { aabb, fit: true, fitFOV: 50 });
                   viewer.cameraFlight.jumpTo({ aabb, fit: true, fitFOV: 50 });
                 } else {
-                  console.log('[IfcViewer] jumpTo with scene (fallback)');
                   viewer.cameraFlight.jumpTo(viewer.scene);
                 }
-              } catch (err) {
-                console.error('[IfcViewer] jumpTo error', err);
+              } catch {
                 viewer.cameraFlight.jumpTo(viewer.scene);
               }
-              requestAnimationFrameResolve();
+              resolve();
             });
           });
         });
 
         if (mounted) setStatus('ready');
       } catch (e: unknown) {
-        console.error('[IfcViewer] FATAL ERROR', e);
         if (!mounted) return;
         setStatus('error');
         setError(e instanceof Error ? e.message : 'Failed to load model');
