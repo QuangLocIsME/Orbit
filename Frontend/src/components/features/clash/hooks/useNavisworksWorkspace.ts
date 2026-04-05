@@ -145,6 +145,8 @@ export const workspaceKeys = {
   root: (projectSlug: string) => ['navisworks', projectSlug] as const,
   workspace: (projectSlug: string) => ['navisworks', projectSlug, 'workspace'] as const,
   results: (projectSlug: string, testId: string | null) => ['navisworks', projectSlug, 'results', testId] as const,
+  /** IFC list for Clash "Import from Documents" modal — invalidate after document uploads */
+  ifcDocuments: (projectSlug: string) => ['navisworks-ifc-documents', projectSlug] as const,
 };
 
 export function useNavisworksClashResults(projectSlug: string, testId: string | null) {
@@ -289,9 +291,21 @@ export function useNavisworksWorkspace(projectSlug: string) {
     },
   });
 
+  const importFromDocuments = useMutation({
+    mutationFn: async (payload: { documentIds: string[] }) =>
+      fetchJson<{ success: true; skippedFiles: string[] }>(
+        apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/models/import-from-documents`),
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+    },
+  });
+
   return {
     workspaceQuery,
     importModels,
+    importFromDocuments,
     saveSelectionSet,
     deleteSelectionSet,
     saveClashTest,

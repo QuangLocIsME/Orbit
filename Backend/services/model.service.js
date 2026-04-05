@@ -197,15 +197,16 @@ const parseXktModel = (buffer, meta, projectSlug) => {
     };
 };
 
-let ifcApiPromise = null;
-
-const getIfcApi = async () => {
-    if (!ifcApiPromise) {
-        const api = new WebIFC.IfcAPI();
-        ifcApiPromise = api.Init().then(() => api);
-    }
-    return ifcApiPromise;
+// Create a fresh IfcAPI instance for each parse to avoid WASM heap exhaustion
+// across multiple large files.
+const createIfcApi = async () => {
+    const api = new WebIFC.IfcAPI();
+    await api.Init();
+    return api;
 };
+
+// 512 MB heap per model — the default ~17 MB causes RangeError on large IFC files.
+const IFC_MEMORY_LIMIT = 512 * 1024 * 1024;
 
 const MAX_CLASH_TRIANGLES_PER_OBJECT = Number(process.env.ORBIT_CLASH_MESH_MAX_TRIS || '80');
 const ORBIT_DISABLE_CLASH_MESH = process.env.ORBIT_DISABLE_CLASH_MESH === '1';
@@ -377,12 +378,12 @@ const bboxFromVertices = (vertices, matrix, scale = 1) => {
 };
 
 const parseIfcModel = async (buffer, meta) => {
-    const api = await getIfcApi();
+    const api = await createIfcApi();
     const sourceModelId = meta.sourceModelId || createId('model');
     const sourceModel = meta.sourceModel || meta.originalName || sourceModelId;
     const unitScale = asUnitScale(meta.unit || 'm');
     const importTransform = matrixFromInput(meta.transform);
-    const modelId = api.OpenModel(new Uint8Array(buffer), { COORDINATE_TO_ORIGIN: false });
+    const modelId = api.OpenModel(new Uint8Array(buffer), { COORDINATE_TO_ORIGIN: false, MEMORY_LIMIT: IFC_MEMORY_LIMIT });
     const objectsByExpressId = new Map();
 
     try {
@@ -587,6 +588,7 @@ class ModelService {
         }
 
         const parsedImports = [];
+        const skippedFiles = [];
         for (const entry of imports) {
             const sourceFormat = String(entry.sourceFormat || path.extname(entry.originalName || '').replace('.', '') || 'json')
                 .toLowerCase();
@@ -595,7 +597,12 @@ class ModelService {
                 continue;
             }
             if (sourceFormat === 'ifc') {
-                parsedImports.push(await parseIfcModel(entry.buffer, entry));
+                try {
+                    parsedImports.push(await parseIfcModel(entry.buffer, entry));
+                } catch (ifcErr) {
+                    console.warn(`[importModels] Skipping ${entry.originalName || 'unknown'}: ${ifcErr.message}`);
+                    skippedFiles.push(entry.originalName || 'unknown');
+                }
                 continue;
             }
             if (sourceFormat === 'xkt') {
@@ -605,9 +612,15 @@ class ModelService {
             throw new Error(`Unsupported model format: ${sourceFormat}`);
         }
 
+        if (parsedImports.length === 0) {
+            const detail = skippedFiles.length > 0 ? `: ${skippedFiles.join(', ')}` : '';
+            throw new Error(`All files failed to parse${detail}. They may be too large or corrupt.`);
+        }
+
         const workspace = await updateWorkspace(projectSlug, (current) =>
             mergeImportedModels(current, parsedImports));
-        return this.getFederatedModel(projectSlug, workspace);
+        const federatedModel = await this.getFederatedModel(projectSlug, workspace);
+        return { federatedModel, skippedFiles };
     }
 
     async getFederatedModel(projectSlug, workspaceOverride = null) {

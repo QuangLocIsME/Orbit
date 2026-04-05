@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
+import { workspaceKeys } from '@/components/features/clash/hooks/useNavisworksWorkspace';
 import { FileText, FolderPlus, Upload, Image as ImageIcon } from 'lucide-react';
 
 interface PackageDetailPageProps {
@@ -28,6 +30,7 @@ interface TreeNode {
 }
 
 export default function PackageDetailPage({ packageId }: PackageDetailPageProps) {
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(true);
   const [pkg, setPkg] = useState<PackageItem | null>(null);
   const [documentsTree, setDocumentsTree] = useState<TreeNode | null>(null);
@@ -168,6 +171,7 @@ export default function PackageDetailPage({ packageId }: PackageDetailPageProps)
       toast.success(payload?.mode === 'queue' ? 'File lớn đã đưa vào queue xử lý nền' : 'Upload thành công');
       setUploadFile(null);
       setUploadFolderPath('');
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.ifcDocuments(projectId) });
       await loadDocuments(projectId);
     } finally {
       setUploading(false);

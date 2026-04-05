@@ -223,8 +223,8 @@ export default function Viewer3D({
   }, [effectiveAdapter, onSelectObject, selectObject]);
 
   useEffect(() => {
-    if (!effectiveAdapter || !selectedObjectId) return;
-    effectiveAdapter.highlightObjects([selectedObjectId]);
+    if (!effectiveAdapter) return;
+    effectiveAdapter.highlightObjects(selectedObjectId ? [selectedObjectId] : []);
   }, [effectiveAdapter, selectedObjectId]);
 
   if (!clash) {

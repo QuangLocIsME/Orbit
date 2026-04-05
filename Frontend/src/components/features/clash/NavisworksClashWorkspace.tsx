@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   FileText,
   FlaskConical,
@@ -32,10 +33,19 @@ import {
   resultToViewerClash,
   useNavisworksClashResults,
   useNavisworksWorkspace,
+  workspaceKeys,
   type ClashResult,
   type SelectionSet,
   type ClashTest,
 } from './hooks/useNavisworksWorkspace';
+
+interface IfcDocument {
+  publicId: string;
+  originalName: string;
+  folderPath: string;
+  size: number;
+  createdAt: string;
+}
 import { memberLabel, useProjectMembers } from './hooks/useProjectMembers';
 
 type SidebarTab = 'select' | 'tests' | 'results' | 'report';
@@ -209,6 +219,8 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('select');
   const [dragActive, setDragActive] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'reviewed' | 'resolved'>('all');
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [hideUnrelatedToActiveTest, setHideUnrelatedToActiveTest] = useState(false);
   const [search, setSearch] = useState('');
   const [hiddenModelIds, setHiddenModelIds] = useState<string[]>([]);
@@ -287,6 +299,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const {
     workspaceQuery,
     importModels,
+    importFromDocuments,
     saveSelectionSet,
     deleteSelectionSet,
     saveClashTest,
@@ -295,6 +308,19 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     updateClashStatus,
     applyObjectActions,
   } = useNavisworksWorkspace(projectSlug);
+
+  const ifcDocumentsQuery = useQuery<IfcDocument[]>({
+    queryKey: workspaceKeys.ifcDocuments(projectSlug),
+    queryFn: async () => {
+      const res = await apiFetch(apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/documents`));
+      const data = await res.json() as { documents: IfcDocument[] };
+      return data.documents ?? [];
+    },
+    enabled: importModalOpen,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  });
 
   const workspace = workspaceQuery.data;
   const models = workspace?.federatedModel.models ?? [];
@@ -1010,20 +1036,12 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
           </div>
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => { setSelectedDocIds(new Set()); setImportModalOpen(true); }}
             className="inline-flex items-center gap-2 rounded-[10px] border border-[#D1D5DC] bg-white px-3 py-2 text-sm text-[#364153] hover:bg-gray-50"
           >
             <Upload className="size-4" aria-hidden />
             Import
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={acceptImport}
-            className="hidden"
-            onChange={handleImportFiles}
-          />
         </div>
 
         {error && (
@@ -1445,7 +1463,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                   <div className="space-y-5">
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => setImportModalOpen(true)}
                       className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#D1D5DC] bg-white py-2.5 text-sm text-[#364153] hover:bg-gray-50"
                     >
                       <Upload className="size-4" aria-hidden />
@@ -2014,14 +2032,14 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                 'absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#F9FAFB] p-6 text-center transition-colors',
                 dragActive && 'bg-[#EFF6FF]'
               )}>
-                <p className="text-sm font-medium text-[#101828]">Drop IFC, JSON, or XKT here</p>
-                <p className="max-w-sm text-xs text-[#6A7282]">Or use Import in the header / sidebar. The Clash Detective panel opens after a successful import.</p>
+                <p className="text-sm font-medium text-[#101828]">No models imported yet</p>
+                <p className="max-w-sm text-xs text-[#6A7282]">Import IFC files from this project's Documents to start detecting clashes.</p>
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => setImportModalOpen(true)}
                   className="rounded-lg bg-[#155DFC] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
-                  Choose files
+                  Import from Documents
                 </button>
               </div>
             )}
@@ -2173,6 +2191,114 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Import from project documents modal */}
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-[#E5E7EB] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#E5E7EB] px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-[#101828]">Import IFC from Documents</h2>
+                <p className="mt-0.5 text-xs text-[#6A7282]">Select IFC files uploaded to this project</p>
+              </div>
+              <button type="button" onClick={() => setImportModalOpen(false)} className="rounded-md p-1 text-[#6A7282] hover:bg-gray-100">
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+              {ifcDocumentsQuery.isLoading && (
+                <p className="py-8 text-center text-sm text-[#6A7282]">Loading IFC files…</p>
+              )}
+              {ifcDocumentsQuery.isError && (
+                <p className="py-8 text-center text-sm text-red-500">Failed to load documents.</p>
+              )}
+              {ifcDocumentsQuery.data && ifcDocumentsQuery.data.length === 0 && (
+                <p className="py-8 text-center text-sm text-[#6A7282]">
+                  No IFC files found in this project's documents.
+                  <br />
+                  <span className="text-xs">Upload IFC files via the Documents tab first.</span>
+                </p>
+              )}
+              {ifcDocumentsQuery.data && ifcDocumentsQuery.data.length > 0 && (
+                <div className="space-y-1.5">
+                  {ifcDocumentsQuery.data.map((doc) => {
+                    const checked = selectedDocIds.has(doc.publicId);
+                    const sizeKb = Math.round(doc.size / 1024);
+                    return (
+                      <label
+                        key={doc.publicId}
+                        className={cn(
+                          'flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors',
+                          checked ? 'border-[#155DFC] bg-[#EFF6FF]' : 'border-[#E5E7EB] hover:bg-gray-50'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-[#155DFC]"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedDocIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(doc.publicId)) next.delete(doc.publicId);
+                              else next.add(doc.publicId);
+                              return next;
+                            });
+                          }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-[#101828]">{doc.originalName}</p>
+                          <p className="mt-0.5 text-xs text-[#6A7282]">
+                            {doc.folderPath || 'Root'} · {sizeKb < 1024 ? `${sizeKb} KB` : `${(sizeKb / 1024).toFixed(1)} MB`}
+                          </p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-[#E5E7EB] px-5 py-3">
+              <p className="text-xs text-[#6A7282]">
+                {selectedDocIds.size > 0 ? `${selectedDocIds.size} file${selectedDocIds.size > 1 ? 's' : ''} selected` : 'No files selected'}
+              </p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setImportModalOpen(false)} className="rounded-lg border border-[#D1D5DC] px-4 py-2 text-sm text-[#364153] hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedDocIds.size === 0 || importFromDocuments.isPending}
+                  onClick={async () => {
+                    try {
+                      setError(null);
+                      const result = await importFromDocuments.mutateAsync({ documentIds: Array.from(selectedDocIds) });
+                      setImportModalOpen(false);
+                      setSidebarOpen(true);
+                      setSidebarTab('select');
+                      const skipped: string[] = result?.skippedFiles ?? [];
+                      const imported = selectedDocIds.size - skipped.length;
+                      if (skipped.length > 0) {
+                        toast.warning(`Imported ${imported} file${imported !== 1 ? 's' : ''}. Skipped ${skipped.length} (too large or corrupt): ${skipped.join(', ')}`);
+                      } else {
+                        toast.success(`Imported ${imported} file${imported !== 1 ? 's' : ''}.`);
+                      }
+                    } catch (importErr) {
+                      const msg = importErr instanceof Error ? importErr.message : 'Failed to import';
+                      setError(msg);
+                      toast.error(msg);
+                    }
+                  }}
+                  className="rounded-lg bg-[#155DFC] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {importFromDocuments.isPending ? 'Importing…' : 'Import Selected'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </TooltipProvider>
 
   );

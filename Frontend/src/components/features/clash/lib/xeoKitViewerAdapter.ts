@@ -382,7 +382,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
     const handle = input.on('mouseclicked', (coords: [number, number]) => {
       const hit = pick({ canvasPos: coords });
       const objectId = hit?.entity?.id;
-      if (objectId) callback(objectId);
+      if (!objectId || objectId.startsWith(CLASH_ZONE_ENTITY_ID)) return;
+      callback(objectId);
     });
 
     return () => input.off?.(handle);
