@@ -615,27 +615,10 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     })
   );
 
-  // // Get projects for current folder using folderId from project data
-  // const getProjectsForFolder = (folderId: string) => {
-  //   return projects.filter(p => (p.folderIds || []).includes(folderId));
-  // };
-  // const {
-  //   data: projectsData = initialProjects,
-  //   isLoading: isProjectsQueryLoading,
-  //   refetch: refetchProjects,
-  // } = useQuery({
-  //   queryKey: PROJECTS_QUERY_KEY,
-  //   queryFn: fetchProjects,
-  //   initialData: initialProjects.length ? initialProjects : undefined,
-  //   staleTime: 30_000,
-  //   gcTime: 5 * 60_000,
-  //   refetchOnWindowFocus: true,
-  //   refetchOnReconnect: true,
-  //   refetchOnMount: true,
-  // });
-
-  // Get projects for current folder using folderIds from project data
-  const getProjectsForFolder = (folderId: string) => projects.filter((p) => (p.folderIds || []).includes(folderId));
+  // Get projects for current folder using folderId from project data
+  const getProjectsForFolder = (folderId: string) => {
+    return projects.filter(p => (p.folderIds || []).includes(folderId));
+  };
 
   // Filter folders by search
   const filteredFolders = folders.filter(
