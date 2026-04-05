@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "projectSlug": "4",
+  "federatedModel": {
+    "coordinateSystem": "project-global",
+    "unit": "m",
+    "models": [
+      {
+        "id": "model-abc50c92-f64d-4765-9ec8-d3fa5688c50b",
+        "name": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount",
+        "sourceFormat": "ifc",
+        "discipline": "unknown",
+        "unit": "m",
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "importedAt": "2026-04-04T13:15:29.892Z",
+        "categories": [
+          "BuildingElementProxy",
+          "Door"
+        ],
+        "objectCount": 4
+      }
+    ],
+    "objects": [
+      {
+        "id": "1Jp9sTyKnDjhYmU7r4xo9Y",
+        "type": "IfcBuildingElementProxy",
+        "category": "BuildingElementProxy",
+        "geometry": {
+          "expressId": 1236,
+          "source": "ifc-mesh"
+        },
+        "boundingBox": {
+          "min": [
+            -2.11699177694901,
+            0.8255000030279067,
+            -1.9181593603321363
+          ],
+          "max": [
+            -2.0983276068685863,
+            1.0032999969720748,
+            -1.8452313111946637
+          ]
+        },
+        "transform": [
+          -0.3048,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          -2.107659691908798,
+          0.9143999999999908,
+          -1.9087313111730864,
+          1
+        ],
+        "sourceModel": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount",
+        "sourceModelId": "model-abc50c92-f64d-4765-9ec8-d3fa5688c50b",
+        "sourceFile": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount.ifc",
+        "globalId": "1Jp9sTyKnDjhYmU7r4xo9Y"
+      },
+      {
+        "id": "1Jp9sTyKnDjhYmU7r4xo9Z",
+        "type": "IfcBuildingElementProxy",
+        "category": "BuildingElementProxy",
+        "geometry": {
+          "expressId": 1310,
+          "source": "ifc-mesh"
+        },
+        "boundingBox": {
+          "min": [
+            -2.1166059475227037,
+            0.8255000030279067,
+            -1.8071313111515235
+          ],
+          "max": [
+            -2.09794177744228,
+            1.0032999969720748,
+            -1.7342032620140508
+          ]
+        },
+        "transform": [
+          0.3048,
+          0,
+          0,
+          0,
+          0,
+          0,
+          -0.3048,
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          -2.107273862482492,
+          0.9143999999999908,
+          -1.7436313111731008,
+          1
+        ],
+        "sourceModel": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount",
+        "sourceModelId": "model-abc50c92-f64d-4765-9ec8-d3fa5688c50b",
+        "sourceFile": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount.ifc",
+        "globalId": "1Jp9sTyKnDjhYmU7r4xo9Z"
+      },
+      {
+        "id": "1Jp9sTyKnDjhYmU7r4xo9d",
+        "type": "IfcDoor",
+        "category": "Door",
+        "geometry": {
+          "expressId": 837,
+          "source": "ifc-mesh"
+        },
+        "boundingBox": {
+          "min": [
+            -3.838139449848825,
+            7.450581818169155e-12,
+            -1.855831310916277
+          ],
+          "max": [
+            -1.985766760792428,
+            2.5073718760609673,
+            -1.796217248928877
+          ]
+        },
+        "transform": [
+          -0.3048,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          -2.186666777195643,
+          2.445390764526261,
+          -1.826181311173068,
+          1
+        ],
+        "sourceModel": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount",
+        "sourceModelId": "model-abc50c92-f64d-4765-9ec8-d3fa5688c50b",
+        "sourceFile": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount.ifc",
+        "globalId": "1Jp9sTyKnDjhYmU7r4xo9d"
+      },
+      {
+        "id": "1Jp9sTyKnDjhYmU7r4xo9X",
+        "type": "IfcDoor",
+        "category": "Door",
+        "geometry": {
+          "expressId": 1081,
+          "source": "ifc-mesh"
+        },
+        "boundingBox": {
+          "min": [
+            -2.9710667771956407,
+            0.010021069526735094,
+            -1.8452313111730345
+          ],
+          "max": [
+            -2.05666677719564,
+            2.4384000242233905,
+            -1.8071313111730345
+          ]
+        },
+        "transform": [
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          0.3048,
+          0,
+          0,
+          -0.3048,
+          0,
+          0,
+          0,
+          -2.5138667771956404,
+          1.2242105468750628,
+          -1.8261813111730345,
+          1
+        ],
+        "sourceModel": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount",
+        "sourceModelId": "model-abc50c92-f64d-4765-9ec8-d3fa5688c50b",
+        "sourceFile": "Sliding_Door-Hawa-Junior_100_Z_Wall_Mount.ifc",
+        "globalId": "1Jp9sTyKnDjhYmU7r4xo9X"
+      }
+    ]
+  },
+  "selectionSets": [],
+  "clashTests": [],
+  "clashRuns": [],
+  "objectOverrides": {},
+  "createdAt": "2026-04-04T13:15:29.892Z",
+  "updatedAt": "2026-04-04T13:15:29.892Z"
+}
