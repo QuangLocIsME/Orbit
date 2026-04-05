@@ -2,19 +2,9 @@ const { errorResponse } = require('../utils/response');
 const modelService = require('../services/model.service');
 const selectionSetService = require('../services/selectionSet.service');
 const navisworksClashService = require('../services/navisworksClash.service');
+const navisworksImportService = require('../services/navisworksImport.service');
 
 const getProjectSlug = (req) => req.params?.projectSlug || req.body?.projectSlug || req.query?.projectSlug;
-
-const parseImportMeta = (req) => {
-    const raw = req.body?.importsMeta;
-    if (!raw) return [];
-    try {
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        return Array.isArray(parsed) ? parsed : [];
-    } catch {
-        return [];
-    }
-};
 
 class NavisworksClashController {
     async getWorkspace(req, res) {
@@ -36,27 +26,10 @@ class NavisworksClashController {
             if (!projectSlug) {
                 return errorResponse(res, 400, 'Missing project slug');
             }
-            const files = Array.isArray(req.files) ? req.files : [];
-            const importsMeta = parseImportMeta(req);
-
-            const inlineModels = Array.isArray(req.body?.models) ? req.body.models : [];
-            const imports = [
-                ...files.map((file, index) => ({
-                    buffer: file.buffer,
-                    originalName: file.originalname,
-                    sourceFormat: file.originalname.split('.').pop(),
-                    ...(importsMeta[index] || {}),
-                })),
-                ...inlineModels.map((model, index) => ({
-                    buffer: Buffer.from(JSON.stringify(model.objects || model), 'utf8'),
-                    originalName: model.name || `inline-model-${index + 1}.json`,
-                    sourceFormat: model.sourceFormat || 'json',
-                    sourceModel: model.name || `Inline Model ${index + 1}`,
-                    discipline: model.discipline,
-                    unit: model.unit,
-                    transform: model.transform,
-                })),
-            ];
+            const imports = navisworksImportService.buildImports({
+                files: req.files,
+                body: req.body,
+            });
 
             const federatedModel = await modelService.importModels(projectSlug, imports);
             return res.status(200).json({ success: true, federatedModel });
