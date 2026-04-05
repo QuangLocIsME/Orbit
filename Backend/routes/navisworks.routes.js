@@ -17,6 +17,11 @@ router.post(
     upload.array('models'),
     (req, res) => NavisworksClashController.importModels(req, res)
 );
+router.get(
+    '/projects/:projectSlug/navisworks/models/:modelId/xkt',
+    ...access,
+    (req, res) => NavisworksClashController.getModelXkt(req, res)
+);
 router.get('/projects/:projectSlug/navisworks/export/model', ...access, (req, res) =>
     NavisworksClashController.exportFederatedModel(req, res));
 

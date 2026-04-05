@@ -1,9 +1,11 @@
+const fs = require('fs');
 const path = require('path');
 const WebIFC = require('web-ifc');
 const {
     createId,
     readWorkspace,
     updateWorkspace,
+    LEGACY_PROJECTS_DIR,
 } = require('./navisworksStorage.service');
 
 const identityMatrix = () => ([
@@ -161,6 +163,37 @@ const parseJsonRegistry = (buffer, meta) => {
             objectCount: objects.length,
         },
         objects,
+    };
+};
+
+const parseXktModel = (buffer, meta, projectSlug) => {
+    if (!buffer || buffer.length < 32) {
+        throw new Error('Invalid or empty XKT file');
+    }
+    const sourceModelId = meta.sourceModelId || createId('model');
+    const sourceModel = meta.sourceModel || meta.originalName || sourceModelId;
+    const transform = matrixFromInput(meta.transform);
+    const unit = meta.unit || 'm';
+    const key = projectSlug || 'default-project';
+    const xktDir = path.join(LEGACY_PROJECTS_DIR, key, 'xkt');
+    fs.mkdirSync(xktDir, { recursive: true });
+    const xktFile = `${sourceModelId}.xkt`;
+    fs.writeFileSync(path.join(xktDir, xktFile), buffer);
+
+    return {
+        model: {
+            id: sourceModelId,
+            name: sourceModel,
+            sourceFormat: 'xkt',
+            discipline: meta.discipline || inferDiscipline(sourceModel),
+            unit,
+            transform,
+            importedAt: new Date().toISOString(),
+            categories: [],
+            objectCount: 0,
+            xktFile,
+        },
+        objects: [],
     };
 };
 
@@ -357,20 +390,44 @@ const parseIfcModel = async (buffer, meta) => {
             let aggregateBBox = null;
             let primaryGeometryTransform = null;
             const clashTriangleBuffer = [];
+            try {
 
-            for (let index = 0; index < flatMesh.geometries.size(); index += 1) {
+            for (let index = 0; index < flatMesh.geometries.size(); index += 1) { // eslint-disable-line
                 const placedGeometry = flatMesh.geometries.get(index);
                 const geometry = api.GetGeometry(modelId, placedGeometry.geometryExpressID);
-                const vertices = api.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
-                const geometryTransform = mergeMatrices(importTransform, placedGeometry.flatTransformation);
-                const geometryBBox = bboxFromVertices(vertices, geometryTransform, unitScale);
 
-                if (!ORBIT_DISABLE_CLASH_MESH && geometryBBox) {
-                    const idxSize = geometry.GetIndexDataSize();
-                    const indices = idxSize > 0
-                        ? api.GetIndexArray(geometry.GetIndexData(), idxSize)
-                        : null;
-                    appendIfcGeometryTriangles(clashTriangleBuffer, vertices, indices, geometryTransform, unitScale);
+                let vertices = null;
+                let indices = null;
+                try {
+                    const vtxPtr = geometry.GetVertexData();
+                    const vtxSize = geometry.GetVertexDataSize();
+                    if (vtxPtr >= 0 && vtxSize > 0) {
+                        vertices = api.GetVertexArray(vtxPtr, vtxSize);
+                    }
+                    if (!ORBIT_DISABLE_CLASH_MESH && vertices) {
+                        const idxSize = geometry.GetIndexDataSize();
+                        if (idxSize > 0) {
+                            const idxPtr = geometry.GetIndexData();
+                            if (idxPtr >= 0) {
+                                indices = api.GetIndexArray(idxPtr, idxSize);
+                            }
+                        }
+                    }
+                } catch (geoReadErr) {
+                    // WASM heap may have grown mid-stream; skip this geometry sub-mesh.
+                    geometry.delete();
+                    continue;
+                }
+
+                const geometryTransform = mergeMatrices(importTransform, placedGeometry.flatTransformation);
+                const geometryBBox = vertices ? bboxFromVertices(vertices, geometryTransform, unitScale) : null;
+
+                if (!ORBIT_DISABLE_CLASH_MESH && geometryBBox && vertices) {
+                    try {
+                        appendIfcGeometryTriangles(clashTriangleBuffer, vertices, indices, geometryTransform, unitScale);
+                    } catch {
+                        // ignore triangle append errors; bbox still usable
+                    }
                 }
 
                 geometry.delete();
@@ -428,6 +485,9 @@ const parseIfcModel = async (buffer, meta) => {
                 sourceFile: meta.originalName || sourceModel,
                 globalId: globalId ? String(globalId) : null,
             });
+            } catch (meshErr) {
+                // Skip entire mesh element on unexpected error; keeps remaining elements intact.
+            }
         });
     } finally {
         api.CloseModel(modelId);
@@ -536,6 +596,10 @@ class ModelService {
             }
             if (sourceFormat === 'ifc') {
                 parsedImports.push(await parseIfcModel(entry.buffer, entry));
+                continue;
+            }
+            if (sourceFormat === 'xkt') {
+                parsedImports.push(parseXktModel(entry.buffer, entry, projectSlug));
                 continue;
             }
             throw new Error(`Unsupported model format: ${sourceFormat}`);

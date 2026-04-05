@@ -1,5 +1,8 @@
+const fs = require('fs');
+const path = require('path');
 const { errorResponse } = require('../utils/response');
 const modelService = require('../services/model.service');
+const { readWorkspace, LEGACY_PROJECTS_DIR } = require('../services/navisworksStorage.service');
 const selectionSetService = require('../services/selectionSet.service');
 const navisworksClashService = require('../services/navisworksClash.service');
 const navisworksImportService = require('../services/navisworksImport.service');
@@ -35,6 +38,31 @@ class NavisworksClashController {
             return res.status(200).json({ success: true, federatedModel });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to import models');
+        }
+    }
+
+    async getModelXkt(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            const modelId = req.params?.modelId;
+            if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            if (!modelId) return errorResponse(res, 400, 'Missing model id');
+
+            const workspace = await readWorkspace(projectSlug);
+            const model = (workspace.federatedModel?.models || []).find((m) => m.id === modelId);
+            if (!model || model.sourceFormat !== 'xkt' || !model.xktFile) {
+                return errorResponse(res, 404, 'XKT model not found');
+            }
+            const safeName = path.basename(String(model.xktFile));
+            const filePath = path.join(LEGACY_PROJECTS_DIR, projectSlug, 'xkt', safeName);
+            if (!fs.existsSync(filePath)) {
+                return errorResponse(res, 404, 'XKT file missing on server');
+            }
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Disposition', 'inline');
+            return fs.createReadStream(filePath).pipe(res);
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to load XKT');
         }
     }
 

@@ -1,11 +1,18 @@
 'use client';
 
-import { useEffect, useRef, useState, type PointerEventHandler, type WheelEventHandler } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { Clash, ViewerInteractionState } from '../types/clashes';
+import type { Clash } from '../types/clashes';
 import { useObjectInteraction } from '../hooks/useObjectInteraction';
-import type { SceneObject } from '../lib/clashScene';
+import {
+  computeWorldOriginFromScene,
+  resolveClashZoneForViewer,
+  transformMeshPositionsToViewerSpace,
+  type SceneObject,
+} from '../lib/clashScene';
 import type { ViewerAdapter } from '../lib/viewerAdapter';
+import { useClashViewerStore } from '../state/clashStore';
+import { XeoKitViewerAdapter } from '../lib/xeoKitViewerAdapter';
 
 interface Viewer3DProps {
   clash: Clash | null;
@@ -14,19 +21,19 @@ interface Viewer3DProps {
   onFocusClash?: (clash: Clash) => void;
   onCollisionChange?: (isColliding: boolean, message: string | null) => void;
   hiddenObjectIds?: string[];
-  /** When there is no clash: overview scene from federated model (bbox). `undefined` disables overview. */
   overviewScene?: SceneObject[] | null;
-  /** When false, objects cannot be dragged; use zoom / orbit / pan only. Default true. */
   allowObjectMove?: boolean;
-  /**
-   * Optional ViewerAdapter. Khi được truyền vào, viewer sẽ delegate
-   * highlightObjects / focusObject sang adapter.
-   * Hiện chưa có XeoKit nên mock viewer tự xử lý; prop này chuẩn bị cho tương lai.
-   */
   adapter?: ViewerAdapter;
+  testScopeObjectIds?: string[];
+  deEmphasizeUnrelated?: boolean;
+  showScopeBadge?: boolean;
+  hideUnrelatedActive?: boolean;
+  /** When set, XKT federated models are loaded in xeokit (overview mode only). */
+  projectSlug?: string | null;
+  xktModels?: { id: string }[];
+  /** Real mesh triangle positions per object id (flat array, every 9 floats = 1 triangle, world-space meters). */
+  objectMeshPositions?: Record<string, number[]>;
 }
-
-const clampScale = (value: number) => Math.min(2.4, Math.max(0.7, value));
 
 export default function Viewer3D({
   clash,
@@ -38,126 +45,190 @@ export default function Viewer3D({
   overviewScene,
   allowObjectMove = true,
   adapter,
+  testScopeObjectIds = [],
+  deEmphasizeUnrelated = false,
+  showScopeBadge = false,
+  hideUnrelatedActive = false,
+  projectSlug = null,
+  xktModels,
+  objectMeshPositions = {},
 }: Viewer3DProps) {
-  const [interaction, setInteraction] = useState<ViewerInteractionState>({
-    offset: { x: 0, y: 0 },
-    scale: 1,
-    orbitAngle: -12,
-    sectionEnabled: false,
-    measureEnabled: true,
+  const xeokitCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const xeokitBootstrappedRef = useRef(false);
+  const [xeokitAdapter, setXeokitAdapter] = useState<XeoKitViewerAdapter | null>(null);
+  const clashStore = useClashViewerStore();
+
+  const { objects, hasCollision, collisionMessage, selectObject } = useObjectInteraction(
+    clash,
     selectedObjectId,
-  });
-  const [dragMode, setDragMode] = useState<'pan' | 'orbit' | null>(null);
-  const dragOriginRef = useRef<{ x: number; y: number } | null>(null);
-  const {
-    objects,
-    draggingObjectId,
-    hasCollision,
-    collisionMessage,
-    dragPreviewPosition,
-    lastValidPosition,
-    selectObject,
-    beginDrag,
-    updateDrag,
-    endDrag,
-  } = useObjectInteraction(clash, selectedObjectId, {
-    overviewScene: !clash ? overviewScene ?? undefined : undefined,
-    allowObjectDrag: allowObjectMove,
-  });
+    {
+      overviewScene: !clash ? overviewScene ?? undefined : undefined,
+      allowObjectDrag: allowObjectMove,
+    }
+  );
 
   const modelOverview = Boolean(!clash && overviewScene !== undefined);
+  const effectiveAdapter = adapter ?? xeokitAdapter;
+  const xeokitInteractive = Boolean(xeokitAdapter);
+  const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
+
+  /**
+   * Pre-transform raw IFC-world-space mesh positions into viewer-space so xeokit
+   * renders them at the correct scale/location (same as bounding boxes).
+   *
+   * Origin strategy:
+   *  - Clash detail: midpoint of objectA and objectB worldPositions
+   *  - Overview:     bbox-center of all sceneObjects (same as buildOverviewSceneFromFederated)
+   */
+  const viewerSpaceMeshPositions = useMemo<Record<string, number[]>>(() => {
+    if (!Object.keys(objectMeshPositions).length) return {};
+
+    let originWorld: [number, number, number] | null = null;
+
+    if (clash) {
+      const scene = clashStore.getScene(clash.id);
+      const sa = scene?.find((o) => o.id === clash.objectA);
+      const sb = scene?.find((o) => o.id === clash.objectB);
+      if (sa?.worldPosition && sb?.worldPosition) {
+        originWorld = [
+          (sa.worldPosition[0] + sb.worldPosition[0]) / 2,
+          (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
+          (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
+        ];
+      }
+    } else if (overviewScene?.length) {
+      originWorld = computeWorldOriginFromScene(overviewScene);
+    }
+
+    if (!originWorld) return {};
+
+    const result: Record<string, number[]> = {};
+    for (const [id, positions] of Object.entries(objectMeshPositions)) {
+      if (positions.length >= 9) {
+        result[id] = transformMeshPositionsToViewerSpace(positions, originWorld);
+      }
+    }
+    return result;
+  }, [clash, clashStore, objectMeshPositions, overviewScene]);
+  const xktModelIdsKey = useMemo(
+    () => (xktModels ?? []).map((m) => m.id).sort().join(','),
+    [xktModels]
+  );
+  const hasXktOverview = Boolean(xktModels && xktModels.length > 0);
+  const overviewHasCanvas =
+    modelOverview && ((overviewScene?.length ?? 0) > 0 || hasXktOverview);
 
   useEffect(() => {
     onCollisionChange?.(hasCollision, collisionMessage);
   }, [collisionMessage, hasCollision, onCollisionChange]);
 
-  const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
-
-  // Notify adapter when selection changes (forward-compatible with XeoKit)
   useEffect(() => {
-    if (!adapter || !selectedObjectId) return;
-    adapter.highlightObjects([selectedObjectId]);
-  }, [adapter, selectedObjectId]);
+    if (xeokitBootstrappedRef.current || xeokitAdapter) return;
+    const canvas = xeokitCanvasRef.current;
+    if (!canvas) return;
 
-  const handleWheel: WheelEventHandler<HTMLDivElement> = (event) => {
-    if (event.cancelable) {
-      event.preventDefault();
-    }
-    setInteraction((current) => ({
-      ...current,
-      scale: clampScale(current.scale + (event.deltaY < 0 ? 0.1 : -0.1)),
-    }));
-  };
+    let cancelled = false;
+    const initXeokit = async () => {
+      try {
+        const xeokit = await import('@xeokit/xeokit-sdk');
+        if (cancelled) return;
+        const ViewerCtor = (xeokit as { Viewer?: new (cfg: any) => any }).Viewer;
+        const SceneModelCtor = (xeokit as { SceneModel?: new (scene: unknown, cfg: Record<string, unknown>) => any }).SceneModel;
+        if (!ViewerCtor || !SceneModelCtor) return;
 
-  const handlePointerDown: PointerEventHandler<HTMLDivElement> = (event) => {
-    const objectId = (event.target as HTMLElement).closest<HTMLElement>('[data-object-id]')?.dataset.objectId;
-    if (objectId) {
-      event.preventDefault();
-      if (!modelOverview && allowObjectMove) {
-        beginDrag(objectId, event.clientX, event.clientY);
-        event.currentTarget.setPointerCapture(event.pointerId);
+        const viewer = new ViewerCtor({
+          canvasElement: canvas,
+          transparent: true,
+          antialias: true,
+          dtxEnabled: true,
+        });
+        canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+        viewer.camera.eye = [220, 180, 220];
+        viewer.camera.look = [0, 0, 0];
+        viewer.camera.up = [0, 1, 0];
+        if (viewer.cameraControl) {
+          viewer.cameraControl.navMode = 'orbit';
+          viewer.cameraControl.panRightClick = true; // RMB pan, LMB orbit
+          viewer.cameraControl.zoomOnMouseWheel = true;
+          viewer.cameraControl.followPointer = true;
+          viewer.cameraControl.rotationInertia = 0;
+          viewer.cameraControl.panInertia = 0;
+          viewer.cameraControl.dollyInertia = 0;
+          viewer.cameraControl.dragRotationRate = 380;
+          viewer.cameraControl.mouseWheelDollyRate = 110;
+          viewer.cameraControl.doublePickFlyTo = true;
+        }
+
+        xeokitBootstrappedRef.current = true;
+        setXeokitAdapter(new XeoKitViewerAdapter(viewer, SceneModelCtor));
+      } catch {
+        // Keep loading placeholder if xeokit failed.
       }
+    };
+
+    void initXeokit();
+    return () => {
+      cancelled = true;
+    };
+  }, [clash?.id, modelOverview, xeokitAdapter]);
+
+  useEffect(
+    () => () => {
+      xeokitAdapter?.dispose();
+      xeokitBootstrappedRef.current = false;
+    },
+    [xeokitAdapter]
+  );
+
+  useEffect(() => {
+    if (!xeokitAdapter) return;
+    const clashZone =
+      clash
+        ? resolveClashZoneForViewer(clash, visibleObjects, clashStore.getScene(clash.id))
+        : null;
+    xeokitAdapter.loadSceneObjects(
+      visibleObjects.map((object) => ({
+        id: object.id,
+        position: object.position,
+        size: object.size,
+        isPrimary: Boolean(clash && object.id === clash.objectA),
+        isClashObject: Boolean(clash && (object.id === clash.objectA || object.id === clash.objectB)),
+        isColliding: object.isColliding,
+        isSelected: object.isSelected,
+        isInTestScope: testScopeObjectIds.includes(object.id),
+        isDeEmphasized: deEmphasizeUnrelated && testScopeObjectIds.length > 0 && !testScopeObjectIds.includes(object.id),
+        meshPositions: viewerSpaceMeshPositions[object.id] ?? null,
+      })),
+      clashZone
+    );
+  }, [clash, clashStore, deEmphasizeUnrelated, viewerSpaceMeshPositions, testScopeObjectIds, visibleObjects, xeokitAdapter, overviewScene]);
+
+  useEffect(() => {
+    if (!xeokitAdapter || !projectSlug) return;
+    if (clash || !modelOverview) {
+      void xeokitAdapter.syncXktModels(projectSlug, []);
+      return;
+    }
+    const ids = (xktModels ?? []).map((m) => m.id);
+    void xeokitAdapter.syncXktModels(projectSlug, ids);
+  }, [clash, modelOverview, projectSlug, xeokitAdapter, xktModelIdsKey]);
+
+  useEffect(() => {
+    if (!effectiveAdapter) return;
+    const unsubscribe = effectiveAdapter.onObjectPicked((objectId) => {
+      selectObject(objectId);
       onSelectObject(objectId);
-      return;
-    }
+    });
+    return () => unsubscribe();
+  }, [effectiveAdapter, onSelectObject, selectObject]);
 
-    const nextMode =
-      event.button === 0 ? 'orbit' : event.button === 1 || event.button === 2 ? 'pan' : null;
-
-    if (!nextMode) {
-      return;
-    }
-
-    event.preventDefault();
-    dragOriginRef.current = { x: event.clientX, y: event.clientY };
-    setDragMode(nextMode);
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handlePointerMove: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (allowObjectMove && draggingObjectId) {
-      updateDrag(event.clientX, event.clientY);
-      return;
-    }
-
-    if (!dragMode || !dragOriginRef.current) {
-      return;
-    }
-
-    const deltaX = event.clientX - dragOriginRef.current.x;
-    const deltaY = event.clientY - dragOriginRef.current.y;
-
-    dragOriginRef.current = { x: event.clientX, y: event.clientY };
-
-    setInteraction((current) => ({
-      ...current,
-      offset:
-        dragMode === 'pan'
-          ? {
-              x: current.offset.x + deltaX,
-              y: current.offset.y + deltaY,
-            }
-          : current.offset,
-      orbitAngle: dragMode === 'orbit' ? current.orbitAngle + deltaX * 0.35 : current.orbitAngle,
-      sectionEnabled: dragMode === 'orbit' ? current.sectionEnabled : current.sectionEnabled,
-    }));
-  };
-
-  const stopDragging: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (allowObjectMove && draggingObjectId) {
-      endDrag();
-    }
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-
-    dragOriginRef.current = null;
-    setDragMode(null);
-  };
+  useEffect(() => {
+    if (!effectiveAdapter || !selectedObjectId) return;
+    effectiveAdapter.highlightObjects([selectedObjectId]);
+  }, [effectiveAdapter, selectedObjectId]);
 
   if (!clash) {
-    if (modelOverview && overviewScene!.length === 0) {
+    if (modelOverview && !overviewHasCanvas) {
       return (
         <div className="relative flex min-h-0 flex-1 items-center justify-center p-6 text-center text-slate-400">
           <p className="max-w-sm text-sm">
@@ -166,64 +237,33 @@ export default function Viewer3D({
         </div>
       );
     }
-    if (modelOverview && overviewScene!.length > 0) {
+    if (overviewHasCanvas) {
+      const xktCount = xktModels?.length ?? 0;
+      const boxCount = visibleObjects.length;
+      const meshCount = visibleObjects.filter((o) => viewerSpaceMeshPositions[o.id]).length;
+      const layerHint =
+        xktCount && boxCount
+          ? `${xktCount} XKT · ${boxCount} elements`
+          : xktCount
+            ? `${xktCount} XKT model${xktCount > 1 ? 's' : ''}`
+            : meshCount
+              ? `${meshCount}/${boxCount} real mesh · ${boxCount - meshCount} bbox`
+              : `${boxCount} elements`;
       return (
         <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 text-white md:p-3">
           <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-2 border-b border-slate-700/60 pb-2">
             <p className="text-[11px] font-medium text-slate-200">3D overview</p>
-            <p className="max-w-[min(100%,28rem)] truncate text-[10px] text-slate-500" title="Orbit / pan; click to select.">
-              Orbit · pan · click to select · {visibleObjects.length} elements
+            <p className="max-w-[min(100%,28rem)] truncate text-[10px] text-slate-500" title="LMB orbit · RMB/MMB pan · wheel zoom · click to select.">
+              xeokit · {layerHint}
             </p>
           </div>
-          <div
-            onContextMenu={(event) => event.preventDefault()}
-            onWheel={handleWheel}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={stopDragging}
-            onPointerCancel={stopDragging}
-            className="relative min-h-[200px] flex-1 overflow-hidden rounded-lg border border-[#4A5565] bg-[#111827]"
-          >
-            <div
-              className="absolute inset-0 transition-transform duration-75"
-              style={{
-                transform: `translate(${interaction.offset.x}px, ${interaction.offset.y}px) scale(${interaction.scale}) perspective(1200px) rotateX(12deg) rotateY(${interaction.orbitAngle}deg)`,
-                transformOrigin: 'center center',
-              }}
-            >
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.12),transparent_55%)]" />
-              {visibleObjects.map((object) => {
-                const left = `calc(50% + ${object.position.x}px - ${object.size.width / 2}px)`;
-                const top = `calc(50% + ${object.position.z}px - ${object.size.depth / 2}px)`;
-                return (
-                  <button
-                    key={object.id}
-                    type="button"
-                    data-object-id={object.id}
-                    onClick={() => {
-                      selectObject(object.id);
-                      onSelectObject(object.id);
-                    }}
-                    className={cn(
-                      'absolute rounded-xl border border-slate-500/80 bg-slate-800/70 shadow-lg transition-all duration-150',
-                      object.isSelected ? 'ring-2 ring-sky-400/80' : '',
-                      'cursor-default'
-                    )}
-                    style={{
-                      left,
-                      top,
-                      width: `${object.size.width}px`,
-                      height: `${object.size.depth}px`,
-                      transform: 'rotate(2deg)',
-                    }}
-                  >
-                    <span className="absolute left-2 top-2 max-w-[calc(100%-12px)] truncate rounded bg-slate-950/90 px-2 py-1 text-[10px] font-medium text-slate-200">
-                      {object.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-lg border border-[#4A5565] bg-[#111827]">
+            <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
+            {!xeokitInteractive && (
+              <div className="absolute inset-0 flex items-center justify-center bg-[#0f172a] text-xs text-slate-300">
+                Initializing xeokit 3D viewer...
+              </div>
+            )}
           </div>
         </div>
       );
@@ -236,7 +276,7 @@ export default function Viewer3D({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
             </svg>
           </div>
-          <p className="text-sm">Select a clash to preview future xeokit highlighting</p>
+          <p className="text-sm">Select a clash to preview 3D highlighting</p>
         </div>
       </div>
     );
@@ -248,9 +288,7 @@ export default function Viewer3D({
         <div className="min-w-0 flex-1">
           <p className="truncate text-[12px] font-medium text-slate-100">{clash.title}</p>
           <p className="mt-0.5 text-[10px] text-slate-500">
-            {allowObjectMove
-              ? 'Drag objects · orbit (LMB empty) · pan (MMB/RMB)'
-              : 'Wheel zoom · orbit (LMB empty) · pan (MMB/RMB) · click objects'}
+            LMB orbit · RMB/MMB pan · wheel zoom · click objects
           </p>
         </div>
         <div
@@ -264,135 +302,31 @@ export default function Viewer3D({
       </div>
 
       <div
-        onContextMenu={(event) => event.preventDefault()}
-        onWheel={handleWheel}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={stopDragging}
-        onPointerCancel={stopDragging}
         onDoubleClick={() => onFocusClash?.(clash)}
         className="relative min-h-[220px] flex-1 overflow-hidden rounded-lg border border-[#4A5565] bg-[#111827]"
       >
-        <div
-          className="absolute inset-0 transition-transform duration-75"
-          style={{
-            transform: `translate(${interaction.offset.x}px, ${interaction.offset.y}px) scale(${interaction.scale}) perspective(1200px) rotateX(12deg) rotateY(${interaction.orbitAngle}deg)`,
-            transformOrigin: 'center center',
-          }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.18),transparent_55%)]" />
-          {allowObjectMove && draggingObjectId && dragPreviewPosition && (
-            <div
-              className={cn(
-                'pointer-events-none absolute rounded-xl border-2 border-dashed transition-all duration-75',
-                hasCollision
-                  ? 'border-red-300/90 bg-red-400/12'
-                  : 'border-cyan-300/90 bg-cyan-300/10'
-              )}
-              style={{
-                left: `calc(50% + ${dragPreviewPosition.x}px - 56px)`,
-                top: `calc(50% + ${dragPreviewPosition.z}px - 44px)`,
-                width: '112px',
-                height: '88px',
-                transform: 'rotate(4deg)',
-              }}
-            />
-          )}
-          {allowObjectMove && draggingObjectId && lastValidPosition && (
-            <div
-              className="pointer-events-none absolute rounded-full border border-emerald-300/80 bg-emerald-400/15 px-2 py-1 text-[10px] font-medium text-emerald-200 shadow-[0_0_18px_rgba(52,211,153,0.35)]"
-              style={{
-                left: `calc(50% + ${lastValidPosition.x}px - 44px)`,
-                top: `calc(50% + ${lastValidPosition.z}px - 14px)`,
-              }}
-            >
-              Snap back
-            </div>
-          )}
-          {visibleObjects.map((object) => {
-            const left = `calc(50% + ${object.position.x}px - ${object.size.width / 2}px)`;
-            const top = `calc(50% + ${object.position.z}px - ${object.size.depth / 2}px)`;
-            const isPrimary = object.id === clash.objectA;
-
-            return (
-              <button
-                key={object.id}
-                type="button"
-                data-object-id={object.id}
-                onClick={() => {
-                  selectObject(object.id);
-                  onSelectObject(object.id);
-                }}
-                className={cn(
-                  'absolute rounded-xl border shadow-lg transition-all duration-150',
-                  object.isSelected
-                    ? 'ring-2 ring-white/70'
-                    : '',
-                  object.isColliding
-                    ? 'border-red-400 bg-red-500/20 shadow-red-900/50'
-                    : isPrimary
-                      ? 'border-rose-400/60 bg-rose-500/10 shadow-rose-900/30'
-                      : 'border-emerald-400/50 bg-emerald-500/10 shadow-emerald-900/30',
-                  allowObjectMove ? (draggingObjectId === object.id ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
-                )}
-                style={{
-                  left,
-                  top,
-                  width: `${object.size.width}px`,
-                  height: `${object.size.depth}px`,
-                  transform: isPrimary ? 'rotate(-12deg)' : 'rotate(10deg)',
-                }}
-              >
-                <span
-                  className={cn(
-                    'absolute left-2 top-2 rounded px-2 py-1 text-[10px] font-medium',
-                    object.isColliding
-                      ? 'bg-slate-950/90 text-red-200'
-                      : isPrimary
-                        ? 'bg-slate-950/80 text-rose-200'
-                        : 'bg-slate-950/80 text-emerald-200'
-                  )}
-                >
-                  {object.label}
-                </span>
-              </button>
-            );
-          })}
-          <div
-            className={cn(
-              'absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-2xl border-2 backdrop-blur-sm shadow-[0_0_30px_rgba(248,113,113,0.25)]',
-              hasCollision ? 'border-red-400/90 bg-red-500/30' : 'border-cyan-300/60 bg-cyan-300/10'
-            )}
-          />
-          <div className="absolute inset-y-[6%] left-1/2 w-[2px] -translate-x-1/2 bg-cyan-300/80 shadow-[0_0_20px_rgba(34,211,238,0.35)] opacity-100" />
-          <div className="absolute inset-y-[6%] left-[52%] w-[18%] bg-cyan-300/10 backdrop-blur-[1px] opacity-100" />
-          <div className={cn('absolute left-[32%] top-[52%] h-0.5 w-[36%] shadow-[0_0_10px_rgba(255,255,255,0.4)]', hasCollision ? 'bg-red-300' : 'bg-white/90')} />
-          <div className="absolute left-1/2 top-[46%] -translate-x-1/2 rounded bg-slate-900/90 px-2 py-1 text-[10px] font-medium text-cyan-200 shadow-lg">
-            {clash.distance ?? '0.00 m'}
+        <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
+        {showScopeBadge && (
+          <div className="pointer-events-none absolute right-2 top-2 z-10 flex flex-col items-end gap-1">
+            <span className="rounded border border-cyan-300/50 bg-cyan-500/20 px-2 py-0.5 text-[10px] font-medium text-cyan-100">
+              Highlighted: Set A/B
+            </span>
+            <span className={cn(
+              'rounded border px-2 py-0.5 text-[10px] font-medium',
+              hideUnrelatedActive
+                ? 'border-emerald-300/50 bg-emerald-500/20 text-emerald-100'
+                : 'border-slate-500/50 bg-slate-600/30 text-slate-200'
+            )}>
+              Hidden unrelated: {hideUnrelatedActive ? 'ON' : 'OFF'}
+            </span>
           </div>
-          <div
-            className={cn(
-              'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-3 py-1 text-xs font-medium text-white shadow-lg',
-              allowObjectMove && hasCollision ? 'bg-[#DC2626]' : 'bg-[#155DFC]'
-            )}
-          >
-            {allowObjectMove && hasCollision ? 'Invalid position' : 'Clash'}
+        )}
+        {!xeokitInteractive && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0f172a] text-xs text-slate-300">
+            Initializing xeokit 3D viewer...
           </div>
-        </div>
+        )}
       </div>
-
-      {allowObjectMove && (collisionMessage || (draggingObjectId && !collisionMessage)) && (
-        <div
-          className={cn(
-            'shrink-0 rounded-md border px-2 py-1.5 text-[11px] leading-snug',
-            collisionMessage
-              ? 'border-red-400/35 bg-red-500/10 text-red-100'
-              : 'border-cyan-400/25 bg-cyan-500/10 text-cyan-100/90'
-          )}
-        >
-          {collisionMessage ?? 'Ghost preview · green marker = last valid position'}
-        </div>
-      )}
 
       <div className="shrink-0 border-t border-slate-700/60 pt-2">
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] leading-tight text-slate-500">
@@ -405,20 +339,10 @@ export default function Viewer3D({
           <span className="max-w-[min(100%,12rem)] truncate" title={clash.location}>
             Loc <span className="text-slate-400">{clash.location}</span>
           </span>
-          <span>
-            View ×{interaction.scale.toFixed(2)} · orbit {interaction.orbitAngle.toFixed(0)}°
-          </span>
-          {allowObjectMove && (
-            <span>
-              {draggingObjectId ? `Drag ${draggingObjectId.slice(0, 12)}…` : 'Idle'}
-              {hasCollision ? ' · blocked' : ' · OK'}
-              {lastValidPosition
-                ? ` · snap ${lastValidPosition.x.toFixed(0)},${lastValidPosition.z.toFixed(0)}`
-                : ''}
-            </span>
-          )}
+          <span>{xeokitInteractive ? 'xeokit orbit/pan/zoom enabled' : 'xeokit is loading...'}</span>
         </div>
       </div>
     </div>
   );
 }
+

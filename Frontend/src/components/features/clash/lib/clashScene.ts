@@ -49,11 +49,11 @@ const bboxSize = (bbox: BBox): SceneSize => ({
   height: Math.max((bbox.max[1] - bbox.min[1]) * WORLD_SCALE, 20),
 });
 
-/**
- * Convert world coordinates (meters) to viewer X/Z screen coordinates.
- * Centered on origin (midpoint of the two objects for clash scenes).
- */
-const worldToViewer = (
+// ---------------------------------------------------------------------------
+// Coordinate helpers (exported for Viewer3D pre-transform)
+// ---------------------------------------------------------------------------
+
+export const worldToViewer = (
   worldPos: [number, number, number],
   originWorld: [number, number, number]
 ): ScenePosition => ({
@@ -61,6 +61,45 @@ const worldToViewer = (
   y: worldPos[1] * WORLD_SCALE,
   z: clampWorld((worldPos[2] - originWorld[2]) * WORLD_SCALE),
 });
+
+/**
+ * Convert a flat IFC-world-space triangle array (every 3 floats = 1 vertex, meters)
+ * into viewer-space using the same transform as bounding-box objects.
+ * Origin is the scene midpoint (midpoint of A&B for clash, bbox-center for overview).
+ */
+export function transformMeshPositionsToViewerSpace(
+  positions: number[],
+  originWorld: [number, number, number]
+): number[] {
+  const [ox, , oz] = originWorld;
+  const out = new Array<number>(positions.length);
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    out[i]     = clampWorld((positions[i]     - ox) * WORLD_SCALE);
+    out[i + 1] = positions[i + 1] * WORLD_SCALE;
+    out[i + 2] = clampWorld((positions[i + 2] - oz) * WORLD_SCALE);
+  }
+  return out;
+}
+
+/**
+ * Compute the world-space origin (bbox center of all scene objects with worldPosition).
+ * Used to derive the same transform origin as buildOverviewSceneFromFederated.
+ */
+export function computeWorldOriginFromScene(
+  scene: SceneObject[]
+): [number, number, number] | null {
+  const pts = scene.filter((o) => o.worldPosition);
+  if (pts.length === 0) return null;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (const o of pts) {
+    const [wx, wy, wz] = o.worldPosition!;
+    if (wx < minX) minX = wx;  if (wx > maxX) maxX = wx;
+    if (wy < minY) minY = wy;  if (wy > maxY) maxY = wy;
+    if (wz < minZ) minZ = wz;  if (wz > maxZ) maxZ = wz;
+  }
+  return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+}
 
 // ---------------------------------------------------------------------------
 // Builder
@@ -123,6 +162,7 @@ export const buildSceneObjectsFromClash = (clash: Clash): SceneObject[] => {
 // Collision detection (2D X/Z plane) — used for viewer drag
 // ---------------------------------------------------------------------------
 
+/** Footprint overlap on XZ only — can miss real 3D clashes (e.g. different levels). */
 export const intersects2D = (a: ViewerObjectState, b: ViewerObjectState) => {
   const halfWA = a.size.width / 2;
   const halfDA = a.size.depth / 2;
@@ -135,10 +175,114 @@ export const intersects2D = (a: ViewerObjectState, b: ViewerObjectState) => {
   );
 };
 
+/** Axis-aligned box overlap in full viewer space (x=width, y=height, z=depth). */
+export const intersects3D = (a: ViewerObjectState, b: ViewerObjectState) => {
+  const halfXA = a.size.width / 2;
+  const halfYA = a.size.height / 2;
+  const halfZA = a.size.depth / 2;
+  const halfXB = b.size.width / 2;
+  const halfYB = b.size.height / 2;
+  const halfZB = b.size.depth / 2;
+
+  return (
+    Math.abs(a.position.x - b.position.x) < halfXA + halfXB &&
+    Math.abs(a.position.y - b.position.y) < halfYA + halfYB &&
+    Math.abs(a.position.z - b.position.z) < halfZA + halfZB
+  );
+};
+
+/**
+ * Intersection AABB of two viewer boxes (for red clash volume / 2D footprint).
+ * Returns null if separated. Very thin overlaps are expanded slightly for visibility.
+ */
+export function computeViewerAabbIntersection(
+  a: Pick<ViewerObjectState, 'position' | 'size'>,
+  b: Pick<ViewerObjectState, 'position' | 'size'>
+): { position: ScenePosition; size: SceneSize } | null {
+  const hax = a.size.width / 2;
+  const hay = a.size.height / 2;
+  const haz = a.size.depth / 2;
+  const hbx = b.size.width / 2;
+  const hby = b.size.height / 2;
+  const hbz = b.size.depth / 2;
+
+  const minX = Math.max(a.position.x - hax, b.position.x - hbx);
+  const maxX = Math.min(a.position.x + hax, b.position.x + hbx);
+  const minY = Math.max(a.position.y - hay, b.position.y - hby);
+  const maxY = Math.min(a.position.y + hay, b.position.y + hby);
+  const minZ = Math.max(a.position.z - haz, b.position.z - hbz);
+  const maxZ = Math.min(a.position.z + haz, b.position.z + hbz);
+
+  if (minX >= maxX || minY >= maxY || minZ >= maxZ) return null;
+
+  const w = maxX - minX;
+  const h = maxY - minY;
+  const d = maxZ - minZ;
+  const MIN_VIS = 8;
+  return {
+    position: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: (minZ + maxZ) / 2 },
+    size: {
+      width: Math.max(w, MIN_VIS),
+      height: Math.max(h, MIN_VIS),
+      depth: Math.max(d, MIN_VIS),
+    },
+  };
+}
+
+const viewerOriginFromScenePair = (
+  scene: SceneObject[],
+  objectA: string,
+  objectB: string
+): [number, number, number] | null => {
+  const sa = scene.find((o) => o.id === objectA);
+  const sb = scene.find((o) => o.id === objectB);
+  if (!sa?.worldPosition || !sb?.worldPosition) return null;
+  return [
+    (sa.worldPosition[0] + sb.worldPosition[0]) / 2,
+    (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
+    (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
+  ];
+};
+
+/**
+ * Red marker volume for xeokit: real AABB intersection, else clash point in IFC space, else midpoint between A/B.
+ */
+export function resolveClashZoneForViewer(
+  clash: Pick<Clash, 'objectA' | 'objectB' | 'position'>,
+  viewerObjects: ViewerObjectState[],
+  scene: SceneObject[] | null
+): { position: ScenePosition; size: SceneSize } | null {
+  const objA = viewerObjects.find((o) => o.id === clash.objectA);
+  const objB = viewerObjects.find((o) => o.id === clash.objectB);
+  if (!objA || !objB) return null;
+
+  const inter = computeViewerAabbIntersection(objA, objB);
+  if (inter) return inter;
+
+  const originWorld = viewerOriginFromScenePair(scene ?? [], clash.objectA, clash.objectB);
+  const MARKER = 22;
+  if (originWorld) {
+    const pt = worldToViewer(clash.position, originWorld);
+    return {
+      position: pt,
+      size: { width: MARKER, height: MARKER, depth: MARKER },
+    };
+  }
+
+  return {
+    position: {
+      x: (objA.position.x + objB.position.x) / 2,
+      y: (objA.position.y + objB.position.y) / 2,
+      z: (objA.position.z + objB.position.z) / 2,
+    },
+    size: { width: MARKER, height: MARKER, depth: MARKER },
+  };
+}
+
 export const applyCollisionFlags = (objects: ViewerObjectState[]) =>
   objects.map((obj, _, all) => ({
     ...obj,
-    isColliding: all.some((other) => other.id !== obj.id && intersects2D(obj, other)),
+    isColliding: all.some((other) => other.id !== obj.id && intersects3D(obj, other)),
   }));
 
 export const buildViewerObjects = (
@@ -174,7 +318,7 @@ export function buildOverviewSceneFromFederated(
   objects: FederatedOverviewObject[],
   opts: { hiddenModelIds: string[]; hiddenCategories: string[]; maxObjects?: number }
 ): SceneObject[] {
-  const max = opts.maxObjects ?? 400;
+  const max = opts.maxObjects ?? objects.length;
   const visible = objects.filter((o) => {
     if (o.hidden) return false;
     if (opts.hiddenModelIds.includes(o.sourceModel)) return false;
@@ -183,8 +327,16 @@ export function buildOverviewSceneFromFederated(
     return true;
   });
 
-  const sorted = [...visible].sort((a, b) => a.id.localeCompare(b.id));
-  const capped = sorted.slice(0, max);
+  // Sort by sourceModel then category then id so that when a hard cap is applied
+  // (e.g. performance fallback), each model/category is represented evenly.
+  const sorted = [...visible].sort((a, b) => {
+    const m = a.sourceModel.localeCompare(b.sourceModel);
+    if (m !== 0) return m;
+    const c = (a.category || '').localeCompare(b.category || '');
+    if (c !== 0) return c;
+    return a.id.localeCompare(b.id);
+  });
+  const capped = max >= sorted.length ? sorted : sorted.slice(0, max);
   if (capped.length === 0) return [];
 
   let minX = Infinity;

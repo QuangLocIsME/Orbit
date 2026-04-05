@@ -39,6 +39,8 @@ export interface FederatedModelSummary {
   importedAt: string;
   categories: string[];
   objectCount: number;
+  /** Present when model was imported as `.xkt` — binary is served from the Navisworks XKT endpoint. */
+  xktFile?: string | null;
 }
 
 export interface SelectionSet {

@@ -13,8 +13,8 @@ import {
 import { cn } from '@/lib/utils';
 import { apiUrl } from '@/config/api';
 import { apiFetch } from '@/lib/api-client';
-import Viewer2D from './viewer/Viewer2D';
-import Viewer3D from './viewer/Viewer3D';
+import Viewer2D from '../clash/viewer/Viewer2D';
+import Viewer3D from '../clash/viewer/Viewer3D';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildOverviewSceneFromFederated } from './lib/clashScene';
 import { toast } from 'sonner';
@@ -60,6 +60,30 @@ const parseManualIdList = (raw: string) =>
     .split(/[,;\n]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+
+const resolveSelectionSetObjectIds = (
+  selectionSet: SelectionSet | null | undefined,
+  objects: Array<{
+    id: string;
+    type: string;
+    category: string;
+    sourceModelId: string;
+  }>
+) => {
+  if (!selectionSet) return [];
+  const filteredIds = objects
+    .filter((object) => {
+      const { modelIds, types, categories } = selectionSet.filters;
+      if (modelIds.length > 0 && !modelIds.includes(object.sourceModelId)) return false;
+      if (types.length > 0 && !types.includes(object.type)) return false;
+      if (categories.length > 0 && !categories.includes(object.category)) return false;
+      return true;
+    })
+    .map((object) => object.id);
+  const included = new Set([...filteredIds, ...selectionSet.manualIncludeIds]);
+  selectionSet.manualExcludeIds.forEach((id) => included.delete(id));
+  return Array.from(included);
+};
 
 function SelectionSetChipPicker({
   options,
@@ -185,6 +209,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('select');
   const [dragActive, setDragActive] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'reviewed' | 'resolved'>('all');
+  const [hideUnrelatedToActiveTest, setHideUnrelatedToActiveTest] = useState(false);
   const [search, setSearch] = useState('');
   const [hiddenModelIds, setHiddenModelIds] = useState<string[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
@@ -283,8 +308,38 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     () => Array.from(new Set(allObjects.map((object) => object.type))).sort(),
     [allObjects]
   );
+  const objectsInSelectionModelScope = useMemo(() => {
+    if (selectionSetDraft.modelIds.length === 0) return allObjects;
+    const modelScope = new Set(selectionSetDraft.modelIds);
+    return allObjects.filter((object) => modelScope.has(object.sourceModelId));
+  }, [allObjects, selectionSetDraft.modelIds]);
+  const scopedCategories = useMemo(() => {
+    const next = new Set(objectsInSelectionModelScope.map((object) => object.category));
+    selectionSetDraft.categories.forEach((category) => next.add(category));
+    return Array.from(next).sort();
+  }, [objectsInSelectionModelScope, selectionSetDraft.categories]);
+  const scopedTypes = useMemo(() => {
+    const activeCategories = new Set(selectionSetDraft.categories);
+    const sourceObjects =
+      activeCategories.size > 0
+        ? objectsInSelectionModelScope.filter((object) => activeCategories.has(object.category))
+        : objectsInSelectionModelScope;
+    const next = new Set(sourceObjects.map((object) => object.type));
+    selectionSetDraft.types.forEach((type) => next.add(type));
+    return Array.from(next).sort();
+  }, [objectsInSelectionModelScope, selectionSetDraft.categories, selectionSetDraft.types]);
   const suggestedManualObjectIds = useMemo(() => allObjects.slice(0, 24).map((object) => object.id), [allObjects]);
   const objectIdDatalistOptions = useMemo(() => allObjects.slice(0, 200).map((object) => object.id), [allObjects]);
+  const objectMeshPositions = useMemo(
+    () =>
+      allObjects.reduce<Record<string, number[]>>((acc, object) => {
+        if (object.clashMesh?.positions?.length) {
+          acc[object.id] = object.clashMesh.positions;
+        }
+        return acc;
+      }, {}),
+    [allObjects]
+  );
 
   useEffect(() => {
     if (!selectedTestId && workspace?.clashTests?.length) {
@@ -297,6 +352,21 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const runPayload = resultsQuery.data;
   const selectedTest = workspace?.clashTests.find((test) => test.id === selectedTestId) ?? null;
   const results = runPayload?.results ?? [];
+  const selectionSetById = useMemo(
+    () => new Map((workspace?.selectionSets ?? []).map((set) => [set.id, set])),
+    [workspace?.selectionSets]
+  );
+
+  const activeTestScopeObjectIds = useMemo(() => {
+    if (!selectedTest?.setAId || !selectedTest?.setBId) return [];
+    const setA = selectionSetById.get(selectedTest.setAId);
+    const setB = selectionSetById.get(selectedTest.setBId);
+    return Array.from(new Set([
+      ...resolveSelectionSetObjectIds(setA, allObjects),
+      ...resolveSelectionSetObjectIds(setB, allObjects),
+    ]));
+  }, [allObjects, selectedTest?.setAId, selectedTest?.setBId, selectionSetById]);
+  const shouldHighlightActiveScope = Boolean(runPayload?.run && activeTestScopeObjectIds.length > 0);
 
   useEffect(() => {
     if (!showClashInMainViewer) return;
@@ -322,6 +392,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const selectedResult = filteredResults.find((result) => result.clashId === selectedClashId)
     ?? results.find((result) => result.clashId === selectedClashId)
     ?? null;
+  const showScopeDrivenOverview = shouldHighlightActiveScope && showClashInMainViewer;
   const viewerClash =
     showClashInMainViewer && selectedResult ? resultToViewerClash(selectedResult) : null;
 
@@ -330,13 +401,30 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
       buildOverviewSceneFromFederated(allObjects, {
         hiddenModelIds,
         hiddenCategories,
-        maxObjects: 400,
+        // No cap — show all visible objects. Mesh is pre-subsampled (80 tris/object) so
+        // even large federated models stay within xeokit's performance budget.
+        maxObjects: allObjects.length,
       }),
     [allObjects, hiddenCategories, hiddenModelIds]
   );
 
   const overviewSceneForViewer =
     !viewerClash && models.length > 0 ? federatedOverviewScene : undefined;
+
+  const xktModelsForViewer = useMemo(
+    () =>
+      models
+        .filter((m) => m.sourceFormat === 'xkt' && m.xktFile)
+        .map((m) => ({ id: m.id })),
+    [models]
+  );
+
+  const hasXktOnlyOverview = Boolean(
+    !viewerClash &&
+      models.length > 0 &&
+      federatedOverviewScene.length === 0 &&
+      xktModelsForViewer.length > 0
+  );
 
   const zeroClashesAfterRun = Boolean(runPayload?.run && runPayload.run.summary.total === 0);
 
@@ -377,6 +465,29 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     if (bByFilter || bObj?.hidden) next.push(selectedResult.objectB);
     return next;
   }, [allObjects, hiddenCategories, hiddenModelIds, selectedResult]);
+
+  const viewerHiddenObjectIds = useMemo(() => {
+    const merged = new Set(hiddenObjectIds);
+    const scope = new Set(activeTestScopeObjectIds);
+    // In overview mode only: force-show scope objects and optionally hide unrelated.
+    // In clash detail mode (viewerClash set) the user may explicitly hide A/B, so we respect that.
+    if (shouldHighlightActiveScope && !viewerClash) {
+      scope.forEach((id) => merged.delete(id));
+    }
+    if (hideUnrelatedToActiveTest && shouldHighlightActiveScope && !viewerClash) {
+      allObjects.forEach((object) => {
+        if (!scope.has(object.id)) merged.add(object.id);
+      });
+    }
+    return Array.from(merged);
+  }, [
+    activeTestScopeObjectIds,
+    allObjects,
+    hiddenObjectIds,
+    hideUnrelatedToActiveTest,
+    shouldHighlightActiveScope,
+    viewerClash,
+  ]);
 
   const memberAssigneeLabels = useMemo(
     () => projectMembers.map((member) => memberLabel(member)),
@@ -422,10 +533,29 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
 
   const toggleSelectionSetDraftArray = (key: 'modelIds' | 'categories' | 'types', value: string) => {
     resetSelectionSetFeedback();
-    setSelectionSetDraft((current) => ({
-      ...current,
-      [key]: toggleArrayValue(current[key], value),
-    }));
+    setSelectionSetDraft((current) => {
+      if (key === 'modelIds') {
+        return {
+          ...current,
+          modelIds: toggleArrayValue(current.modelIds, value),
+          // Changing model scope invalidates dependent scopes.
+          categories: [],
+          types: [],
+        };
+      }
+      if (key === 'categories') {
+        return {
+          ...current,
+          categories: toggleArrayValue(current.categories, value),
+          // Type scope depends on chosen categories.
+          types: [],
+        };
+      }
+      return {
+        ...current,
+        types: toggleArrayValue(current.types, value),
+      };
+    });
   };
 
   const validateSelectionSetDraft = (): boolean => {
@@ -606,7 +736,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     }
   };
 
-  const acceptImport = '.ifc,.json,application/json';
+  const acceptImport = '.ifc,.json,.xkt,application/json,application/octet-stream';
 
   const handleStageDragOver = (event: DragEvent) => {
     event.preventDefault();
@@ -625,7 +755,12 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     event.preventDefault();
     setDragActive(false);
     const files = Array.from(event.dataTransfer.files).filter(
-      (file) => file.name.endsWith('.ifc') || file.name.endsWith('.json') || file.type === 'application/json'
+      (file) =>
+        file.name.endsWith('.ifc') ||
+        file.name.endsWith('.json') ||
+        file.name.toLowerCase().endsWith('.xkt') ||
+        file.type === 'application/json' ||
+        file.type === 'application/octet-stream'
     );
     await importModelFiles(files, true);
   };
@@ -1335,7 +1470,10 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="min-w-0">
                                 <p className="text-sm font-medium text-[#101828]">{model.name}</p>
-                                <p className="text-xs text-[#6A7282]">{model.discipline} · {model.objectCount} objects</p>
+                                <p className="text-xs text-[#6A7282]">
+                                  {model.discipline} · {model.objectCount} objects
+                                  {model.sourceFormat === 'xkt' ? ' · XKT (3D viewer)' : ''}
+                                </p>
                               </div>
                               <button
                                 type="button"
@@ -1451,7 +1589,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                                   <button
                                     type="button"
                                     className="text-[11px] font-medium text-[#155DFC]"
-                                    onClick={() => patchSelectionSetDraft({ modelIds: [] })}
+                                    onClick={() => patchSelectionSetDraft({ modelIds: [], categories: [], types: [] })}
                                   >
                                     Clear ({selectionSetDraft.modelIds.length})
                                   </button>
@@ -1473,20 +1611,24 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                                   <button
                                     type="button"
                                     className="text-[11px] font-medium text-[#155DFC]"
-                                    onClick={() => patchSelectionSetDraft({ categories: [] })}
+                                    onClick={() => patchSelectionSetDraft({ categories: [], types: [] })}
                                   >
                                     Clear ({selectionSetDraft.categories.length})
                                   </button>
                                 )}
                               </div>
                               <p className="mt-0.5 text-[11px] text-[#6A7282]">Narrows to IFC / discipline categories (within your model scope).</p>
-                              <SelectionSetChipPicker
-                                options={allCategories.map((category) => ({ value: category, label: category }))}
-                                selected={selectionSetDraft.categories}
-                                onToggle={(value) => toggleSelectionSetDraftArray('categories', value)}
-                                emptyMessage="No categories in the federated model yet."
-                                aria-invalid={Boolean(selectionSetFormErrors.scope)}
-                              />
+                              {selectionSetDraft.modelIds.length === 0 ? (
+                                <p className="mt-1 text-xs text-[#6A7282]">Select at least one model first to load categories.</p>
+                              ) : (
+                                <SelectionSetChipPicker
+                                  options={scopedCategories.map((category) => ({ value: category, label: category }))}
+                                  selected={selectionSetDraft.categories}
+                                  onToggle={(value) => toggleSelectionSetDraftArray('categories', value)}
+                                  emptyMessage="No categories available in the selected model scope."
+                                  aria-invalid={Boolean(selectionSetFormErrors.scope)}
+                                />
+                              )}
                             </div>
                             <div>
                               <div className="flex items-baseline justify-between gap-2">
@@ -1502,13 +1644,17 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                                 )}
                               </div>
                               <p className="mt-0.5 text-[11px] text-[#6A7282]">Filter by element type (e.g. Wall, Duct).</p>
-                              <SelectionSetChipPicker
-                                options={allTypes.map((type) => ({ value: type, label: type }))}
-                                selected={selectionSetDraft.types}
-                                onToggle={(value) => toggleSelectionSetDraftArray('types', value)}
-                                emptyMessage="No types loaded yet — import models first."
-                                aria-invalid={Boolean(selectionSetFormErrors.scope)}
-                              />
+                              {selectionSetDraft.categories.length === 0 ? (
+                                <p className="mt-1 text-xs text-[#6A7282]">Select at least one category first to load types.</p>
+                              ) : (
+                                <SelectionSetChipPicker
+                                  options={scopedTypes.map((type) => ({ value: type, label: type }))}
+                                  selected={selectionSetDraft.types}
+                                  onToggle={(value) => toggleSelectionSetDraftArray('types', value)}
+                                  emptyMessage="No types available for the selected model/category scope."
+                                  aria-invalid={Boolean(selectionSetFormErrors.scope)}
+                                />
+                              )}
                             </div>
                             {selectionSetFormErrors.scope && (
                               <p className="text-xs text-red-600">{selectionSetFormErrors.scope}</p>
@@ -1576,6 +1722,20 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                       <p className="text-[11px] text-[#6A7282]">Scope: {runPayload.run.scope}</p>
                     )}
                     <input className="w-full rounded-lg border border-[#D1D5DC] px-3 py-2 text-sm" placeholder="Search clash results…" value={search} onChange={(event) => setSearch(event.target.value)} />
+                    {shouldHighlightActiveScope && !viewerClash && (
+                      <button
+                        type="button"
+                        onClick={() => setHideUnrelatedToActiveTest((current) => !current)}
+                        className={cn(
+                          'w-full rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+                          hideUnrelatedToActiveTest
+                            ? 'border-[#155DFC] bg-[#EFF6FF] text-[#155DFC]'
+                            : 'border-[#D1D5DC] bg-white text-[#364153] hover:bg-gray-50'
+                        )}
+                      >
+                        {hideUnrelatedToActiveTest ? 'Show all objects' : 'Focus on test sets (A/B)'}
+                      </button>
+                    )}
                     <div className="flex flex-wrap gap-1.5">
                       {(['all', 'new', 'reviewed', 'resolved'] as const).map((filter) => (
                         <button key={filter} type="button" onClick={() => setStatusFilter(filter)} className={cn('rounded-full px-2.5 py-1 text-xs', statusFilter === filter ? 'bg-[#155DFC] text-white' : 'border border-[#D1D5DC] bg-white text-[#364153]')}>
@@ -1653,40 +1813,48 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                               })()}
                             </p>
                           </div>
-                          <div className="grid gap-2">
-                            <div className="rounded-lg border border-[#E5E7EB] p-2.5">
-                              <p className="text-xs text-[#6A7282]">Object A</p>
-                              <p className="text-sm font-medium text-[#101828]">{selectedResult.objectA}</p>
-                              <p className="text-xs text-[#6A7282]">{selectedResult.objectAType} · {selectedResult.objectAModel}</p>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void (allObjects.find((o) => o.id === selectedResult.objectA)?.hidden
-                                    ? showObjects([selectedResult.objectA])
-                                    : hideObject(selectedResult.objectA))
-                                }
-                                className="mt-2 rounded-md border border-[#D1D5DC] px-2 py-1 text-xs text-[#364153] hover:bg-gray-50"
-                              >
-                                {allObjects.find((o) => o.id === selectedResult.objectA)?.hidden ? 'Show A' : 'Hide A'}
-                              </button>
-                            </div>
-                            <div className="rounded-lg border border-[#E5E7EB] p-2.5">
-                              <p className="text-xs text-[#6A7282]">Object B</p>
-                              <p className="text-sm font-medium text-[#101828]">{selectedResult.objectB}</p>
-                              <p className="text-xs text-[#6A7282]">{selectedResult.objectBType} · {selectedResult.objectBModel}</p>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void (allObjects.find((o) => o.id === selectedResult.objectB)?.hidden
-                                    ? showObjects([selectedResult.objectB])
-                                    : hideObject(selectedResult.objectB))
-                                }
-                                className="mt-2 rounded-md border border-[#D1D5DC] px-2 py-1 text-xs text-[#364153] hover:bg-gray-50"
-                              >
-                                {allObjects.find((o) => o.id === selectedResult.objectB)?.hidden ? 'Show B' : 'Hide B'}
-                              </button>
-                            </div>
-                          </div>
+                          {(() => {
+                            const aHidden = Boolean(allObjects.find((o) => o.id === selectedResult.objectA)?.hidden);
+                            const bHidden = Boolean(allObjects.find((o) => o.id === selectedResult.objectB)?.hidden);
+                            return (
+                              <div className="grid gap-2">
+                                <div className={cn('rounded-lg border p-2.5', aHidden ? 'border-amber-200 bg-amber-50/50' : 'border-[#E5E7EB]')}>
+                                  <p className="text-xs text-[#6A7282]">Object A</p>
+                                  <p className="text-sm font-medium text-[#101828]">{selectedResult.objectA}</p>
+                                  <p className="text-xs text-[#6A7282]">{selectedResult.objectAType} · {selectedResult.objectAModel}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => void (aHidden ? showObjects([selectedResult.objectA]) : hideObject(selectedResult.objectA))}
+                                    className={cn(
+                                      'mt-2 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
+                                      aHidden
+                                        ? 'border-amber-300 bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                        : 'border-[#D1D5DC] bg-white text-[#364153] hover:bg-gray-50'
+                                    )}
+                                  >
+                                    {aHidden ? 'Show A' : 'Hide A'}
+                                  </button>
+                                </div>
+                                <div className={cn('rounded-lg border p-2.5', bHidden ? 'border-amber-200 bg-amber-50/50' : 'border-[#E5E7EB]')}>
+                                  <p className="text-xs text-[#6A7282]">Object B</p>
+                                  <p className="text-sm font-medium text-[#101828]">{selectedResult.objectB}</p>
+                                  <p className="text-xs text-[#6A7282]">{selectedResult.objectBType} · {selectedResult.objectBModel}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => void (bHidden ? showObjects([selectedResult.objectB]) : hideObject(selectedResult.objectB))}
+                                    className={cn(
+                                      'mt-2 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
+                                      bHidden
+                                        ? 'border-amber-300 bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                        : 'border-[#D1D5DC] bg-white text-[#364153] hover:bg-gray-50'
+                                    )}
+                                  >
+                                    {bHidden ? 'Show B' : 'Hide B'}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <textarea
                             rows={3}
                             className="w-full rounded-lg border border-[#D1D5DC] px-3 py-2 text-sm outline-none focus:border-[#155DFC]"
@@ -1792,6 +1960,18 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                   </p>
                 </div>
                 <div className="pointer-events-auto flex items-center gap-2">
+                  {viewerClash && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedClashId(null);
+                        setShowClashInMainViewer(false);
+                      }}
+                      className="flex items-center gap-1 rounded-lg border border-[#E5E7EB] bg-white/95 px-3 py-1.5 text-xs font-medium text-[#364153] shadow-sm backdrop-blur-sm hover:bg-gray-50"
+                    >
+                      ← View all objects
+                    </button>
+                  )}
                   <div className="flex rounded-lg border border-[#E5E7EB] bg-white/95 p-0.5 shadow-sm backdrop-blur-sm">
                     <button
                       type="button"
@@ -1834,7 +2014,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                 'absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#F9FAFB] p-6 text-center transition-colors',
                 dragActive && 'bg-[#EFF6FF]'
               )}>
-                <p className="text-sm font-medium text-[#101828]">Drop IFC or JSON here</p>
+                <p className="text-sm font-medium text-[#101828]">Drop IFC, JSON, or XKT here</p>
                 <p className="max-w-sm text-xs text-[#6A7282]">Or use Import in the header / sidebar. The Clash Detective panel opens after a successful import.</p>
                 <button
                   type="button"
@@ -1864,6 +2044,9 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                   <p className="mt-0.5 text-[11px] text-amber-900/90">
                     The viewer shows a model overview; no pairs are marked as intersecting.
                   </p>
+                  <p className="mt-0.5 text-[11px] text-amber-900/90">
+                    Note: overview uses simplified preview solids, so visual overlap may appear without qualifying as a clash by test rules.
+                  </p>
                 </div>
               </div>
             )}
@@ -1876,9 +2059,15 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                       clash={viewerClash}
                       selectedObjectId={selectedObjectId}
                       onSelectObject={setSelectedObjectId}
-                      hiddenObjectIds={hiddenObjectIds}
+                      hiddenObjectIds={viewerHiddenObjectIds}
                       overviewScene={overviewSceneForViewer}
                       allowObjectMove={false}
+                      objectMeshPositions={objectMeshPositions}
+                      testScopeObjectIds={activeTestScopeObjectIds}
+                      deEmphasizeUnrelated={shouldHighlightActiveScope}
+                      showScopeBadge={shouldHighlightActiveScope}
+                      hideUnrelatedActive={hideUnrelatedToActiveTest}
+                      hasXktOnlyOverview={hasXktOnlyOverview}
                     />
                   </div>
                 </div>
@@ -1889,9 +2078,16 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                       clash={viewerClash}
                       selectedObjectId={selectedObjectId}
                       onSelectObject={setSelectedObjectId}
-                      hiddenObjectIds={hiddenObjectIds}
+                      hiddenObjectIds={viewerHiddenObjectIds}
                       overviewScene={overviewSceneForViewer}
                       allowObjectMove={false}
+                      testScopeObjectIds={activeTestScopeObjectIds}
+                      deEmphasizeUnrelated={shouldHighlightActiveScope}
+                      showScopeBadge={shouldHighlightActiveScope}
+                      hideUnrelatedActive={hideUnrelatedToActiveTest}
+                      projectSlug={projectSlug}
+                      xktModels={xktModelsForViewer}
+                      objectMeshPositions={objectMeshPositions}
                     />
                   </div>
                 </div>
