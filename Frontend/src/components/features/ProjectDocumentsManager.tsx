@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight, Eye, Download, Trash2 } from 'lucide-react';
+import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
 
 interface ProjectDocumentsManagerProps {
@@ -18,6 +19,11 @@ interface TreeNode {
   s3Url?: string;
   mimeType?: string;
   folderPath?: string;
+  isIfc?: boolean;
+  versionId?: string;
+  conversionStatus?: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'NOT_SUPPORTED';
+  conversionError?: string;
+  versionNumber?: number;
 }
 
 function findNodeById(node: TreeNode | null, id: string): TreeNode | null {
@@ -278,6 +284,39 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     await loadDocuments();
   };
 
+  const openIfcViewer = (node: TreeNode) => {
+    const targetVersionId = node.versionId || node.id;
+    window.location.href = `/project/${projectId}/${node.id}/${targetVersionId}`;
+  };
+
+  const retryIfcConversion = async (node: TreeNode) => {
+    const res = await apiFetch('/api/projects/packages/documents/retry-conversion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        fileId: node.id,
+        versionId: node.versionId || node.id,
+      }),
+    });
+
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || !payload?.success) {
+      throw new Error(payload?.message || 'Failed to retry IFC conversion');
+    }
+
+    toast.success('Queued IFC conversion');
+    await loadDocuments();
+  };
+
+  const getIfcTooltip = (node: TreeNode) => {
+    if (!node.isIfc) return 'View';
+    if (node.conversionStatus === 'READY') return 'Open 3D viewer';
+    if (node.conversionStatus === 'FAILED') return node.conversionError || 'Conversion failed. Click to retry';
+    if (node.conversionStatus === 'PROCESSING' || node.conversionStatus === 'PENDING') return 'Đang xử lý mô hình...';
+    return 'IFC viewer is not ready';
+  };
+
   useEffect(() => {
     if (pendingUploadFile) {
       uploadFile(pendingUploadFile).catch((err: any) => toast.error(err?.message || 'Upload failed'));
@@ -433,11 +472,32 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                       {hoveredId === child.id && (
                         <div className="flex items-center gap-1">
                           {isImage && (
-                            <button onClick={() => setPreviewImageUrl(child.s3Url || '')} className="rounded p-1 text-gray-600 hover:bg-gray-100">
+                            <button onClick={() => setPreviewImageUrl(child.s3Url || '')} className="rounded p-1 text-gray-600 hover:bg-gray-100" title="Preview image">
                               <Eye className="h-4 w-4" />
                             </button>
                           )}
-                          <a href={child.s3Url || '#'} download className="rounded p-1 text-gray-600 hover:bg-gray-100">
+
+                          {child.isIfc && (
+                            <button
+                              onClick={() => {
+                                if (child.conversionStatus === 'READY') {
+                                  openIfcViewer(child);
+                                  return;
+                                }
+                                if (child.conversionStatus === 'FAILED') {
+                                  retryIfcConversion(child).catch((e: any) => toast.error(e?.message || 'Failed to retry conversion'));
+                                  return;
+                                }
+                              }}
+                              disabled={child.conversionStatus === 'PENDING' || child.conversionStatus === 'PROCESSING'}
+                              title={getIfcTooltip(child)}
+                              className="rounded p-1 text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          )}
+
+                          <a href={child.s3Url || '#'} download className="rounded p-1 text-gray-600 hover:bg-gray-100" title="Download original file">
                             <Download className="h-4 w-4" />
                           </a>
                           <button

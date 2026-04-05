@@ -1,0 +1,15 @@
+---
+export const prerender = false;
+
+import IfcViewerPage from '@/components/features/IfcViewerPage';
+
+const projectId = Astro.params.projectId as string;
+const fileId = Astro.params.fileId as string;
+const versionId = Astro.params.versionId as string;
+
+if (!projectId || !fileId || !versionId) {
+  return Astro.redirect('/projects');
+}
+---
+
+<IfcViewerPage projectId={projectId} fileId={fileId} versionId={versionId} client:load />

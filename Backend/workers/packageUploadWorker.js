@@ -15,6 +15,7 @@ const DocumentRepository = require('../repositories/DocumentRepository');
 const UploadJobRepository = require('../repositories/UploadJobRepository');
 
 const { startPackageUploadConsumer } = require('../queues/packageUploadQueue');
+const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 
 async function processJob(jobId) {
     const job = await UploadJobRepository.findByPublicId(jobId);
@@ -51,9 +52,13 @@ async function processJob(jobId) {
         await UploadJobRepository.updateJob(jobId, { progress: 90 });
 
         const storedName = path.basename(job.s3Key);
+        const ext = path.extname(job.fileOriginalName || '').toLowerCase();
+        const isIfcFile = ext === '.ifc';
         const document = await DocumentRepository.createDocument({
             projectId: job.projectId,
             packageId: job.packageId,
+            folderType: job.folderType || 'files',
+            folderPath: job.folderPath || '',
             originalName: job.fileOriginalName,
             storedName,
             mimeType: job.mimeType,
@@ -62,6 +67,11 @@ async function processJob(jobId) {
             s3Key: job.s3Key,
             s3Url: buildS3Url(job.s3Key),
             uploadedBy: job.uploaderId,
+            versionGroupId: require('crypto').randomUUID(),
+            versionNumber: 1,
+            conversionStatus: isIfcFile ? 'PENDING' : 'NOT_SUPPORTED',
+            conversionAttempts: 0,
+            conversionError: '',
             createdAt: new Date(),
             updatedAt: new Date(),
         });
@@ -79,6 +89,17 @@ async function processJob(jobId) {
             documentPublicId: document.publicId,
             errorMessage: null,
         });
+
+        if (isIfcFile) {
+            await publishIfcConversionJob({
+                projectId: job.projectId,
+                documentId: document.publicId,
+                versionId: document.publicId,
+                ifcS3Bucket: document.s3Bucket,
+                ifcS3Key: document.s3Key,
+                requestedBy: job.uploaderId,
+            });
+        }
 
         // Dọn temp file sau khi upload S3 thành công
         fs.unlink(tempFilePath, () => {});

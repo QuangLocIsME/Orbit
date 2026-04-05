@@ -30,6 +30,21 @@ const DocumentSchema = new mongoose.Schema({
 
     uploadedBy: { type: String, required: true, index: true },
 
+    versionGroupId: { type: String, default: null, index: true },
+    versionNumber: { type: Number, default: 1 },
+    conversionStatus: {
+        type: String,
+        enum: ['PENDING', 'PROCESSING', 'READY', 'FAILED', 'NOT_SUPPORTED'],
+        default: 'NOT_SUPPORTED',
+        index: true,
+    },
+    xktBucket: { type: String, default: '', trim: true },
+    xktKey: { type: String, default: '', trim: true },
+    xktUrl: { type: String, default: '', trim: true },
+    conversionAttempts: { type: Number, default: 0 },
+    conversionError: { type: String, default: '' },
+    convertedAt: { type: Date, default: null },
+
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });

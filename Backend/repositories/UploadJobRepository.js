@@ -5,6 +5,19 @@ class UploadJobRepository {
         return await UploadJob.create(data);
     }
 
+    async increaseProgress(jobPublicId, progress) {
+        return await UploadJob.findOneAndUpdate(
+            { publicId: jobPublicId },
+            {
+                $set: {
+                    progress,
+                    updatedAt: new Date(),
+                },
+            },
+            { new: true }
+        );
+    }
+
     async findByPublicId(jobPublicId) {
         return await UploadJob.findOne({ publicId: jobPublicId });
     }

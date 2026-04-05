@@ -3,6 +3,7 @@ const { normalizeString } = require('../utils/sanitize');
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const ProjectRepository = require('../repositories/ProjectRepository');
@@ -12,6 +13,8 @@ const DocumentRepository = require('../repositories/DocumentRepository');
 const DocumentFolderRepository = require('../repositories/DocumentFolderRepository');
 const UploadJobRepository = require('../repositories/UploadJobRepository');
 const { publishPackageUpload } = require('../queues/packageUploadQueue');
+const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
+const { createSignedXktUrl } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 const { broadcastProject } = require('../services/socketService');
 
@@ -30,6 +33,7 @@ function parseDueDate(dueDate) {
 }
 
 const SYNC_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const IFC_EXTENSION = '.ifc';
 
 function normalizeFolderType(folderType) {
     const value = normalizeString(folderType)?.toLowerCase();
@@ -338,6 +342,11 @@ class PackageController {
                     folderPath: doc.folderPath || '',
                     s3Key: doc.s3Key,
                     s3Url: doc.s3Url,
+                    versionNumber: doc.versionNumber || 1,
+                    versionId: doc.publicId,
+                    conversionStatus: doc.conversionStatus || 'NOT_SUPPORTED',
+                    conversionError: doc.conversionError || '',
+                    isIfc: path.extname(doc.originalName || '').toLowerCase() === IFC_EXTENSION,
                 });
             }
 
@@ -667,6 +676,10 @@ class PackageController {
                     })
                 );
 
+                const ext = path.extname(file.originalname || '').toLowerCase();
+                const versionGroupId = crypto.randomUUID();
+                const isIfcFile = ext === IFC_EXTENSION;
+
                 const document = await DocumentRepository.createDocument({
                     projectId: normalizedProjectId,
                     packageId: targetPackageId,
@@ -683,6 +696,11 @@ class PackageController {
                     s3Key,
                     s3Url: buildS3Url(s3Key),
                     uploadedBy: userId,
+                    versionGroupId,
+                    versionNumber: 1,
+                    conversionStatus: isIfcFile ? 'PENDING' : 'NOT_SUPPORTED',
+                    conversionAttempts: 0,
+                    conversionError: '',
                     createdAt: new Date(),
                     updatedAt: new Date(),
                 });
@@ -693,6 +711,16 @@ class PackageController {
                         normalizedProjectId,
                         document.publicId
                     );
+                }
+
+                if (isIfcFile) {
+                    await publishIfcConversionJob({
+                        projectId: normalizedProjectId,
+                        documentId: document.publicId,
+                        versionId: document.publicId,
+                        ifcS3Bucket: document.s3Bucket,
+                        ifcS3Key: document.s3Key,
+                    });
                 }
 
                 fs.unlink(file.path, () => {});
@@ -969,6 +997,161 @@ class PackageController {
             return res.status(200).json({ success: true, message: 'Folder deleted' });
         } catch (error) {
             return serverError(res, error.message || 'Delete folder failed');
+        }
+    }
+
+    async getIfcViewStatus(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { projectId, fileId, versionId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFileId = normalizeString(fileId);
+            const normalizedVersionId = normalizeString(versionId) || normalizedFileId;
+
+            if (!normalizedProjectId || !normalizedFileId) {
+                return badRequest(res, 'projectId and fileId are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can view documents');
+            }
+
+            const doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            if (!doc || doc.projectId !== normalizedProjectId) {
+                return notFound(res, 'File version not found');
+            }
+
+            const status = doc.conversionStatus || 'NOT_SUPPORTED';
+            const isViewable = status === 'READY' && Boolean(doc.xktKey);
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    fileId: normalizedFileId,
+                    versionId: doc.publicId,
+                    status,
+                    isViewable,
+                    versionNumber: doc.versionNumber || 1,
+                    viewerUrl: isViewable
+                        ? `/project/${normalizedProjectId}/${normalizedFileId}/${doc.publicId}`
+                        : '',
+                    message:
+                        status === 'READY'
+                            ? 'Model is ready'
+                            : status === 'FAILED'
+                            ? doc.conversionError || 'Conversion failed'
+                            : status === 'NOT_SUPPORTED'
+                            ? 'This file type is not supported for viewer'
+                            : 'Model is processing',
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to get view status');
+        }
+    }
+
+    async retryIfcConversion(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { projectId, fileId, versionId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFileId = normalizeString(fileId);
+            const normalizedVersionId = normalizeString(versionId) || normalizedFileId;
+
+            if (!normalizedProjectId || !normalizedFileId) {
+                return badRequest(res, 'projectId and fileId are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can retry conversion');
+            }
+
+            const doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            if (!doc || doc.projectId !== normalizedProjectId) {
+                return notFound(res, 'File version not found');
+            }
+
+            const isIfcFile = path.extname(doc.originalName || '').toLowerCase() === IFC_EXTENSION;
+            if (!isIfcFile) {
+                return badRequest(res, 'Only IFC files can be queued for viewer conversion');
+            }
+
+            await DocumentRepository.updateConversionStateByPublicId(doc.publicId, {
+                conversionStatus: 'PENDING',
+                conversionError: '',
+            });
+
+            await publishIfcConversionJob({
+                projectId: normalizedProjectId,
+                documentId: normalizedFileId,
+                versionId: doc.publicId,
+                ifcS3Bucket: doc.s3Bucket,
+                ifcS3Key: doc.s3Key,
+                requestedBy: userId,
+            });
+
+            return res.status(202).json({
+                success: true,
+                message: 'IFC conversion queued',
+                data: {
+                    fileId: normalizedFileId,
+                    versionId: doc.publicId,
+                    status: 'PENDING',
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to retry conversion');
+        }
+    }
+
+    async getViewerModel(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { projectId, fileId, versionId } = req.params || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFileId = normalizeString(fileId);
+            const normalizedVersionId = normalizeString(versionId);
+
+            if (!normalizedProjectId || !normalizedFileId || !normalizedVersionId) {
+                return badRequest(res, 'projectId, fileId, versionId are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can access viewer model');
+            }
+
+            const doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            if (!doc || doc.projectId !== normalizedProjectId) {
+                return notFound(res, 'File version not found');
+            }
+
+            if (doc.conversionStatus !== 'READY' || !doc.xktKey) {
+                return badRequest(res, 'Model is not ready for viewing');
+            }
+
+            const signedUrl = await createSignedXktUrl(doc.xktKey, 3600);
+            return res.status(200).json({
+                success: true,
+                data: {
+                    projectId: normalizedProjectId,
+                    fileId: normalizedFileId,
+                    versionId: doc.publicId,
+                    versionNumber: doc.versionNumber || 1,
+                    modelUrl: signedUrl,
+                    originalName: doc.originalName,
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to get viewer model URL');
         }
     }
 

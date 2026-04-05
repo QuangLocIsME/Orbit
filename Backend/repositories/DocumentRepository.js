@@ -5,8 +5,16 @@ class DocumentRepository {
         return await Document.create(data);
     }
 
+    async countByVersionGroupId(versionGroupId) {
+        return await Document.countDocuments({ versionGroupId });
+    }
+
     async findByPublicId(documentPublicId) {
         return await Document.findOne({ publicId: documentPublicId });
+    }
+
+    async findLatestInVersionGroup(versionGroupId) {
+        return await Document.findOne({ versionGroupId }).sort({ versionNumber: -1, createdAt: -1 });
     }
 
     async listByProject(projectId) {
@@ -17,6 +25,17 @@ class DocumentRepository {
         return await Document.findOneAndUpdate(
             { publicId },
             { originalName, updatedAt: new Date() },
+            { new: true }
+        );
+    }
+
+    async updateConversionStateByPublicId(publicId, update = {}) {
+        return await Document.findOneAndUpdate(
+            { publicId },
+            {
+                ...update,
+                updatedAt: new Date(),
+            },
             { new: true }
         );
     }

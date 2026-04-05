@@ -45,6 +45,18 @@ router.post('/documents/file/delete', authenticate, (req, res) =>
     PackageController.deleteDocumentFile(req, res)
 );
 
+router.post('/documents/view-status', authenticate, (req, res) =>
+    PackageController.getIfcViewStatus(req, res)
+);
+
+router.post('/documents/retry-conversion', authenticate, (req, res) =>
+    PackageController.retryIfcConversion(req, res)
+);
+
+router.get('/viewer/projects/:projectId/files/:fileId/versions/:versionId/model', authenticate, (req, res) =>
+    PackageController.getViewerModel(req, res)
+);
+
 router.post('/documents/folder/delete', authenticate, (req, res) =>
     PackageController.deleteDocumentFolder(req, res)
 );

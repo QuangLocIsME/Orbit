@@ -11,6 +11,7 @@
     "start": "node Backend/app.js"
   },
   "dependencies": {
-    "concurrently": "^9.0.1"
+    "concurrently": "^9.0.1",
+    "pngjs": "^3.4.0"
   }
 }
