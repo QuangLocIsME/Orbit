@@ -13,6 +13,7 @@ next.user-config.*
 .env*.local
 
 # Common ignores
+dist/
 node_modules/
 .next/
 .DS_Store
