@@ -41,6 +41,9 @@ export async function apiFetch(
 
   if (response.status !== 401) return response;
 
+  // Already on the login page — don't trigger refresh → infinite redirect loop
+  if (typeof window !== 'undefined' && window.location.pathname === '/login') return response;
+
   // ── 401 received — try to refresh the access token ──────────────────────
   if (isRefreshing) {
     // Another request is already refreshing — wait for it to finish, then retry

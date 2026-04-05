@@ -1,6 +1,7 @@
 ---
 export const prerender = false;
 
+import BaseLayout from '@/layouts/BaseLayout.astro';
 import IfcViewerPage from '@/components/features/IfcViewerPage';
 
 const projectId = Astro.params.projectId as string;
@@ -12,4 +13,6 @@ if (!projectId || !fileId || !versionId) {
 }
 ---
 
-<IfcViewerPage projectId={projectId} fileId={fileId} versionId={versionId} client:load />
+<BaseLayout title="IFC Viewer — ORBIT">
+  <IfcViewerPage projectId={projectId} fileId={fileId} versionId={versionId} client:only="react" />
+</BaseLayout>
