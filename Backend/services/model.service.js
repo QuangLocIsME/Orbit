@@ -166,34 +166,107 @@ const parseJsonRegistry = (buffer, meta) => {
     };
 };
 
-const parseXktModel = (buffer, meta, projectSlug) => {
-    if (!buffer || buffer.length < 32) {
-        throw new Error('Invalid or empty XKT file');
+/**
+ * web-ifc (Node) passes GetVertexDataSize() / GetIndexDataSize() (bytes) into getSubArray, but the
+ * bundled implementation does `HEAPF32.subarray(ptr/4, ptr/4 + size)` — treating `size` as a float
+ * index span instead of bytes/4. That over-reads WASM memory and surfaces as Node RangeError
+ * ("offset" out of range) on larger vertex/index payloads. Upstream TS has the same pattern.
+ */
+const patchWebIfcHeapReaders = (api) => {
+    if (!api?.wasmModule || api.__orbitIfcHeapReadersPatched) {
+        return;
     }
-    const sourceModelId = meta.sourceModelId || createId('model');
-    const sourceModel = meta.sourceModel || meta.originalName || sourceModelId;
-    const transform = matrixFromInput(meta.transform);
-    const unit = meta.unit || 'm';
-    const key = projectSlug || 'default-project';
-    const xktDir = path.join(LEGACY_PROJECTS_DIR, key, 'xkt');
-    fs.mkdirSync(xktDir, { recursive: true });
-    const xktFile = `${sourceModelId}.xkt`;
-    fs.writeFileSync(path.join(xktDir, xktFile), buffer);
+    api.__orbitIfcHeapReadersPatched = true;
+    api.GetVertexArray = (ptr, sizeBytes) => {
+        if (ptr == null || ptr < 0 || !sizeBytes || sizeBytes <= 0) {
+            return new Float32Array(0);
+        }
+        const heap = api.wasmModule.HEAPF32;
+        const elStart = ptr >>> 2;
+        const floatCount = (sizeBytes / 4) | 0;
+        const elEnd = Math.min(elStart + floatCount, heap.length);
+        if (elStart >= heap.length) {
+            return new Float32Array(0);
+        }
+        return heap.subarray(elStart, elEnd).slice();
+    };
+    api.GetIndexArray = (ptr, sizeBytes) => {
+        if (ptr == null || ptr < 0 || !sizeBytes || sizeBytes <= 0) {
+            return new Uint32Array(0);
+        }
+        const heap = api.wasmModule.HEAPU32;
+        const elStart = ptr >>> 2;
+        const uintCount = (sizeBytes / 4) | 0;
+        const elEnd = Math.min(elStart + uintCount, heap.length);
+        if (elStart >= heap.length) {
+            return new Uint32Array(0);
+        }
+        return heap.subarray(elStart, elEnd).slice();
+    };
+};
 
-    return {
-        model: {
-            id: sourceModelId,
-            name: sourceModel,
-            sourceFormat: 'xkt',
-            discipline: meta.discipline || inferDiscipline(sourceModel),
-            unit,
-            transform,
-            importedAt: new Date().toISOString(),
-            categories: [],
-            objectCount: 0,
-            xktFile,
-        },
-        objects: [],
+/** web-ifc `FILE_SCHEMA` header express id (stable in 0.0.x). */
+const WEB_IFC_FILE_SCHEMA = 1109904537;
+
+/**
+ * Replace IfcAPI.OpenModel: stock callback uses `Math.min(byteLength - offset, destSize)` which becomes
+ * negative when WASM asks past EOF, then `HEAPU8.subarray(destPtr, destPtr + negative)` throws RangeError
+ * ("offset" out of range) on ~17MB IFCs (e.g. Duplex MEP). We clamp and use HEAPU8.set.
+ */
+const patchWebIfcOpenModelSafeRead = (api) => {
+    if (!api?.wasmModule || api.__orbitIfcOpenModelSafe) {
+        return;
+    }
+    api.__orbitIfcOpenModelSafe = true;
+    const wasm = api.wasmModule;
+    api.OpenModel = function orbitSafeOpenModel(data, settings) {
+        const s = this.CreateSettings(settings);
+        const result = wasm.OpenModel(s, (destPtr, offsetInSrc, destSize) => {
+            const len = data.byteLength;
+            const off = Number(offsetInSrc);
+            const want = Number(destSize);
+            if (!Number.isFinite(off) || off < 0 || off >= len) {
+                return 0;
+            }
+            const remain = len - off;
+            const cap = Number.isFinite(want) && want > 0 ? want : 0;
+            let srcSize = Math.min(remain, cap);
+            const heapLen = wasm.HEAPU8.length;
+            if (destPtr < 0 || destPtr >= heapLen) {
+                return 0;
+            }
+            const room = heapLen - destPtr;
+            srcSize = Math.min(srcSize, room);
+            if (srcSize <= 0) {
+                return 0;
+            }
+            try {
+                wasm.HEAPU8.set(data.subarray(off, off + srcSize), destPtr);
+            } catch {
+                return 0;
+            }
+            return srcSize;
+        });
+
+        if (result < 0) {
+            return -1;
+        }
+        this.deletedLines.set(result, new Set());
+        let schemaName;
+        try {
+            schemaName = this.GetHeaderLine(result, WEB_IFC_FILE_SCHEMA).arguments[0][0].value;
+        } catch {
+            this.CloseModel(result);
+            return -1;
+        }
+        const id = this.LookupSchemaId(schemaName);
+        if (id === -1) {
+            this.CloseModel(result);
+            return -1;
+        }
+        this.modelSchemaList[result] = id;
+        this.modelSchemaNameList[result] = schemaName;
+        return result;
     };
 };
 
@@ -202,15 +275,62 @@ const parseXktModel = (buffer, meta, projectSlug) => {
 const createIfcApi = async () => {
     const api = new WebIFC.IfcAPI();
     await api.Init();
+    patchWebIfcHeapReaders(api);
+    patchWebIfcOpenModelSafeRead(api);
+    // LOG_LEVEL_OFF = 6 — optional; quiets noisy BREP tessellation messages (not always fatal).
+    if (process.env.ORBIT_WEB_IFC_LOG === 'off' || process.env.ORBIT_WEB_IFC_LOG === '0') {
+        api.SetLogLevel(6);
+    }
     return api;
 };
 
 // 512 MB heap per model — the default ~17 MB causes RangeError on large IFC files.
 const IFC_MEMORY_LIMIT = 512 * 1024 * 1024;
+/** Zeros appended before OpenModel — slack for WASM reads near EOF on large STEP payloads (~17MB IFC). */
+const IFC_OPEN_PADDING_BYTES = 16384;
+const IFC_LOADER_SETTINGS = {
+    COORDINATE_TO_ORIGIN: false,
+    MEMORY_LIMIT: IFC_MEMORY_LIMIT,
+    // Parsing tape; keep comfortably above large IFC text payloads.
+    TAPE_SIZE: Math.max(128 * 1024 * 1024, IFC_MEMORY_LIMIT),
+};
 
-const MAX_CLASH_TRIANGLES_PER_OBJECT = Number(process.env.ORBIT_CLASH_MESH_MAX_TRIS || '80');
+const bufferForIfcOpen = (buffer) => {
+    const base = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+    if (!base.length) {
+        return base;
+    }
+    return Buffer.concat([base, Buffer.alloc(IFC_OPEN_PADDING_BYTES, 0)]);
+};
+
+/** 80 default; ORBIT_CLASH_MESH_MAX_TRIS=0 (or non-positive) = full IFC tessellation per object (heavy DB + viewer). */
+const resolveClashMeshTriLimit = () => {
+    const raw = process.env.ORBIT_CLASH_MESH_MAX_TRIS;
+    if (raw === undefined || raw === '') {
+        return { cap: 80, unlimited: false };
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+        return { cap: 0, unlimited: true };
+    }
+    return { cap: Math.max(1, Math.floor(n)), unlimited: false };
+};
+
+const CLASH_MESH_TRI_LIMIT = resolveClashMeshTriLimit();
 const ORBIT_DISABLE_CLASH_MESH = process.env.ORBIT_DISABLE_CLASH_MESH === '1';
-const ORBIT_MAX_OBJECTS_WITH_MESH = Number(process.env.ORBIT_MAX_OBJECTS_WITH_MESH || '1200');
+/** Positive = strip clashMesh when element count exceeds cap. 0 / negative / empty = no object-count cap. */
+const resolveMaxObjectsWithMesh = () => {
+    const raw = process.env.ORBIT_MAX_OBJECTS_WITH_MESH;
+    if (raw === undefined || raw === '') {
+        return 1200;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+        return Infinity;
+    }
+    return Math.max(1, Math.floor(n));
+};
+const ORBIT_MAX_OBJECTS_WITH_MESH = resolveMaxObjectsWithMesh();
 
 const triCentroid9 = (flat, o) => [
     (flat[o] + flat[o + 3] + flat[o + 6]) / 3,
@@ -383,7 +503,10 @@ const parseIfcModel = async (buffer, meta) => {
     const sourceModel = meta.sourceModel || meta.originalName || sourceModelId;
     const unitScale = asUnitScale(meta.unit || 'm');
     const importTransform = matrixFromInput(meta.transform);
-    const modelId = api.OpenModel(new Uint8Array(buffer), { COORDINATE_TO_ORIGIN: false, MEMORY_LIMIT: IFC_MEMORY_LIMIT });
+    const modelId = api.OpenModel(new Uint8Array(bufferForIfcOpen(buffer)), IFC_LOADER_SETTINGS);
+    if (modelId < 0) {
+        throw new Error('IFC OpenModel failed (unsupported schema or unreadable file)');
+    }
     const objectsByExpressId = new Map();
 
     try {
@@ -466,8 +589,10 @@ const parseIfcModel = async (buffer, meta) => {
 
             let clashMesh = null;
             if (!ORBIT_DISABLE_CLASH_MESH && clashTriangleBuffer.length >= 9) {
-                const sampled = subsampleFlatTrianglesSpatial9(clashTriangleBuffer, MAX_CLASH_TRIANGLES_PER_OBJECT);
-                clashMesh = { positions: sampled };
+                const positions = CLASH_MESH_TRI_LIMIT.unlimited
+                    ? clashTriangleBuffer
+                    : subsampleFlatTrianglesSpatial9(clashTriangleBuffer, CLASH_MESH_TRI_LIMIT.cap);
+                clashMesh = { positions };
             }
 
             objectsByExpressId.set(flatMesh.expressID, {
@@ -605,11 +730,7 @@ class ModelService {
                 }
                 continue;
             }
-            if (sourceFormat === 'xkt') {
-                parsedImports.push(parseXktModel(entry.buffer, entry, projectSlug));
-                continue;
-            }
-            throw new Error(`Unsupported model format: ${sourceFormat}`);
+            throw new Error(`Unsupported model format: ${sourceFormat} (Navisworks clash supports IFC and JSON registry only)`);
         }
 
         if (parsedImports.length === 0) {

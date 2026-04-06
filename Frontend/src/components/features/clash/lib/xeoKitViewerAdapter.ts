@@ -1,7 +1,5 @@
 'use client';
 
-import { apiUrl } from '@/config/api';
-import { apiFetch } from '@/lib/api-client';
 import type {
   BBoxData,
   ObjectPickedCallback,
@@ -137,10 +135,7 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   private readonly basePositions = new Map<string, Vec3>();
   private loadedObjectIds: string[] = [];
   private readonly sceneModelCtor?: XeoKitSceneModelCtor;
-  private xktLoader: { load: (cfg: Record<string, unknown>) => unknown; destroy?: () => void } | null = null;
   private readonly meshIdToObjectId = new Map<string, string>();
-  private loadedXktModelIds: string[] = [];
-  private xktSyncGeneration = 0;
 
   constructor(
     private readonly viewer: XeoKitViewer,
@@ -283,55 +278,6 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
     this.flyToModel();
   }
 
-  /**
-   * Load or refresh XKT models (authenticated fetch). Box overlay from loadSceneObjects is unchanged.
-   */
-  async syncXktModels(projectSlug: string, modelIds: string[]): Promise<void> {
-    const gen = ++this.xktSyncGeneration;
-    this.destroyXktModels();
-
-    if (modelIds.length === 0) return;
-
-    const xeokit = await import('@xeokit/xeokit-sdk');
-    const XKTLoaderPlugin = (xeokit as unknown as { XKTLoaderPlugin: new (viewer: unknown) => { load: (c: Record<string, unknown>) => unknown; destroy?: () => void } }).XKTLoaderPlugin;
-    if (!XKTLoaderPlugin || !this.viewer) return;
-
-    if (!this.xktLoader) {
-      this.xktLoader = new XKTLoaderPlugin(this.viewer);
-    }
-
-    let flew = false;
-    for (const id of modelIds) {
-      if (gen !== this.xktSyncGeneration) return;
-      const url = apiUrl(
-        `/projects/${encodeURIComponent(projectSlug)}/navisworks/models/${encodeURIComponent(id)}/xkt`
-      );
-      const res = await apiFetch(url);
-      if (!res.ok) continue;
-      const buf = await res.arrayBuffer();
-      if (gen !== this.xktSyncGeneration) return;
-
-      const sceneModel = this.xktLoader.load({
-        id,
-        xkt: buf,
-        dtxEnabled: true,
-        edges: false,
-      }) as { aabb?: number[]; once?: (ev: string, fn: () => void) => void };
-
-      this.loadedXktModelIds.push(id);
-
-      sceneModel.once?.('loaded', () => {
-        if (gen !== this.xktSyncGeneration) return;
-        if (flew) return;
-        const aabb = sceneModel.aabb;
-        if (Array.isArray(aabb) && aabb.length >= 6) {
-          flew = true;
-          this.viewer.cameraFlight?.flyTo?.({ aabb });
-        }
-      });
-    }
-  }
-
   highlightObjects(ids: string[]): void {
     const sceneObjects = this.viewer.scene?.objects;
     if (!sceneObjects) return;
@@ -400,10 +346,6 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   }
 
   dispose(): void {
-    this.xktSyncGeneration += 1;
-    this.destroyXktModels();
-    this.xktLoader?.destroy?.();
-    this.xktLoader = null;
     this.disposeSceneModel();
     this.viewer.destroy?.();
   }
@@ -425,22 +367,6 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
       // ignore cleanup errors
     }
     this.sceneModel = null;
-  }
-
-  private destroyXktModels(): void {
-    const scene = this.viewer.scene as { models?: Record<string, { destroy?: () => void }> } | undefined;
-    if (!scene?.models) {
-      this.loadedXktModelIds = [];
-      return;
-    }
-    for (const id of this.loadedXktModelIds) {
-      try {
-        scene.models[id]?.destroy?.();
-      } catch {
-        // ignore
-      }
-    }
-    this.loadedXktModelIds = [];
   }
 }
 

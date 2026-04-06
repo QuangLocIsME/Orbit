@@ -40,8 +40,6 @@ interface Viewer2DProps {
   deEmphasizeUnrelated?: boolean;
   showScopeBadge?: boolean;
   hideUnrelatedActive?: boolean;
-  /** True when federated overview has XKT in 3D but no bbox elements (2D plan stays empty). */
-  hasXktOnlyOverview?: boolean;
 }
 
 const clampScale = (value: number) => Math.min(2.2, Math.max(0.75, value));
@@ -139,7 +137,6 @@ export default function Viewer2D({
   deEmphasizeUnrelated = false,
   showScopeBadge = false,
   hideUnrelatedActive = false,
-  hasXktOnlyOverview = false,
 }: Viewer2DProps) {
   const [interaction, setInteraction] = useState<ViewerInteractionState>({
     offset: { x: 0, y: 0 },
@@ -285,18 +282,9 @@ export default function Viewer2D({
     if (modelOverview && overviewScene!.length === 0) {
       return (
         <div className="relative flex min-h-0 flex-1 items-center justify-center p-6 text-center">
-          {hasXktOnlyOverview ? (
-            <div className="max-w-sm space-y-2 text-sm text-[#6A7282]">
-              <p>2D overview needs bounding boxes from JSON or IFC metadata.</p>
-              <p className="text-xs text-[#9CA3AF]">
-                An XKT model is available — open the <span className="font-medium text-[#374151]">3D</span> view to see it.
-              </p>
-            </div>
-          ) : (
-            <p className="max-w-sm text-sm text-[#6A7282]">
-              No elements to show (hidden by model/category filters or missing bounding boxes).
-            </p>
-          )}
+          <p className="max-w-sm text-sm text-[#6A7282]">
+            No elements to show (hidden by model/category filters or missing bounding boxes).
+          </p>
         </div>
       );
     }

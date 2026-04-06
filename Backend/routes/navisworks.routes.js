@@ -21,11 +21,6 @@ router.get('/projects/:projectSlug/navisworks/documents', ...access, (req, res) 
     NavisworksClashController.listIfcDocuments(req, res));
 router.post('/projects/:projectSlug/navisworks/models/import-from-documents', ...access, (req, res) =>
     NavisworksClashController.importFromDocuments(req, res));
-router.get(
-    '/projects/:projectSlug/navisworks/models/:modelId/xkt',
-    ...access,
-    (req, res) => NavisworksClashController.getModelXkt(req, res)
-);
 router.get('/projects/:projectSlug/navisworks/export/model', ...access, (req, res) =>
     NavisworksClashController.exportFederatedModel(req, res));
 

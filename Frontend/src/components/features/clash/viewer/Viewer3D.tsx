@@ -28,11 +28,13 @@ interface Viewer3DProps {
   deEmphasizeUnrelated?: boolean;
   showScopeBadge?: boolean;
   hideUnrelatedActive?: boolean;
-  /** When set, XKT federated models are loaded in xeokit (overview mode only). */
-  projectSlug?: string | null;
-  xktModels?: { id: string }[];
   /** Real mesh triangle positions per object id (flat array, every 9 floats = 1 triangle, world-space meters). */
   objectMeshPositions?: Record<string, number[]>;
+  /**
+   * When the clash scene has no `worldPosition` (e.g. missing objectABBox on API), use this IFC-world
+   * midpoint (meters) so mesh can still be transformed — same idea as bbox-center midpoint of A & B.
+   */
+  clashMeshOriginWorld?: [number, number, number] | null;
 }
 
 export default function Viewer3D({
@@ -49,9 +51,8 @@ export default function Viewer3D({
   deEmphasizeUnrelated = false,
   showScopeBadge = false,
   hideUnrelatedActive = false,
-  projectSlug = null,
-  xktModels,
   objectMeshPositions = {},
+  clashMeshOriginWorld = null,
 }: Viewer3DProps) {
   const xeokitCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const xeokitBootstrappedRef = useRef(false);
@@ -95,6 +96,13 @@ export default function Viewer3D({
           (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
           (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
         ];
+      } else if (
+        clashMeshOriginWorld &&
+        Number.isFinite(clashMeshOriginWorld[0]) &&
+        Number.isFinite(clashMeshOriginWorld[1]) &&
+        Number.isFinite(clashMeshOriginWorld[2])
+      ) {
+        originWorld = clashMeshOriginWorld;
       }
     } else if (overviewScene?.length) {
       originWorld = computeWorldOriginFromScene(overviewScene);
@@ -109,14 +117,8 @@ export default function Viewer3D({
       }
     }
     return result;
-  }, [clash, clashStore, objectMeshPositions, overviewScene]);
-  const xktModelIdsKey = useMemo(
-    () => (xktModels ?? []).map((m) => m.id).sort().join(','),
-    [xktModels]
-  );
-  const hasXktOverview = Boolean(xktModels && xktModels.length > 0);
-  const overviewHasCanvas =
-    modelOverview && ((overviewScene?.length ?? 0) > 0 || hasXktOverview);
+  }, [clash, clashMeshOriginWorld, clashStore, objectMeshPositions, overviewScene]);
+  const overviewHasCanvas = modelOverview && (overviewScene?.length ?? 0) > 0;
 
   useEffect(() => {
     onCollisionChange?.(hasCollision, collisionMessage);
@@ -139,7 +141,7 @@ export default function Viewer3D({
         const viewer = new ViewerCtor({
           canvasElement: canvas,
           transparent: true,
-          antialias: true,
+          antialias: false,
           dtxEnabled: true,
         });
         canvas.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -201,17 +203,7 @@ export default function Viewer3D({
       })),
       clashZone
     );
-  }, [clash, clashStore, deEmphasizeUnrelated, viewerSpaceMeshPositions, testScopeObjectIds, visibleObjects, xeokitAdapter, overviewScene]);
-
-  useEffect(() => {
-    if (!xeokitAdapter || !projectSlug) return;
-    if (clash || !modelOverview) {
-      void xeokitAdapter.syncXktModels(projectSlug, []);
-      return;
-    }
-    const ids = (xktModels ?? []).map((m) => m.id);
-    void xeokitAdapter.syncXktModels(projectSlug, ids);
-  }, [clash, modelOverview, projectSlug, xeokitAdapter, xktModelIdsKey]);
+  }, [clash, clashStore, deEmphasizeUnrelated, viewerSpaceMeshPositions, testScopeObjectIds, visibleObjects, xeokitAdapter]);
 
   useEffect(() => {
     if (!effectiveAdapter) return;
@@ -238,17 +230,11 @@ export default function Viewer3D({
       );
     }
     if (overviewHasCanvas) {
-      const xktCount = xktModels?.length ?? 0;
       const boxCount = visibleObjects.length;
       const meshCount = visibleObjects.filter((o) => viewerSpaceMeshPositions[o.id]).length;
-      const layerHint =
-        xktCount && boxCount
-          ? `${xktCount} XKT · ${boxCount} elements`
-          : xktCount
-            ? `${xktCount} XKT model${xktCount > 1 ? 's' : ''}`
-            : meshCount
-              ? `${meshCount}/${boxCount} real mesh · ${boxCount - meshCount} bbox`
-              : `${boxCount} elements`;
+      const layerHint = meshCount
+        ? `${meshCount}/${boxCount} mesh · ${boxCount - meshCount} bbox`
+        : `${boxCount} elements`;
       return (
         <div className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 text-white md:p-3">
           <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-2 border-b border-slate-700/60 pb-2">

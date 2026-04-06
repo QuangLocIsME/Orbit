@@ -801,7 +801,15 @@ class PackageController {
                 },
             });
         } catch (error) {
-            return serverError(res, error.message || 'Upload failed');
+            console.error('[packages/upload]', error);
+            const msg =
+                typeof error === 'string'
+                    ? error
+                    : error?.message ||
+                      error?.Code ||
+                      error?.code ||
+                      (error?.name && error.name !== 'Error' ? error.name : '');
+            return serverError(res, msg || 'Upload failed');
         }
     }
 
