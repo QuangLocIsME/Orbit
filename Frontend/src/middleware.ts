@@ -31,9 +31,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  // Guest-only pages: if valid auth cookie exists, redirect away
+  // Guest-only pages: only redirect when accessToken exists.
+  // If only refreshToken exists (possibly invalid/expired), let user stay on login/register
+  // to avoid /login <-> /home redirect loops.
   if (GUEST_ONLY_PATHS.has(pathname)) {
-    if (accessToken || refreshToken) {
+    if (accessToken) {
       return context.redirect('/home');
     }
     return next();
@@ -66,6 +68,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
     });
 
     if (!refreshRes.ok) {
+      // Refresh token is unusable: clear stale cookies to prevent repeated refresh attempts.
+      context.cookies.delete('accessToken', { path: '/' });
+      context.cookies.delete('refreshToken', { path: '/' });
       return context.redirect('/login');
     }
 
@@ -82,7 +87,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
     return response;
   } catch {
-    // Network error reaching the backend → redirect to login
+    // Network error reaching the backend → clear cookies and redirect to login
+    context.cookies.delete('accessToken', { path: '/' });
+    context.cookies.delete('refreshToken', { path: '/' });
     return context.redirect('/login');
   }
 });
