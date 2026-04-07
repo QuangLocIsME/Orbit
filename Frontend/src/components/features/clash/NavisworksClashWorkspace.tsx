@@ -60,14 +60,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
+  fetchJson,
   resultToViewerClash,
   useNavisworksClashResults,
   useNavisworksWorkspace,
   workspaceKeys,
   type ClashResult,
+  type ClashRunPayload,
   type SelectionSet,
   type ClashTest,
 } from './hooks/useNavisworksWorkspace';
+import { useClashDetailMeshes, useClashMeshesByKeys } from './hooks/useClashMeshes';
 
 interface IfcDocument {
   publicId: string;
@@ -288,6 +291,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('select');
   const [viewMode, setViewMode] = useState<ClashViewMode>('landing');
+  const [landingTestFilterId, setLandingTestFilterId] = useState<'all' | string>('all');
   const [landingSearch, setLandingSearch] = useState('');
   const [landingSeverityFilter, setLandingSeverityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [landingPage, setLandingPage] = useState(1);
@@ -324,6 +328,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
   const [pendingDeleteTestId, setPendingDeleteTestId] = useState<string | null>(null);
   const [pendingDeleteSetId, setPendingDeleteSetId] = useState<string | null>(null);
+  const [pendingDeleteModelId, setPendingDeleteModelId] = useState<string | null>(null);
   const [clashTestFormErrors, setClashTestFormErrors] = useState<ClashTestFormErrors>({});
   const [clashTestActionBanner, setClashTestActionBanner] = useState<ActionBanner | null>(null);
   const [selectionSetActionBanner, setSelectionSetActionBanner] = useState<ActionBanner | null>(null);
@@ -368,6 +373,13 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   /** When false, main viewer shows federated overview only. When true, show clash geometry for the selected test (first last-run result if any). Set true when picking a test, after Run, or when choosing a row in Results. */
   const [showClashInMainViewer, setShowClashInMainViewer] = useState(false);
 
+  // Always start the import modal with a clean selection state.
+  useEffect(() => {
+    if (importModalOpen) {
+      setSelectedDocIds(new Set());
+    }
+  }, [importModalOpen]);
+
   const { data: projectMembers = [], isFetching: projectMembersLoading } = useProjectMembers(projectSlug);
 
   const {
@@ -378,6 +390,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     deleteSelectionSet,
     saveClashTest,
     deleteClashTest,
+    deleteModel,
     runClashTest,
     updateClashStatus,
     applyObjectActions,
@@ -430,17 +443,16 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   }, [objectsInSelectionModelScope, selectionSetDraft.categories, selectionSetDraft.types]);
   const suggestedManualObjectIds = useMemo(() => allObjects.slice(0, 24).map((object) => object.id), [allObjects]);
   const objectIdDatalistOptions = useMemo(() => allObjects.slice(0, 200).map((object) => object.id), [allObjects]);
-  const objectMeshPositions = useMemo(
+  const meshKeyByObjectId = useMemo(
     () =>
-      allObjects.reduce<Record<string, number[]>>((acc, object) => {
-        if (object.clashMesh?.positions?.length) {
-          acc[object.id] = object.clashMesh.positions;
+      allObjects.reduce<Record<string, string>>((acc, object) => {
+        if (object.meshRef?.key) {
+          acc[object.id] = object.meshRef.key;
         }
         return acc;
       }, {}),
     [allObjects]
   );
-
   useEffect(() => {
     if (!selectedTestId && workspace?.clashTests?.length) {
       setSelectedTestId(workspace.clashTests[0].id);
@@ -449,8 +461,40 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
 
   const resultsQuery = useNavisworksClashResults(projectSlug, selectedTestId);
   const runPayload = resultsQuery.data;
+  const landingTests = workspace?.clashTests ?? [];
+  const landingLatestRunsQuery = useQuery<Record<string, ClashRunPayload>>({
+    queryKey: [
+      'navisworks',
+      projectSlug,
+      'landing-latest-runs',
+      landingTests.map((test) => `${test.id}:${test.lastRunId || 'none'}`).join('|'),
+    ],
+    enabled: landingTests.length > 0,
+    queryFn: async () => {
+      const entries = await Promise.all(
+        landingTests.map(async (test) => {
+          if (!test.lastRunId) {
+            return [test.id, { test, run: null, results: [] } as ClashRunPayload] as const;
+          }
+          const payload = await fetchJson<ClashRunPayload>(
+            apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/clash-tests/${encodeURIComponent(test.id)}/results`)
+          );
+          return [test.id, payload] as const;
+        })
+      );
+      return Object.fromEntries(entries) as Record<string, ClashRunPayload>;
+    },
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
   const selectedTest = workspace?.clashTests.find((test) => test.id === selectedTestId) ?? null;
   const results = runPayload?.results ?? [];
+  useEffect(() => {
+    if (landingTestFilterId === 'all') return;
+    if (!landingTests.some((test) => test.id === landingTestFilterId)) {
+      setLandingTestFilterId('all');
+    }
+  }, [landingTestFilterId, landingTests]);
   const selectionSetById = useMemo(
     () => new Map((workspace?.selectionSets ?? []).map((set) => [set.id, set])),
     [workspace?.selectionSets]
@@ -488,42 +532,42 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     return true;
   }), [hiddenModelIds, results, search, statusFilter]);
 
-  const landingStats = useMemo(() => {
-    if (runPayload?.run?.summary) {
-      return {
-        total: runPayload.run.summary.total,
-        high: runPayload.run.summary.hard,
-        inProgress: runPayload.run.summary.reviewed,
-        resolved: runPayload.run.summary.resolved,
-      };
+  const landingRunTargetTestId = landingTestFilterId === 'all' ? null : landingTestFilterId;
+  const landingBaseResults = useMemo(() => {
+    const byTest = landingLatestRunsQuery.data ?? {};
+    if (landingRunTargetTestId) {
+      return byTest[landingRunTargetTestId]?.results ?? [];
     }
-    const total = results.length;
-    const high = results.filter((result) => result.type === 'HARD').length;
-    const low = results.filter((result) => result.type === 'SOFT').length;
-    const inProgress = results.filter((result) => result.status === 'reviewed').length;
-    const resolved = results.filter((result) => result.status === 'resolved').length;
-    return { total, high, low, inProgress, resolved };
-  }, [results, runPayload?.run?.summary]);
+    return Object.values(byTest).flatMap((payload) => payload.results ?? []);
+  }, [landingLatestRunsQuery.data, landingRunTargetTestId]);
 
   const landingStatsWithLow = useMemo(() => ({
-    total: landingStats.total,
-    high: landingStats.high,
-    medium: results.filter((result) => result.type === 'DUPLICATE').length,
-    low: results.filter((result) => result.type === 'SOFT').length,
-    inProgress: landingStats.inProgress,
-    resolved: landingStats.resolved,
-  }), [landingStats, results]);
+    total: landingBaseResults.length,
+    high: landingBaseResults.filter((result) => result.type === 'HARD').length,
+    medium: landingBaseResults.filter((result) => result.type === 'DUPLICATE').length,
+    low: landingBaseResults.filter((result) => result.type === 'SOFT').length,
+    inProgress: landingBaseResults.filter((result) => result.status === 'reviewed').length,
+    resolved: landingBaseResults.filter((result) => result.status === 'resolved').length,
+  }), [landingBaseResults]);
 
   const landingResults = useMemo(() => {
     const query = landingSearch.trim().toLowerCase();
-    return results.filter((result) => {
+    return landingBaseResults.filter((result) => {
       const severity = result.type === 'HARD' ? 'high' : result.type === 'DUPLICATE' ? 'medium' : 'low';
       if (landingSeverityFilter !== 'all' && severity !== landingSeverityFilter) return false;
       if (!query) return true;
       const haystack = `${result.title} ${result.objectA} ${result.objectB} ${result.objectAModel} ${result.objectBModel}`.toLowerCase();
       return haystack.includes(query);
     });
-  }, [landingSearch, landingSeverityFilter, results]);
+  }, [landingBaseResults, landingSearch, landingSeverityFilter]);
+  const landingHasRunForSelectedTest = useMemo(() => {
+    if (!landingRunTargetTestId) return true;
+    return Boolean(landingLatestRunsQuery.data?.[landingRunTargetTestId]?.run);
+  }, [landingLatestRunsQuery.data, landingRunTargetTestId]);
+  const landingHasAnyRunAcrossTests = useMemo(
+    () => Object.values(landingLatestRunsQuery.data ?? {}).some((payload) => Boolean(payload.run)),
+    [landingLatestRunsQuery.data]
+  );
 
   const landingPageSize = 10;
   const landingTotalPages = Math.max(1, Math.ceil(landingResults.length / landingPageSize));
@@ -535,7 +579,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
 
   useEffect(() => {
     setLandingPage(1);
-  }, [landingSearch, landingSeverityFilter, selectedTestId]);
+  }, [landingSearch, landingSeverityFilter, landingTestFilterId]);
 
   useEffect(() => {
     if (landingPage > landingTotalPages) {
@@ -563,6 +607,71 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   const overviewSceneForViewer =
     !viewerClash && models.length > 0 ? federatedOverviewScene : undefined;
 
+  const clashDetailObjectIds = useMemo(
+    () => (viewerClash ? [viewerClash.objectA, viewerClash.objectB].filter(Boolean) : []),
+    [viewerClash]
+  );
+
+  const overviewMeshKeys = useMemo(() => {
+    if (viewerClash) return [];
+    const keys = new Set<string>();
+    for (const sceneObject of federatedOverviewScene) {
+      const key = meshKeyByObjectId[sceneObject.id];
+      if (key) keys.add(key);
+    }
+    return Array.from(keys);
+  }, [federatedOverviewScene, meshKeyByObjectId, viewerClash]);
+  const clashDetailMeshesQuery = useClashDetailMeshes(projectSlug, viewerClash?.id ?? null);
+  const overviewMeshesQuery = useClashMeshesByKeys(projectSlug, overviewMeshKeys);
+
+  const normalizeObjectIdForMeshLookup = useCallback((raw: string | undefined) => {
+    if (!raw) return '';
+    let next = raw.trim();
+    try {
+      next = decodeURIComponent(next);
+    } catch {
+      // ignore malformed URI component
+    }
+    return next.replace(/[{}]/g, '').toLowerCase();
+  }, []);
+
+  const resolveMeshByObjectId = useCallback(
+    (meshMap: Record<string, number[]> | undefined, objectId: string | undefined): number[] | undefined => {
+      if (!meshMap || !objectId) return undefined;
+      if (meshMap[objectId]?.length) return meshMap[objectId];
+      const trimmed = objectId.trim();
+      if (meshMap[trimmed]?.length) return meshMap[trimmed];
+
+      // Handle mismatch variants between query param encoding and stored IDs.
+      const variants = new Set<string>([objectId, trimmed]);
+      try {
+        variants.add(decodeURIComponent(trimmed));
+      } catch {
+        // ignore malformed uri component
+      }
+      try {
+        variants.add(encodeURIComponent(trimmed));
+      } catch {
+        // ignore malformed uri component
+      }
+      for (const key of variants) {
+        const data = meshMap[key];
+        if (data?.length) return data;
+      }
+      const target = normalizeObjectIdForMeshLookup(objectId);
+      if (!target) return undefined;
+      for (const [key, data] of Object.entries(meshMap)) {
+        if (!data?.length) continue;
+        if (normalizeObjectIdForMeshLookup(key) === target) {
+          return data;
+        }
+      }
+      return undefined;
+    },
+    [normalizeObjectIdForMeshLookup]
+  );
+  const stableDetailMeshesByClashRef = useRef<Record<string, Record<string, number[]>>>({});
+
   /**
    * Triangle soup for xeokit: clash detail = A/B only; overview = only objects in the capped
    * federated scene (same ids as bbox overview) so real mesh returns without uploading every element.
@@ -572,20 +681,43 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
       const next: Record<string, number[]> = {};
       const a = viewerClash.objectA;
       const b = viewerClash.objectB;
-      const pa = objectMeshPositions[a];
-      const pb = objectMeshPositions[b];
+      const detailMeshes = clashDetailMeshesQuery.data?.meshes ?? {};
+      const pa = resolveMeshByObjectId(detailMeshes, a);
+      const pb = resolveMeshByObjectId(detailMeshes, b);
       if (pa?.length) next[a] = pa;
       if (pb?.length) next[b] = pb;
+      // Backend keys always match clash run; fill any gap (e.g. $ in id vs strict objectA/B match).
+      const apiIds = clashDetailMeshesQuery.data?.objectIds ?? [];
+      for (const oid of apiIds) {
+        if (next[oid]?.length && next[oid]!.length >= 9) continue;
+        const raw = detailMeshes[oid] ?? resolveMeshByObjectId(detailMeshes, oid);
+        if (raw && raw.length >= 9) next[oid] = raw;
+      }
+      const hasAny = Object.keys(next).length > 0;
+      if (hasAny) {
+        stableDetailMeshesByClashRef.current[viewerClash.id] = next;
+        return next;
+      }
+      const stable = stableDetailMeshesByClashRef.current[viewerClash.id];
+      if (stable && Object.keys(stable).length > 0) {
+        return stable;
+      }
       return next;
     }
+    const overviewMeshes = overviewMeshesQuery.data ?? {};
     const next: Record<string, number[]> = {};
     for (const sceneObj of federatedOverviewScene) {
-      const p = objectMeshPositions[sceneObj.id];
+      const p = resolveMeshByObjectId(overviewMeshes, sceneObj.id);
       if (p?.length) next[sceneObj.id] = p;
     }
     return next;
-  }, [federatedOverviewScene, objectMeshPositions, viewerClash]);
-
+  }, [
+    clashDetailMeshesQuery.data,
+    federatedOverviewScene,
+    overviewMeshesQuery.data,
+    resolveMeshByObjectId,
+    viewerClash,
+  ]);
   /** Midpoint of A/B IFC bbox centers — used when clash API lacks objectABBox (mock scene has no worldPosition). */
   const clashMeshOriginWorld = useMemo((): [number, number, number] | null => {
     if (!viewerClash) return null;
@@ -666,6 +798,42 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     hideUnrelatedToActiveTest,
     shouldHighlightActiveScope,
     viewerClash,
+  ]);
+
+  const loggedMeshDiagnosticsByClashRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!viewerClash) return;
+    if (loggedMeshDiagnosticsByClashRef.current.has(viewerClash.id)) return;
+    if (clashDetailObjectIds.length === 0) return;
+    if (!clashDetailMeshesQuery.isSuccess) return;
+
+    const diagnostics = clashDetailMeshesQuery.data?.diagnostics ?? {};
+    const meshMap = clashDetailMeshesQuery.data?.meshes ?? {};
+    const hiddenSet = new Set(viewerHiddenObjectIds);
+    const rows = clashDetailObjectIds.map((objectId) => {
+      const diag = diagnostics[objectId];
+      const meshLen = meshMap[objectId]?.length ?? 0;
+      return {
+        objectId,
+        hasMeshRef: Boolean(diag?.hasMeshRef),
+        meshKeyExistsInMinio: Boolean(diag?.meshKeyExistsInMinio),
+        positionsLengthBeforeSanitize: Number(diag?.positionsLengthBeforeSanitize ?? 0),
+        positionsLengthAfterSanitize: Number(diag?.positionsLengthAfterSanitize ?? 0),
+        fallbackReason: diag?.fallbackReason || (meshLen >= 9 ? '' : 'mesh-not-returned-to-frontend'),
+        objectHidden: hiddenSet.has(objectId) || Boolean(diag?.objectHidden),
+      };
+    });
+
+    console.groupCollapsed(`[clash-mesh-diagnostics] ${viewerClash.id}`);
+    rows.forEach((row) => console.log(row));
+    console.groupEnd();
+    loggedMeshDiagnosticsByClashRef.current.add(viewerClash.id);
+  }, [
+    clashDetailObjectIds,
+    clashDetailMeshesQuery.data,
+    clashDetailMeshesQuery.isSuccess,
+    viewerClash,
+    viewerHiddenObjectIds,
   ]);
 
   const memberAssigneeLabels = useMemo(
@@ -894,6 +1062,15 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     try {
       setError(null);
       await importModels.mutateAsync({ files });
+      // Ensure viewer gets fresh federated objects immediately (no manual page reload needed).
+      await workspaceQuery.refetch();
+      if (selectedTestId) {
+        await resultsQuery.refetch();
+      }
+      // Prevent stale clash/detail state from referencing deleted objects after re-import.
+      setSelectedClashId(null);
+      setSelectedObjectId(null);
+      setShowClashInMainViewer(false);
       if (openSidebarAfter) {
         setSidebarOpen(true);
         setSidebarTab('select');
@@ -952,6 +1129,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
         results?: ClashResult[];
         run?: { summary?: { total: number } } | null;
       };
+      await landingLatestRunsQuery.refetch();
       const list = payload.results ?? [];
       setShowClashInMainViewer(true);
       setSidebarOpen(true);
@@ -1099,7 +1277,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
         return;
       }
 
-      const ext = format === 'bcf' ? 'bcf.json' : format;
+      const ext = format === 'bcf' ? 'bcfzip' : format;
       const filename = `${projectSlug}-${selectedTestId}.${ext}`;
       const base = format === 'bcf'
         ? apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/clash-tests/${encodeURIComponent(selectedTestId || '')}/export/bcf`)
@@ -1155,6 +1333,34 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
     }
   };
 
+  const confirmDeleteModel = async () => {
+    if (!pendingDeleteModelId) return;
+    const id = pendingDeleteModelId;
+    setPendingDeleteModelId(null);
+    try {
+      setError(null);
+      await deleteModel.mutateAsync(id);
+      // Force immediate refresh after delete -> import workflows.
+      await workspaceQuery.refetch();
+      if (selectedTestId) {
+        await resultsQuery.refetch();
+      }
+      // Reset detail selection so viewer rebuilds in clean overview mode.
+      setSelectedClashId(null);
+      setSelectedObjectId(null);
+      setShowClashInMainViewer(false);
+      const deletedModelName = models.find((model) => model.id === id)?.name;
+      if (deletedModelName) {
+        setHiddenModelIds((current) => current.filter((name) => name !== deletedModelName));
+      }
+      toast.success('Model deleted.');
+    } catch (deleteError) {
+      const msg = deleteError instanceof Error ? deleteError.message : 'Failed to delete model';
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
   const openDetectWithTab = (tab: SidebarTab = 'tests') => {
     setViewMode('detect');
     setSidebarOpen(true);
@@ -1162,9 +1368,14 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
   };
 
   const openRunDetectFromLanding = (testId?: string) => {
-    const fallbackTestId = testId || selectedTestId || workspace?.clashTests[0]?.id || null;
+    const fallbackTestId =
+      testId
+      || (landingTestFilterId === 'all' ? null : landingTestFilterId)
+      || selectedTestId
+      || workspace?.clashTests[0]?.id
+      || null;
     if (!fallbackTestId) {
-      setError('Create at least one clash test before running detection.');
+      setError('Select a specific test filter before running detection.');
       openDetectWithTab('tests');
       return;
     }
@@ -1293,10 +1504,18 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                     <Button
                       type="button"
                       onClick={() => openRunDetectFromLanding()}
-                      disabled={runClashTest.isPending || models.length === 0 || (workspace?.clashTests.length ?? 0) === 0}
+                      disabled={
+                        runClashTest.isPending
+                        || models.length === 0
+                        || (workspace?.clashTests.length ?? 0) === 0
+                        || landingTestFilterId === 'all'
+                      }
                       className={cn(
                         'rounded-[10px] gap-2 px-4',
-                        runClashTest.isPending || models.length === 0 || (workspace?.clashTests.length ?? 0) === 0
+                        runClashTest.isPending
+                          || models.length === 0
+                          || (workspace?.clashTests.length ?? 0) === 0
+                          || landingTestFilterId === 'all'
                           ? 'bg-blue-300 hover:bg-blue-300'
                           : 'bg-[#155DFC] hover:bg-blue-700'
                       )}
@@ -1357,7 +1576,20 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                       className="h-[37px] rounded-[10px] border-[#E5E7EB] bg-white pl-9 pr-4 text-sm text-[#101828] placeholder:text-[#6A7282] focus-visible:border-[#155DFC]"
                     />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={landingTestFilterId}
+                      onChange={(event) => setLandingTestFilterId(event.target.value)}
+                      className="h-[33px] rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-xs text-[#364153]"
+                      aria-label="Filter by test scenario"
+                    >
+                      <option value="all">All tests (latest run)</option>
+                      {landingTests.map((test) => (
+                        <option key={test.id} value={test.id}>
+                          {test.name}
+                        </option>
+                      ))}
+                    </select>
                     {([
                       { id: 'all', label: 'All' },
                       { id: 'high', label: 'High' },
@@ -1386,7 +1618,8 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                 <div className="overflow-hidden rounded-[10px] border border-[#E5E7EB] bg-white">
                   {landingResults.length === 0 ? (
                     <div className="px-6 py-10 text-center text-sm text-[#6A7282]">
-                      {results.length === 0
+                      {(landingRunTargetTestId && !landingHasRunForSelectedTest)
+                        || (!landingRunTargetTestId && !landingHasAnyRunAcrossTests)
                         ? 'No clash results yet. Run Detection to generate conflicts.'
                         : 'No clashes match the current search/filter.'}
                     </div>
@@ -1455,16 +1688,32 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                               <Button
                                 type="button"
                                 size="sm"
+                                onClick={() => {
+                                  if (result.status === 'resolved' || updateClashStatus.isPending) return;
+                                  // Route this row into inspector context, then reuse existing resolve confirmation flow.
+                                  setSelectedTestId(result.sourceTestId);
+                                  setSelectedClashId(result.clashId);
+                                  setShowClashInMainViewer(true);
+                                  setSidebarOpen(true);
+                                  setSidebarTab('results');
+                                  setResolveDialogOpen(true);
+                                }}
+                                disabled={result.status === 'resolved' || updateClashStatus.isPending}
                                 className="h-7 gap-1 rounded-[10px] bg-[#009966] px-3 text-xs text-white hover:bg-[#007A55] [&_svg]:size-3.5"
                               >
                                 <ShieldCheck className="size-3.5" />
-                                Resolve
+                                {result.status === 'resolved'
+                                  ? 'Resolved'
+                                  : updateClashStatus.isPending
+                                    ? 'Resolving...'
+                                    : 'Resolve'}
                               </Button>
                               <Button
                                 type="button"
                                 variant="secondary"
                                 size="sm"
                                 onClick={() => {
+                                  setSelectedTestId(result.sourceTestId);
                                   setSelectedClashId(result.clashId);
                                   setShowClashInMainViewer(true);
                                   openDetectWithTab('results');
@@ -2017,18 +2266,29 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                                   {model.discipline} · {model.objectCount} objects
                                 </p>
                               </div>
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => setHiddenModelIds((current) => toggleArrayValue(current, model.name))}
-                                className={cn(
-                                  'h-auto shrink-0 rounded-full px-2 py-1 text-xs font-normal whitespace-nowrap',
-                                  hiddenModelIds.includes(model.name) ? 'bg-[#FEE2E2] text-[#B91C1C]' : 'bg-[#ECFDF3] text-[#047857]'
-                                )}
-                              >
-                                {hiddenModelIds.includes(model.name) ? 'Hidden' : 'Visible'}
-                              </Button>
+                              <div className="flex items-center gap-1.5">
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => setHiddenModelIds((current) => toggleArrayValue(current, model.name))}
+                                  className={cn(
+                                    'h-auto shrink-0 rounded-full px-2 py-1 text-xs font-normal whitespace-nowrap',
+                                    hiddenModelIds.includes(model.name) ? 'bg-[#FEE2E2] text-[#B91C1C]' : 'bg-[#ECFDF3] text-[#047857]'
+                                  )}
+                                >
+                                  {hiddenModelIds.includes(model.name) ? 'Hidden' : 'Visible'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="link"
+                                  size="sm"
+                                  onClick={() => setPendingDeleteModelId(model.id)}
+                                  className="h-auto shrink-0 p-0 text-xs text-[#DC2626] no-underline hover:text-[#B91C1C]"
+                                >
+                                  Delete
+                                </Button>
+                              </div>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {model.categories.map((category) => (
@@ -2308,13 +2568,18 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                             selectedClashId === result.clashId ? 'border-[#155DFC] bg-[#EFF6FF]' : 'border-[#E5E7EB] bg-white'
                           )}
                         >
-                          <div className="flex w-full flex-col gap-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-sm font-medium text-[#101828]">{result.title}</span>
+                          <div className="flex w-full min-w-0 flex-col gap-0">
+                            <div className="flex min-w-0 items-start justify-between gap-2">
+                              <span
+                                className="min-w-0 flex-1 truncate text-sm font-medium text-[#101828]"
+                                title={result.title}
+                              >
+                                {result.title}
+                              </span>
                               <Badge
                                 variant="secondary"
                                 className={cn(
-                                  'shrink-0 border-0 px-2 py-0.5 text-[10px] font-medium',
+                                  'shrink-0 whitespace-nowrap border-0 px-2 py-0.5 text-[10px] font-medium leading-none',
                                   result.status === 'resolved'
                                     ? 'bg-[#D1FAE5] text-[#047857]'
                                     : result.status === 'reviewed'
@@ -2325,10 +2590,12 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                                 {result.status}
                               </Badge>
                             </div>
-                            <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-[#6A7282]">
-                              <span>{result.type}</span>
-                              <span>{result.objectAModel}</span>
-                              <span>{result.objectBModel}</span>
+                            <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[#6A7282]">
+                              <span className="shrink-0">{result.type}</span>
+                              <span className="shrink-0 text-[#9AA4B2]">·</span>
+                              <span className="max-w-[7.75rem] truncate" title={result.objectAModel}>{result.objectAModel}</span>
+                              <span className="shrink-0 text-[#9AA4B2]">·</span>
+                              <span className="max-w-[7.75rem] truncate" title={result.objectBModel}>{result.objectBModel}</span>
                             </div>
                           </div>
                         </Button>
@@ -2629,6 +2896,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                       overviewScene={overviewSceneForViewer}
                       allowObjectMove={false}
                       objectMeshPositions={objectMeshPositionsForViewer}
+                      meshOnlyInClashDetail
                       testScopeObjectIds={activeTestScopeObjectIds}
                       deEmphasizeUnrelated={shouldHighlightActiveScope}
                       showScopeBadge={shouldHighlightActiveScope}
@@ -2652,6 +2920,7 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                       hideUnrelatedActive={hideUnrelatedToActiveTest}
                       objectMeshPositions={objectMeshPositionsForViewer}
                       clashMeshOriginWorld={clashMeshOriginWorld}
+                      meshOnlyInClashDetail
                     />
                   </div>
                 </div>
@@ -2733,6 +3002,26 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
             <AlertDialogCancel className="border-[#D1D5DC]">Cancel</AlertDialogCancel>
             <AlertDialogAction className="bg-[#DC2626] text-white hover:bg-red-700" onClick={() => void confirmDeleteSelectionSet()}>
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pendingDeleteModelId !== null} onOpenChange={(open: boolean) => !open && setPendingDeleteModelId(null)}>
+        <AlertDialogContent className="border-[#E5E7EB] bg-white text-[#101828] sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete model?</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#6A7282]">
+              This removes the selected model and its objects from the federated workspace, clears clash runs, and deletes stored mesh data for that model.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#D1D5DC]">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#DC2626] text-white hover:bg-red-700"
+              onClick={() => void confirmDeleteModel()}
+            >
+              {deleteModel.isPending ? 'Deleting…' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2826,6 +3115,10 @@ export default function NavisworksClashWorkspace({ projectSlug }: NavisworksClas
                   try {
                     setError(null);
                     const result = await importFromDocuments.mutateAsync({ documentIds: Array.from(selectedDocIds) });
+                    await workspaceQuery.refetch();
+                    if (selectedTestId) {
+                      await resultsQuery.refetch();
+                    }
                     setImportModalOpen(false);
                     setSidebarOpen(true);
                     setSidebarTab('select');

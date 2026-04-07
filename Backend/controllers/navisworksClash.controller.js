@@ -3,14 +3,68 @@ const modelService = require('../services/model.service');
 const selectionSetService = require('../services/selectionSet.service');
 const navisworksClashService = require('../services/navisworksClash.service');
 const navisworksImportService = require('../services/navisworksImport.service');
+const meshStorage = require('../services/meshStorage.service');
 const DocumentRepository = require('../repositories/DocumentRepository');
 const { s3Client } = require('../config/s3');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 
 const getProjectSlug = (req) => req.params?.projectSlug || req.body?.projectSlug || req.query?.projectSlug;
+const parseCsvQuery = (value) => String(value || '')
+    .split(',')
+    .map((item) => {
+        try {
+            return decodeURIComponent(String(item).trim());
+        } catch {
+            return String(item).trim();
+        }
+    })
+    .filter(Boolean);
 
 class NavisworksClashController {
+    async getClashMeshes(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            const clashId = String(req.params?.clashId || '').trim();
+            if (!clashId) return errorResponse(res, 400, 'Missing clashId');
+            const workspace = await modelService.getWorkspace(projectSlug);
+            const payload = await meshStorage.downloadMeshesForClash(projectSlug, workspace, clashId);
+            return res.status(200).json({ success: true, ...payload });
+        } catch (error) {
+            return errorResponse(res, 400, error.message || 'Failed to fetch clash meshes');
+        }
+    }
+
+    async getMeshes(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            const debug = String(req.query?.debug || '').toLowerCase() === '1';
+
+            const objectIds = parseCsvQuery(req.query?.objectIds);
+            const meshKeys = parseCsvQuery(req.query?.meshKeys);
+            if (objectIds.length === 0 && meshKeys.length === 0) {
+                return res.status(200).json({ success: true, meshes: {}, diagnostics: {} });
+            }
+
+            if (meshKeys.length > 0) {
+                const meshes = await meshStorage.downloadMeshesByKeys(meshKeys);
+                return res.status(200).json({ success: true, meshes });
+            }
+
+            const workspace = await modelService.getWorkspace(projectSlug);
+            const meshes = await meshStorage.downloadMeshesForObjects(projectSlug, workspace, objectIds);
+            if (!debug) {
+                return res.status(200).json({ success: true, meshes });
+            }
+            const diagnostics = await meshStorage.diagnoseMeshesForObjects(projectSlug, workspace, objectIds);
+            return res.status(200).json({ success: true, meshes, diagnostics });
+        } catch (error) {
+            return errorResponse(res, 400, error.message || 'Failed to fetch meshes');
+        }
+    }
+
     async getWorkspace(req, res) {
         try {
             const projectSlug = getProjectSlug(req);
@@ -39,6 +93,23 @@ class NavisworksClashController {
             return res.status(200).json({ success: true, federatedModel, skippedFiles });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to import models');
+        }
+    }
+
+    async deleteModel(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            if (!projectSlug) {
+                return errorResponse(res, 400, 'Missing project slug');
+            }
+            const modelId = req.params?.modelId;
+            if (!modelId) {
+                return errorResponse(res, 400, 'Missing modelId');
+            }
+            const federatedModel = await modelService.removeModel(projectSlug, modelId);
+            return res.status(200).json({ success: true, federatedModel });
+        } catch (error) {
+            return errorResponse(res, 400, error.message || 'Failed to delete model');
         }
     }
 

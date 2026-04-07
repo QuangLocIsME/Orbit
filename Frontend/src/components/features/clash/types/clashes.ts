@@ -119,6 +119,8 @@ export interface ViewerObjectState {
   size: { width: number; depth: number; height: number };
   isSelected: boolean;
   isColliding: boolean;
+  /** IfcWall, IfcWindow, … or short category from clash API — drives BIM-like viewer colors */
+  ifcType?: string;
 }
 
 const DEFAULT_ASSIGNEE = 'Unassigned';

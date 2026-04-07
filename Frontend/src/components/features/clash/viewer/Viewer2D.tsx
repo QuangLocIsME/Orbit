@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import type { Clash, ViewerInteractionState } from '../types/clashes';
 import { useObjectInteraction } from '../hooks/useObjectInteraction';
 import type { SceneObject } from '../lib/clashScene';
-import { WORLD_SCALE, clampWorld, resolveClashZoneForViewer } from '../lib/clashScene';
+import { WORLD_SCALE, buildViewerObjects, clampWorld, resolveClashZoneForViewer } from '../lib/clashScene';
 import type { ViewerAdapter } from '../lib/viewerAdapter';
 import { useClashViewerStore } from '../state/clashStore';
 
@@ -36,6 +36,8 @@ interface Viewer2DProps {
   adapter?: ViewerAdapter;
   /** Optional world-space clash mesh positions by object id (x,y,z flat array). */
   objectMeshPositions?: Record<string, number[]>;
+  /** In clash detail mode, render only objects that have real mesh. */
+  meshOnlyInClashDetail?: boolean;
   testScopeObjectIds?: string[];
   deEmphasizeUnrelated?: boolean;
   showScopeBadge?: boolean;
@@ -133,6 +135,7 @@ export default function Viewer2D({
   allowObjectMove = true,
   adapter: _adapter,
   objectMeshPositions = {},
+  meshOnlyInClashDetail = false,
   testScopeObjectIds = [],
   deEmphasizeUnrelated = false,
   showScopeBadge = false,
@@ -172,7 +175,35 @@ export default function Viewer2D({
     onCollisionChange?.(hasCollision, collisionMessage);
   }, [collisionMessage, hasCollision, onCollisionChange]);
 
-  const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
+  const visibleObjects = useMemo(() => {
+    const base = objects.filter((object) => !hiddenObjectIds.includes(object.id));
+    if (!clash || !meshOnlyInClashDetail) return base;
+
+    const meshOk = (id: string) => (objectMeshPositions[id]?.length ?? 0) >= 9;
+    const partnersWithMesh = [clash.objectA, clash.objectB].filter((id) => Boolean(id) && meshOk(id));
+
+    if (partnersWithMesh.length > 0) {
+      const scene = clashStore.getScene(clash.id);
+      const picked: SceneObject[] = [];
+      for (const id of partnersWithMesh) {
+        const so = scene?.find((o) => o.id === id);
+        if (so) picked.push(so);
+      }
+      if (picked.length > 0) {
+        return buildViewerObjects(picked, selectedObjectId);
+      }
+    }
+
+    return base.filter((object) => meshOk(object.id));
+  }, [
+    clash,
+    clashStore,
+    hiddenObjectIds,
+    meshOnlyInClashDetail,
+    objectMeshPositions,
+    objects,
+    selectedObjectId,
+  ]);
 
   const clashOverlapPlan = useMemo(() => {
     if (!clash) return null;

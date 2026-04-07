@@ -9,6 +9,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const access = [authenticate, requireProjectMember('projectSlug')];
 
+router.get('/projects/:projectSlug/navisworks/mesh', ...access, (req, res) =>
+    NavisworksClashController.getMeshes(req, res));
+router.get('/projects/:projectSlug/navisworks/clashes/:clashId/meshes', ...access, (req, res) =>
+    NavisworksClashController.getClashMeshes(req, res));
 router.get('/projects/:projectSlug/navisworks/workspace', ...access, (req, res) =>
     NavisworksClashController.getWorkspace(req, res));
 router.post(
@@ -17,6 +21,8 @@ router.post(
     upload.array('models'),
     (req, res) => NavisworksClashController.importModels(req, res)
 );
+router.delete('/projects/:projectSlug/navisworks/models/:modelId', ...access, (req, res) =>
+    NavisworksClashController.deleteModel(req, res));
 router.get('/projects/:projectSlug/navisworks/documents', ...access, (req, res) =>
     NavisworksClashController.listIfcDocuments(req, res));
 router.post('/projects/:projectSlug/navisworks/models/import-from-documents', ...access, (req, res) =>

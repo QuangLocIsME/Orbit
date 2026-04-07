@@ -26,6 +26,8 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
 
   minio:
     image: minio/minio:latest
@@ -46,7 +48,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Chạy một lần (hoặc sau khi xóa volume): tạo bucket khớp Backend/.env S3_BUCKET (mặc định orbit-documents)
+  # Chạy một lần (hoặc sau khi xóa volume): tạo bucket khớp Backend/.env S3_BUCKET / ORBIT_MESH_BUCKET (orbit-documents)
   minio-init:
     image: minio/mc:latest
     container_name: orbit-minio-init
@@ -68,7 +70,7 @@ services:
     env_file:
       - ./Backend/.env
     environment:
-      - MONGODB_URI=mongodb://host.docker.internal:27017/Orbit
+      - MONGODB_URI=mongodb://host.docker.internal:27017/orbit
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
     command: sh -c "npm install && sed -i 's|btoa.node|btoa.node.js|g' node_modules/@loaders.gl/polyfills/dist/index.js && node workers/ifcConversionWorker.js"
     depends_on:
@@ -76,4 +78,5 @@ services:
 
 volumes:
   redis-data:
+  rabbitmq-data:
   minio-data:

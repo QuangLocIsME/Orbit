@@ -11,11 +11,6 @@ export interface ViewerIntegration {
   baseUrl?: string | null;
 }
 
-/** Optional simplified mesh for narrow-phase clash (9 floats per triangle, world space). */
-export interface ClashMeshPayload {
-  positions: number[];
-}
-
 export interface FederatedObject {
   id: string;
   type: string;
@@ -26,7 +21,7 @@ export interface FederatedObject {
   sourceModelId: string;
   sourceFile: string;
   hidden?: boolean;
-  clashMesh?: ClashMeshPayload | null;
+  meshRef?: { key: string } | null;
 }
 
 export interface FederatedModelSummary {
@@ -131,7 +126,7 @@ export interface ClashRunPayload {
   results: ClashResult[];
 }
 
-const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
+export const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await apiFetch(url, init);
   if (!response.ok) {
     throw new Error(`Request failed (${response.status})`);
@@ -145,6 +140,12 @@ export const workspaceKeys = {
   results: (projectSlug: string, testId: string | null) => ['navisworks', projectSlug, 'results', testId] as const,
   /** IFC list for Clash "Import from Documents" modal — invalidate after document uploads */
   ifcDocuments: (projectSlug: string) => ['navisworks-ifc-documents', projectSlug] as const,
+};
+
+const invalidateMeshQueries = async (queryClient: ReturnType<typeof useQueryClient>, projectSlug: string) => {
+  await queryClient.invalidateQueries({ queryKey: ['navisworks-meshes', projectSlug] });
+  await queryClient.invalidateQueries({ queryKey: ['navisworks-mesh-by-keys', projectSlug] });
+  await queryClient.invalidateQueries({ queryKey: ['navisworks-clash-meshes', projectSlug] });
 };
 
 export function useNavisworksClashResults(projectSlug: string, testId: string | null) {
@@ -205,6 +206,20 @@ export function useNavisworksWorkspace(projectSlug: string) {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.root(projectSlug) });
+      await invalidateMeshQueries(queryClient, projectSlug);
+    },
+  });
+
+  const deleteModel = useMutation({
+    mutationFn: async (modelId: string) =>
+      fetchJson<{ success: true }>(apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/models/${encodeURIComponent(modelId)}`), {
+        method: 'DELETE',
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.root(projectSlug) });
+      await invalidateMeshQueries(queryClient, projectSlug);
     },
   });
 
@@ -297,12 +312,15 @@ export function useNavisworksWorkspace(projectSlug: string) {
       ),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.root(projectSlug) });
+      await invalidateMeshQueries(queryClient, projectSlug);
     },
   });
 
   return {
     workspaceQuery,
     importModels,
+    deleteModel,
     importFromDocuments,
     saveSelectionSet,
     deleteSelectionSet,

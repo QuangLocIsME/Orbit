@@ -5,8 +5,9 @@ import { cn } from '@/lib/utils';
 import type { Clash } from '../types/clashes';
 import { useObjectInteraction } from '../hooks/useObjectInteraction';
 import {
+  buildViewerObjects,
+  clashMeshOriginFromPairMeshes,
   computeWorldOriginFromScene,
-  resolveClashZoneForViewer,
   transformMeshPositionsToViewerSpace,
   type SceneObject,
 } from '../lib/clashScene';
@@ -30,6 +31,8 @@ interface Viewer3DProps {
   hideUnrelatedActive?: boolean;
   /** Real mesh triangle positions per object id (flat array, every 9 floats = 1 triangle, world-space meters). */
   objectMeshPositions?: Record<string, number[]>;
+  /** In clash detail mode, render only objects that have real mesh. */
+  meshOnlyInClashDetail?: boolean;
   /**
    * When the clash scene has no `worldPosition` (e.g. missing objectABBox on API), use this IFC-world
    * midpoint (meters) so mesh can still be transformed — same idea as bbox-center midpoint of A & B.
@@ -53,9 +56,11 @@ export default function Viewer3D({
   hideUnrelatedActive = false,
   objectMeshPositions = {},
   clashMeshOriginWorld = null,
+  meshOnlyInClashDetail = false,
 }: Viewer3DProps) {
   const xeokitCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const xeokitBootstrappedRef = useRef(false);
+  const stableViewerSpaceMeshesByClashRef = useRef<Record<string, Record<string, number[]>>>({});
   const [xeokitAdapter, setXeokitAdapter] = useState<XeoKitViewerAdapter | null>(null);
   const clashStore = useClashViewerStore();
 
@@ -71,14 +76,44 @@ export default function Viewer3D({
   const modelOverview = Boolean(!clash && overviewScene !== undefined);
   const effectiveAdapter = adapter ?? xeokitAdapter;
   const xeokitInteractive = Boolean(xeokitAdapter);
-  const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
+  const visibleObjects = useMemo(() => {
+    const base = objects.filter((object) => !hiddenObjectIds.includes(object.id));
+    if (!clash || !meshOnlyInClashDetail) return base;
+
+    const meshOk = (id: string) => (objectMeshPositions[id]?.length ?? 0) >= 9;
+    const partnersWithMesh = [clash.objectA, clash.objectB].filter((id) => Boolean(id) && meshOk(id));
+
+    // Category/model filters can hide one clash partner from `base` while the clash mesh API still
+    // returns both — mesh-only mode would then show a single object. Always include A/B that have mesh.
+    if (partnersWithMesh.length > 0) {
+      const scene = clashStore.getScene(clash.id);
+      const picked: SceneObject[] = [];
+      for (const id of partnersWithMesh) {
+        const so = scene?.find((o) => o.id === id);
+        if (so) picked.push(so);
+      }
+      if (picked.length > 0) {
+        return buildViewerObjects(picked, selectedObjectId);
+      }
+    }
+
+    return base.filter((object) => meshOk(object.id));
+  }, [
+    clash,
+    clashStore,
+    hiddenObjectIds,
+    meshOnlyInClashDetail,
+    objectMeshPositions,
+    objects,
+    selectedObjectId,
+  ]);
 
   /**
    * Pre-transform raw IFC-world-space mesh positions into viewer-space so xeokit
    * renders them at the correct scale/location (same as bounding boxes).
    *
    * Origin strategy:
-   *  - Clash detail: midpoint of objectA and objectB worldPositions
+   *  - Clash detail: union AABB of both meshes' vertices (fallback: IFC clash bboxes / scene)
    *  - Overview:     bbox-center of all sceneObjects (same as buildOverviewSceneFromFederated)
    */
   const viewerSpaceMeshPositions = useMemo<Record<string, number[]>>(() => {
@@ -87,14 +122,29 @@ export default function Viewer3D({
     let originWorld: [number, number, number] | null = null;
 
     if (clash) {
-      const scene = clashStore.getScene(clash.id);
-      const sa = scene?.find((o) => o.id === clash.objectA);
-      const sb = scene?.find((o) => o.id === clash.objectB);
-      if (sa?.worldPosition && sb?.worldPosition) {
+      // Mesh vertices trump clash IFC bboxes: backend bboxes can disagree with extracted mesh
+      // coordinates, which pulled X/Z apart (one huge panel + one pixel-sized "dot" far away).
+      const meshOrigin = clashMeshOriginFromPairMeshes(
+        objectMeshPositions[clash.objectA],
+        objectMeshPositions[clash.objectB]
+      );
+      if (meshOrigin) {
+        originWorld = meshOrigin;
+      } else if (clash.objectABBox && clash.objectBBBox) {
+        const ca: [number, number, number] = [
+          (clash.objectABBox.min[0] + clash.objectABBox.max[0]) / 2,
+          (clash.objectABBox.min[1] + clash.objectABBox.max[1]) / 2,
+          (clash.objectABBox.min[2] + clash.objectABBox.max[2]) / 2,
+        ];
+        const cb: [number, number, number] = [
+          (clash.objectBBBox.min[0] + clash.objectBBBox.max[0]) / 2,
+          (clash.objectBBBox.min[1] + clash.objectBBBox.max[1]) / 2,
+          (clash.objectBBBox.min[2] + clash.objectBBBox.max[2]) / 2,
+        ];
         originWorld = [
-          (sa.worldPosition[0] + sb.worldPosition[0]) / 2,
-          (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
-          (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
+          (ca[0] + cb[0]) / 2,
+          (ca[1] + cb[1]) / 2,
+          (ca[2] + cb[2]) / 2,
         ];
       } else if (
         clashMeshOriginWorld &&
@@ -103,6 +153,17 @@ export default function Viewer3D({
         Number.isFinite(clashMeshOriginWorld[2])
       ) {
         originWorld = clashMeshOriginWorld;
+      } else {
+        const scene = clashStore.getScene(clash.id);
+        const sa = scene?.find((o) => o.id === clash.objectA);
+        const sb = scene?.find((o) => o.id === clash.objectB);
+        if (sa?.worldPosition && sb?.worldPosition) {
+          originWorld = [
+            (sa.worldPosition[0] + sb.worldPosition[0]) / 2,
+            (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
+            (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
+          ];
+        }
       }
     } else if (overviewScene?.length) {
       originWorld = computeWorldOriginFromScene(overviewScene);
@@ -116,8 +177,16 @@ export default function Viewer3D({
         result[id] = transformMeshPositionsToViewerSpace(positions, originWorld);
       }
     }
+    if (clash && Object.keys(result).length > 0) {
+      stableViewerSpaceMeshesByClashRef.current[clash.id] = result;
+    }
     return result;
   }, [clash, clashMeshOriginWorld, clashStore, objectMeshPositions, overviewScene]);
+  const effectiveViewerSpaceMeshPositions = useMemo(() => {
+    if (!clash) return viewerSpaceMeshPositions;
+    if (Object.keys(viewerSpaceMeshPositions).length > 0) return viewerSpaceMeshPositions;
+    return stableViewerSpaceMeshesByClashRef.current[clash.id] ?? {};
+  }, [clash, viewerSpaceMeshPositions]);
   const overviewHasCanvas = modelOverview && (overviewScene?.length ?? 0) > 0;
 
   useEffect(() => {
@@ -141,11 +210,15 @@ export default function Viewer3D({
         const viewer = new ViewerCtor({
           canvasElement: canvas,
           transparent: true,
-          antialias: false,
-          dtxEnabled: true,
+          antialias: true,
+          // DTX + quantized positions can drop or fragment thin IFC strips; VBO path is more reliable.
+          dtxEnabled: false,
+          logarithmicDepthBufferEnabled: true,
+          pbrEnabled: true,
         });
         canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-        viewer.camera.eye = [220, 180, 220];
+        // Closer default than [220,…] so first paint is not a speck before flyTo completes.
+        viewer.camera.eye = [95, 72, 95];
         viewer.camera.look = [0, 0, 0];
         viewer.camera.up = [0, 1, 0];
         if (viewer.cameraControl) {
@@ -184,10 +257,8 @@ export default function Viewer3D({
 
   useEffect(() => {
     if (!xeokitAdapter) return;
-    const clashZone =
-      clash
-        ? resolveClashZoneForViewer(clash, visibleObjects, clashStore.getScene(clash.id))
-        : null;
+    // No clash volume/beacon in 3D detail — only the two objects (avoids a third red “marker” shape).
+    const clashZone = null;
     xeokitAdapter.loadSceneObjects(
       visibleObjects.map((object) => ({
         id: object.id,
@@ -199,11 +270,22 @@ export default function Viewer3D({
         isSelected: object.isSelected,
         isInTestScope: testScopeObjectIds.includes(object.id),
         isDeEmphasized: deEmphasizeUnrelated && testScopeObjectIds.length > 0 && !testScopeObjectIds.includes(object.id),
-        meshPositions: viewerSpaceMeshPositions[object.id] ?? null,
+        meshPositions: effectiveViewerSpaceMeshPositions[object.id] ?? null,
+        meshOnly: Boolean(clash && meshOnlyInClashDetail),
+        ifcType: object.ifcType,
       })),
       clashZone
     );
-  }, [clash, clashStore, deEmphasizeUnrelated, viewerSpaceMeshPositions, testScopeObjectIds, visibleObjects, xeokitAdapter]);
+  }, [
+    clash,
+    clashStore,
+    deEmphasizeUnrelated,
+    effectiveViewerSpaceMeshPositions,
+    meshOnlyInClashDetail,
+    testScopeObjectIds,
+    visibleObjects,
+    xeokitAdapter,
+  ]);
 
   useEffect(() => {
     if (!effectiveAdapter) return;
@@ -231,7 +313,7 @@ export default function Viewer3D({
     }
     if (overviewHasCanvas) {
       const boxCount = visibleObjects.length;
-      const meshCount = visibleObjects.filter((o) => viewerSpaceMeshPositions[o.id]).length;
+      const meshCount = visibleObjects.filter((o) => effectiveViewerSpaceMeshPositions[o.id]).length;
       const layerHint = meshCount
         ? `${meshCount}/${boxCount} mesh · ${boxCount - meshCount} bbox`
         : `${boxCount} elements`;

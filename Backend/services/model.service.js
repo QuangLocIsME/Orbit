@@ -7,6 +7,7 @@ const {
     updateWorkspace,
     LEGACY_PROJECTS_DIR,
 } = require('./navisworksStorage.service');
+const meshStorage = require('./meshStorage.service');
 
 const identityMatrix = () => ([
     1, 0, 0, 0,
@@ -97,6 +98,26 @@ const validateBBox = (bbox) => bbox
 
 const normalizeCategory = (type) => String(type || 'Unknown').replace(/^Ifc/i, '') || 'Unknown';
 
+/**
+ * Keep only finite XYZ triples.
+ * Input/Output are flat arrays: [x,y,z,x,y,z,...]
+ */
+const sanitizePositions = (positions = []) => {
+    if (!Array.isArray(positions) || positions.length === 0) return [];
+    const clean = [];
+    for (let i = 0; i + 2 < positions.length; i += 3) {
+        const x = positions[i];
+        const y = positions[i + 1];
+        const z = positions[i + 2];
+        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+            clean.push(x, y, z);
+        }
+    }
+    // Triangle primitive needs groups of 9 floats.
+    const completeLen = Math.floor(clean.length / 9) * 9;
+    return completeLen > 0 ? clean.slice(0, completeLen) : [];
+};
+
 const normalizeRegistryObject = (object, sourceModel, sourceModelId, transform, unitScale) => {
     if (!object || !validateBBox(object.boundingBox || object.bbox)) {
         return null;
@@ -107,8 +128,11 @@ const normalizeRegistryObject = (object, sourceModel, sourceModelId, transform, 
 
     let clashMesh = null;
     const cm = object.clashMesh;
-    if (cm?.positions?.length >= 9 && cm.positions.length % 9 === 0) {
-        clashMesh = { positions: Array.from(cm.positions) };
+    if (cm?.positions?.length >= 9) {
+        const sanitized = sanitizePositions(Array.from(cm.positions));
+        if (sanitized.length >= 9) {
+            clashMesh = { positions: sanitized };
+        }
     }
 
     return {
@@ -318,7 +342,7 @@ const resolveClashMeshTriLimit = () => {
 
 const CLASH_MESH_TRI_LIMIT = resolveClashMeshTriLimit();
 const ORBIT_DISABLE_CLASH_MESH = process.env.ORBIT_DISABLE_CLASH_MESH === '1';
-/** Positive = strip clashMesh when element count exceeds cap. 0 / negative / empty = no object-count cap. */
+/** Threshold for import warning only (see parseIfcModel). 0 / negative / empty unset = Infinity (no warn). */
 const resolveMaxObjectsWithMesh = () => {
     const raw = process.env.ORBIT_MAX_OBJECTS_WITH_MESH;
     if (raw === undefined || raw === '') {
@@ -431,10 +455,42 @@ const subsampleFlatTrianglesSpatial9 = (flat, maxTris) => {
 
 /** Append world-space triangles (9 floats each) from one IFC geometry chunk. */
 const appendIfcGeometryTriangles = (out, vertices, indices, matrix, unitScale) => {
+    const isFinite3 = (x, y, z) => Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z);
+    const triAreaSq = (a, b, c) => {
+        const abx = b[0] - a[0];
+        const aby = b[1] - a[1];
+        const abz = b[2] - a[2];
+        const acx = c[0] - a[0];
+        const acy = c[1] - a[1];
+        const acz = c[2] - a[2];
+        const cx = aby * acz - abz * acy;
+        const cy = abz * acx - abx * acz;
+        const cz = abx * acy - aby * acx;
+        return cx * cx + cy * cy + cz * cz;
+    };
+
     const pushTri = (x1, y1, z1, x2, y2, z2, x3, y3, z3) => {
+        if (
+            !isFinite3(x1, y1, z1)
+            || !isFinite3(x2, y2, z2)
+            || !isFinite3(x3, y3, z3)
+        ) {
+            return;
+        }
         const p1 = multiplyPoint(matrix, [x1 * unitScale, y1 * unitScale, z1 * unitScale]);
         const p2 = multiplyPoint(matrix, [x2 * unitScale, y2 * unitScale, z2 * unitScale]);
         const p3 = multiplyPoint(matrix, [x3 * unitScale, y3 * unitScale, z3 * unitScale]);
+        if (
+            !isFinite3(p1[0], p1[1], p1[2])
+            || !isFinite3(p2[0], p2[1], p2[2])
+            || !isFinite3(p3[0], p3[1], p3[2])
+        ) {
+            return;
+        }
+        // Drop degenerate triangles; they are common in noisy tessellation and can destabilize viewers.
+        if (triAreaSq(p1, p2, p3) < 1e-18) {
+            return;
+        }
         out.push(p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2]);
     };
 
@@ -621,10 +677,18 @@ const parseIfcModel = async (buffer, meta) => {
 
     const objects = Array.from(objectsByExpressId.values());
 
-    if (ORBIT_DISABLE_CLASH_MESH || objects.length > ORBIT_MAX_OBJECTS_WITH_MESH) {
+    // Never strip clashMesh here when over ORBIT_MAX_OBJECTS_WITH_MESH — importModels needs it to
+    // upload triangles to MinIO and set meshRef. Stripping early made entire large models mesh-less
+    // in blob storage (every cross-model clash looked like 1 real mesh + 1 bbox).
+    if (ORBIT_DISABLE_CLASH_MESH) {
         objects.forEach((object) => {
             delete object.clashMesh;
         });
+    } else if (objects.length > ORBIT_MAX_OBJECTS_WITH_MESH) {
+        console.warn(
+            `[import-ifc] Model "${sourceModel}" has ${objects.length} objects (> ORBIT_MAX_OBJECTS_WITH_MESH=${ORBIT_MAX_OBJECTS_WITH_MESH}). `
+            + 'Mesh will still upload to MinIO; expect higher memory use during import.'
+        );
     }
 
     return {
@@ -738,6 +802,53 @@ class ModelService {
             throw new Error(`All files failed to parse${detail}. They may be too large or corrupt.`);
         }
 
+        // Upload per-model triangle meshes to MinIO/S3, then replace inline clashMesh with lightweight meshRef.
+        const meshMapsByModelId = {};
+        for (const entry of parsedImports) {
+            const modelId = entry?.model?.id;
+            if (!modelId) continue;
+            const meshMap = {};
+            for (const object of entry.objects || []) {
+                const rawPositions = object?.clashMesh?.positions;
+                if (Array.isArray(rawPositions) && rawPositions.length >= 9) {
+                    const positions = sanitizePositions(rawPositions);
+                    if (positions.length === 0) {
+                        continue; // fallback to bbox-only object
+                    }
+                    const nonFinite = positions.filter((v) => !Number.isFinite(v)).length;
+                    if (nonFinite > 0) {
+                        throw new Error('Mesh still contains invalid values');
+                    }
+                    meshMap[object.id] = positions;
+                }
+            }
+            meshMapsByModelId[modelId] = meshMap;
+        }
+
+        const meshKeyByModelId = new Map();
+        await Promise.all(
+            Object.entries(meshMapsByModelId).map(async ([modelId, meshMap]) => {
+                const key = await meshStorage.uploadModelMeshes(projectSlug, modelId, meshMap);
+                if (key) {
+                    meshKeyByModelId.set(modelId, key);
+                }
+            })
+        );
+
+        for (const entry of parsedImports) {
+            const key = meshKeyByModelId.get(entry?.model?.id);
+            entry.objects = (entry.objects || []).map((object) => {
+                const hasInlineMesh = Array.isArray(object?.clashMesh?.positions)
+                    && object.clashMesh.positions.length >= 9;
+                const nextObject = { ...object };
+                if (hasInlineMesh && key) {
+                    nextObject.meshRef = { key };
+                }
+                delete nextObject.clashMesh;
+                return nextObject;
+            });
+        }
+
         const workspace = await updateWorkspace(projectSlug, (current) =>
             mergeImportedModels(current, parsedImports));
         const federatedModel = await this.getFederatedModel(projectSlug, workspace);
@@ -757,6 +868,71 @@ class ModelService {
 
     async getWorkspace(projectSlug) {
         return readWorkspace(projectSlug);
+    }
+
+    async removeModel(projectSlug, modelId) {
+        if (!modelId) {
+            throw new Error('modelId is required');
+        }
+
+        let removed = false;
+        let removedObjectIds = new Set();
+
+        const workspace = await updateWorkspace(projectSlug, (current) => {
+            const models = current.federatedModel?.models || [];
+            const objects = current.federatedModel?.objects || [];
+            const modelExists = models.some((model) => model.id === modelId);
+            if (!modelExists) {
+                return current;
+            }
+
+            removed = true;
+            removedObjectIds = new Set(
+                objects
+                    .filter((object) => object.sourceModelId === modelId)
+                    .map((object) => object.id)
+            );
+
+            const nextModels = models.filter((model) => model.id !== modelId);
+            const nextObjects = objects.filter((object) => object.sourceModelId !== modelId);
+
+            const nextOverrides = { ...(current.objectOverrides || {}) };
+            for (const objectId of removedObjectIds) {
+                delete nextOverrides[objectId];
+            }
+
+            const nextSelectionSets = (current.selectionSets || []).map((set) => ({
+                ...set,
+                filters: {
+                    ...set.filters,
+                    modelIds: (set.filters?.modelIds || []).filter((id) => id !== modelId),
+                },
+                manualIncludeIds: (set.manualIncludeIds || []).filter((id) => !removedObjectIds.has(id)),
+                manualExcludeIds: (set.manualExcludeIds || []).filter((id) => !removedObjectIds.has(id)),
+                updatedAt: new Date().toISOString(),
+            }));
+
+            return {
+                ...current,
+                federatedModel: {
+                    ...current.federatedModel,
+                    models: nextModels,
+                    objects: nextObjects,
+                },
+                objectOverrides: nextOverrides,
+                selectionSets: nextSelectionSets,
+                // Results may reference deleted objects; reset clash runs and detach latest run pointers.
+                clashRuns: [],
+                clashTests: (current.clashTests || []).map((test) => ({ ...test, lastRunId: null })),
+            };
+        });
+
+        if (!removed) {
+            throw new Error(`Model not found: ${modelId}`);
+        }
+
+        await meshStorage.deleteModelMeshes(projectSlug, modelId);
+        return this.getFederatedModel(projectSlug, workspace);
     }
 
     async listModels(projectSlug) {

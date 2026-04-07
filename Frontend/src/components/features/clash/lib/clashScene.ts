@@ -14,7 +14,7 @@ export type FederatedOverviewObject = {
 
 export const WORLD_LIMIT = 220;
 /** Scale from meters (IFC world units) to viewer world units */
-export const WORLD_SCALE = 30;
+export const WORLD_SCALE = 1;
 /** Alias for backward compat with useObjectInteraction */
 export const PIXELS_TO_WORLD = WORLD_SCALE;
 export const DEFAULT_SCENE_Y = 0;
@@ -29,7 +29,103 @@ export type SceneObject = {
   size: SceneSize;
   /** Origin position in IFC world space (meters) */
   worldPosition?: [number, number, number];
+  /** IFC entity type (e.g. IfcWall) or clash category string — used for display colors */
+  ifcType?: string;
 };
+
+/**
+ * Sortdesk-like palette: type-driven albedo + light transparency only for real spaces / glazing.
+ * Avoid loose substring rules: e.g. `zone` inside `…ZonalElement…` or `opening` inside `FloorOpening`
+ * turned most of the model into a teal x-ray stack.
+ */
+export function bimStyleForIfcType(raw: string | undefined): {
+  color: [number, number, number];
+  opacity: number;
+} {
+  const k = (raw || '')
+    .toLowerCase()
+    .replace(/^ifc/, '')
+    .trim();
+  const compact = (raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const has = (...parts: string[]) => parts.some((p) => k.includes(p));
+
+  const isIfcSpaceVolume =
+    !compact.includes('spaceheater') &&
+    (compact.startsWith('ifcspace') ||
+      compact.includes('ifcspatialzone') ||
+      compact === 'ifczone' ||
+      compact.startsWith('ifczonetyp'));
+
+  const isGlazing =
+    (compact.startsWith('ifcwindow') && !compact.includes('heater')) ||
+    compact.includes('curtainwall') ||
+    compact.includes('ifcwindowpanel') ||
+    compact.includes('glazingelement') ||
+    (compact.includes('ifcplate') && (compact.includes('glass') || compact.includes('glaz'))) ||
+    (k.includes('curtain') && k.includes('wall'));
+
+  const isIfcOpeningOrVirtual =
+    compact.startsWith('ifcopeningelement') ||
+    k.startsWith('openingelement') ||
+    compact.includes('ifcvirtualelement') ||
+    k.startsWith('virtualelement');
+
+  if (
+    has(
+      'pipe',
+      'duct',
+      'terminal',
+      'fitting',
+      'flow',
+      'cable',
+      'cablecarrier',
+      'airterminal',
+      'spaceheater',
+      'pump',
+      'fan',
+      'tank',
+      'boiler',
+      'electric',
+      'lightfixture'
+    )
+  ) {
+    return { color: [0.88, 0.48, 0.28], opacity: 1 };
+  }
+  if (isIfcSpaceVolume) {
+    return { color: [0.52, 0.72, 0.95], opacity: 0.62 };
+  }
+  if (isGlazing) {
+    return { color: [0.42, 0.62, 0.92], opacity: 0.62 };
+  }
+  if (has('door', 'gate')) {
+    return { color: [0.82, 0.70, 0.52], opacity: 1 };
+  }
+  if (has('roof', 'covering') && !has('floor')) {
+    return { color: [0.22, 0.46, 0.32], opacity: 1 };
+  }
+  if (has('wall', 'wallstandard', 'basement')) {
+    return { color: [0.70, 0.42, 0.34], opacity: 1 };
+  }
+  if (k === 'plate' || (k.includes('plate') && !has('curtain', 'glaz'))) {
+    return { color: [0.68, 0.70, 0.72], opacity: 1 };
+  }
+  if (has('slab', 'floor', 'footing', 'paving', 'landing') && !has('curtain')) {
+    return { color: [0.38, 0.40, 0.44], opacity: 1 };
+  }
+  if (has('column', 'pier', 'pilaster', 'beam', 'member', 'brace', 'footing')) {
+    return { color: [0.74, 0.76, 0.78], opacity: 1 };
+  }
+  if (has('stair', 'ramp', 'railing', 'balustr')) {
+    return { color: [0.58, 0.56, 0.54], opacity: 1 };
+  }
+  if (has('furnish', 'furniture', 'chair', 'table', 'desk', 'sofa', 'bed')) {
+    return { color: [0.52, 0.42, 0.34], opacity: 1 };
+  }
+  if (isIfcOpeningOrVirtual) {
+    return { color: [0.78, 0.86, 0.9], opacity: 1 };
+  }
+  return { color: [0.56, 0.53, 0.5], opacity: 1 };
+}
 
 export const clampWorld = (value: number) => Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, value));
 
@@ -74,11 +170,86 @@ export function transformMeshPositionsToViewerSpace(
   const [ox, , oz] = originWorld;
   const out = new Array<number>(positions.length);
   for (let i = 0; i + 2 < positions.length; i += 3) {
-    out[i]     = clampWorld((positions[i]     - ox) * WORLD_SCALE);
+    out[i]     = (positions[i] - ox) * WORLD_SCALE;
     out[i + 1] = positions[i + 1] * WORLD_SCALE;
-    out[i + 2] = clampWorld((positions[i + 2] - oz) * WORLD_SCALE);
+    out[i + 2] = (positions[i + 2] - oz) * WORLD_SCALE;
   }
   return out;
+}
+
+/** Axis-aligned bounds of raw IFC/world vertices (flat xyz triples, any length multiple of 3). */
+export function computePositionsWorldAabb(
+  positions: number[]
+): { min: [number, number, number]; max: [number, number, number] } | null {
+  if (positions.length < 3) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    const x = positions[i];
+    const y = positions[i + 1];
+    const z = positions[i + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  if (!Number.isFinite(minX)) return null;
+  return {
+    min: [minX, minY, minZ],
+    max: [maxX, maxY, maxZ],
+  };
+}
+
+export function unionWorldAabbs(
+  a: { min: [number, number, number]; max: [number, number, number] },
+  b: { min: [number, number, number]; max: [number, number, number] }
+): { min: [number, number, number]; max: [number, number, number] } {
+  return {
+    min: [
+      Math.min(a.min[0], b.min[0]),
+      Math.min(a.min[1], b.min[1]),
+      Math.min(a.min[2], b.min[2]),
+    ],
+    max: [
+      Math.max(a.max[0], b.max[0]),
+      Math.max(a.max[1], b.max[1]),
+      Math.max(a.max[2], b.max[2]),
+    ],
+  };
+}
+
+export function aabbMidpoint(box: {
+  min: [number, number, number];
+  max: [number, number, number];
+}): [number, number, number] {
+  return [
+    (box.min[0] + box.max[0]) / 2,
+    (box.min[1] + box.max[1]) / 2,
+    (box.min[2] + box.max[2]) / 2,
+  ];
+}
+
+/**
+ * World-space origin for clash mesh transform: prefer union of both elements' mesh AABBs so
+ * coordinates stay aligned even when clash IFC bboxes disagree with extracted mesh vertices.
+ */
+export function clashMeshOriginFromPairMeshes(
+  meshA: number[] | undefined,
+  meshB: number[] | undefined
+): [number, number, number] | null {
+  const boxA = meshA && meshA.length >= 9 ? computePositionsWorldAabb(meshA) : null;
+  const boxB = meshB && meshB.length >= 9 ? computePositionsWorldAabb(meshB) : null;
+  if (boxA && boxB) return aabbMidpoint(unionWorldAabbs(boxA, boxB));
+  if (boxA) return aabbMidpoint(boxA);
+  if (boxB) return aabbMidpoint(boxB);
+  return null;
 }
 
 /**
@@ -130,6 +301,7 @@ export const buildSceneObjectsFromClash = (clash: Clash): SceneObject[] => {
         position: worldToViewer(centerA, originWorld),
         size: bboxSize(bboxA),
         worldPosition: centerA,
+        ifcType: clash.element1?.category,
       },
       {
         id: clash.objectB,
@@ -137,6 +309,7 @@ export const buildSceneObjectsFromClash = (clash: Clash): SceneObject[] => {
         position: worldToViewer(centerB, originWorld),
         size: bboxSize(bboxB),
         worldPosition: centerB,
+        ifcType: clash.element2?.category,
       },
     ];
   }
@@ -148,12 +321,14 @@ export const buildSceneObjectsFromClash = (clash: Clash): SceneObject[] => {
       label: clash.element1?.category ?? clash.objectA,
       position: { x: -58, y: DEFAULT_SCENE_Y, z: -12 },
       size: { width: 96, depth: 84, height: 96 },
+      ifcType: clash.element1?.category,
     },
     {
       id: clash.objectB,
       label: clash.element2?.category ?? clash.objectB,
       position: { x: 34, y: DEFAULT_SCENE_Y, z: 18 },
       size: { width: 108, depth: 80, height: 84 },
+      ifcType: clash.element2?.category,
     },
   ];
 };
@@ -297,6 +472,7 @@ export const buildViewerObjects = (
     size: obj.size,
     isSelected: selectedObjectId === obj.id,
     isColliding: false,
+    ifcType: obj.ifcType,
   }));
 
   if (options?.skipCollision) {
@@ -363,12 +539,15 @@ export function buildOverviewSceneFromFederated(
   return capped.map((o) => {
     const bbox = o.boundingBox;
     const center = bboxCenter(bbox);
+    const typeCat = `${o.type} ${o.category || ''}`.trim();
     return {
       id: o.id,
       label: typeShortLabel(o.type, o.category),
       position: worldToViewer(center, originWorld),
       size: bboxSize(bbox),
       worldPosition: center,
+      // Many IFC exports use IfcBuildingElementProxy; category carries Wall/Roof/… for palette lookup.
+      ifcType: typeCat,
     };
   });
 }

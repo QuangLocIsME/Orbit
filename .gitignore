@@ -5,6 +5,7 @@ Frontend/.astro/
 Frontend/node_modules/
 Frontend/.env*
 node_modules/
+.cursor/
 .env
 *.md
 .github/skills/skill-root-cause-tracing/skill-root-cause-tracing/find-polluter.sh

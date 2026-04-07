@@ -1,4 +1,4 @@
-const { buildBCFDocument } = require('./bcfExport.service');
+const { buildBCFZip } = require('./bcfExport.service');
 const { createId, readWorkspace, updateWorkspace, defaultWorkspace } = require('./navisworksStorage.service');
 const modelService = require('./model.service');
 const selectionSetService = require('./selectionSet.service');
@@ -561,10 +561,11 @@ class NavisworksClashService {
             note: result.note,
         }));
 
+        const bcfZip = await buildBCFZip(clashes, `${projectSlug} - ${test.name}`);
         return {
-            contentType: 'application/json',
-            filename: `${projectSlug}-${test.id}-${run.id}.bcf.json`,
-            body: JSON.stringify(buildBCFDocument(clashes, `${projectSlug} - ${test.name}`), null, 2),
+            contentType: 'application/zip',
+            filename: `${projectSlug}-${test.id}-${run.id}.bcfzip`,
+            body: bcfZip,
         };
     }
 }
