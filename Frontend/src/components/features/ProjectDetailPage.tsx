@@ -5,12 +5,14 @@ import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
 import type { Project } from '@/types';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
 import ProjectTopBar from '@/components/layout/ProjectTopBar';
 import CreateTaskModal from './CreateTaskModal';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
-import ClashesTab from './ClashesTab';
+import ClashesTab from './clash/ClashesTab';
+import { ClashViewerProvider } from './clash/state/clashStore';
 import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
@@ -19,6 +21,8 @@ import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
+
+const queryClient = new QueryClient();
 
 
 interface ProjectDetailPageProps {
@@ -405,7 +409,7 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
   </svg>
 );
 
-export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
+function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isFavorite, setIsFavorite] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
@@ -2498,7 +2502,7 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
 
         {/* Clashes Tab */}
         {activeTab === 'clashes' && (
-          <ClashesTab />
+          <ClashesTab projectPublicId={project.publicId} projectDisplayName={project.name} />
         )}
 
         {/* Teams Tab */}
@@ -2586,6 +2590,16 @@ export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
         />
       </div>
     </div>
+  );
+}
+
+export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ClashViewerProvider>
+        <ProjectDetailPageContent project={project} />
+      </ClashViewerProvider>
+    </QueryClientProvider>
   );
 }
 

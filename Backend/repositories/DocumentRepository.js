@@ -78,6 +78,13 @@ class DocumentRepository {
     async deleteByPackageId(packageId) {
         return await Document.deleteMany({ packageId });
     }
+
+    async listIfcByProject(projectId) {
+        return await Document.find({
+            projectId,
+            originalName: { $regex: /\.ifc$/i },
+        }).sort({ createdAt: -1 });
+    }
 }
 
 module.exports = new DocumentRepository();

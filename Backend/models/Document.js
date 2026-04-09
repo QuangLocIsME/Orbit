@@ -41,6 +41,7 @@ const DocumentSchema = new mongoose.Schema({
     xktBucket: { type: String, default: '', trim: true },
     xktKey: { type: String, default: '', trim: true },
     xktUrl: { type: String, default: '', trim: true },
+    supabaseIfcKey: { type: String, default: '', trim: true },
     conversionAttempts: { type: Number, default: 0 },
     conversionError: { type: String, default: '' },
     convertedAt: { type: Date, default: null },

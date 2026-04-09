@@ -22,6 +22,8 @@ const packageRoutes = require('./routes/packageRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const wsRoutes = require('./routes/wsRoutes');
+const clashRoutes = require('./routes/clash.routes');
+const navisworksRoutes = require('./routes/navisworks.routes');
 const connectDB = require('./config/database');
 const { attachSocket } = require('./services/socketService');
 
@@ -37,6 +39,21 @@ const limiter = rateLimit({
         success: false,
         message: 'Too many requests, please try again later.',
     },
+    skip: (req) => req.path.includes('/clashes') || req.path.includes('/clash-detect'),
+});
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+const clashLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: 'Too many clash detection requests, please slow down.',
+    },
+    skip: () => !IS_PRODUCTION,
 });
 
 app.use(express.json());
@@ -62,6 +79,8 @@ app.use('/api/projects/packages', packageRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/ws', wsRoutes);
+app.use('/api', clashLimiter, clashRoutes);
+app.use('/api', clashLimiter, navisworksRoutes);
 
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError) {

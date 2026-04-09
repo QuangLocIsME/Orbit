@@ -14,7 +14,7 @@ const DocumentFolderRepository = require('../repositories/DocumentFolderReposito
 const UploadJobRepository = require('../repositories/UploadJobRepository');
 const { publishPackageUpload } = require('../queues/packageUploadQueue');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
-const { createSignedXktUrl } = require('../services/supabaseStorageService');
+const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 const { broadcastProject } = require('../services/socketService');
 
@@ -714,6 +714,19 @@ class PackageController {
                 }
 
                 if (isIfcFile) {
+                    // Upload IFC lên Supabase để clash detection dùng (không cần MinIO)
+                    try {
+                        const ifcPath = buildSupabaseIfcPath({
+                            projectId: normalizedProjectId,
+                            documentId: document.publicId,
+                            originalName: file.originalname,
+                        });
+                        await uploadIfcBuffer(body, ifcPath);
+                        await DocumentRepository.updateConversionStateByPublicId(document.publicId, { supabaseIfcKey: ifcPath });
+                    } catch (supaErr) {
+                        console.warn('[PackageController] Supabase IFC upload skipped:', supaErr.message);
+                    }
+
                     await publishIfcConversionJob({
                         projectId: normalizedProjectId,
                         documentId: document.publicId,

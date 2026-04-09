@@ -3,6 +3,7 @@ const fs = require('fs');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_XKT_BUCKET = process.env.SUPABASE_XKT_BUCKET || 'xkt-models';
+const SUPABASE_IFC_BUCKET = process.env.SUPABASE_IFC_BUCKET || 'ifc-files';
 
 function assertSupabaseConfigured() {
     if (!SUPABASE_URL) {
@@ -78,10 +79,70 @@ async function createSignedXktUrl(storagePath, expiresIn = 3600) {
     return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1${signedPath}`;
 }
 
+/**
+ * Supabase path cho IFC file gốc.
+ * Format: projects/{projectId}/ifc/{documentId}/{originalName}
+ */
+function buildSupabaseIfcPath({ projectId, documentId, originalName }) {
+    const safeName = (originalName || 'model.ifc').replace(/[^a-zA-Z0-9_\-. ]/g, '-').replace(/\s+/g, '-');
+    return `projects/${projectId}/ifc/${documentId}/${safeName}`;
+}
+
+/**
+ * Upload IFC buffer lên Supabase Storage (bucket: ifc-files).
+ * @param {Buffer} buffer - nội dung file IFC
+ * @param {string} storagePath - path trả về từ buildSupabaseIfcPath
+ */
+async function uploadIfcBuffer(buffer, storagePath) {
+    assertSupabaseConfigured();
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_IFC_BUCKET}/${storagePath}`;
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            'Content-Type': 'application/octet-stream',
+            'x-upsert': 'true',
+        },
+        body: buffer,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase IFC upload failed: ${res.status} ${text}`);
+    }
+    return { bucket: SUPABASE_IFC_BUCKET, key: storagePath };
+}
+
+/**
+ * Download IFC file từ Supabase, trả về Buffer.
+ * @param {string} storagePath - supabaseIfcKey đã lưu trong Document
+ */
+async function downloadIfcBuffer(storagePath) {
+    assertSupabaseConfigured();
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_IFC_BUCKET}/${storagePath}`;
+    const res = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+        },
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase IFC download failed: ${res.status} ${text}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+}
+
 module.exports = {
     SUPABASE_XKT_BUCKET,
+    SUPABASE_IFC_BUCKET,
     buildSupabaseStoragePath,
+    buildSupabaseIfcPath,
     uploadXktFile,
+    uploadIfcBuffer,
+    downloadIfcBuffer,
     createSignedXktUrl,
     assertSupabaseConfigured,
 };
