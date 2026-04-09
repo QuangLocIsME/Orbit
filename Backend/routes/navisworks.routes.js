@@ -13,6 +13,8 @@ router.get('/projects/:projectSlug/navisworks/workspace', ...access, (req, res) 
     NavisworksClashController.getWorkspace(req, res));
 router.get('/projects/:projectSlug/navisworks/clashes', ...access, (req, res) =>
     NavisworksClashController.listAllClashes(req, res));
+router.get('/projects/:projectSlug/navisworks/clashes/count', ...access, (req, res) =>
+    NavisworksClashController.getClashCount(req, res));
 router.post(
     '/projects/:projectSlug/navisworks/models/import',
     ...access,

@@ -45,6 +45,7 @@ interface Project {
   projectType?: string;
   isFavorite?: boolean;
   folderIds?: string[];
+  role?: 'admin' | 'member' | 'viewer';
 }
 
 interface ApiProject {
@@ -57,6 +58,7 @@ interface ApiProject {
   folderIds?: string[];
   role?: string;
   status?: string;
+  lastVisitedAt?: string | null;
 }
 
 interface ProjectsManagerProps {
@@ -126,12 +128,16 @@ function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+
+  if (diffMs < 0) return 'Just now';
+
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 60) return `${Math.max(diffMins, 0)} minutes ago`;
-  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  if (diffMins < 30) return 'Just now';
+  if (diffHours < 1) return `${diffMins} min ago`;
+  if (diffDays < 1) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
   return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 }
 
@@ -150,7 +156,7 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     name: project.name,
     slug: toSlug(project.name || project.publicId),
     thumbnail: project.coverImageUrl || '',
-    lastVisited: new Date().toISOString(),
+    lastVisited: project.lastVisitedAt ? new Date(project.lastVisitedAt).toISOString() : new Date().toISOString(),
     category: 'shared',
     description: project.description || '',
     progress: 0,
@@ -160,6 +166,7 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     projectType: (project.industry || 'software').toLowerCase(),
     isFavorite: false,
     folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
+    role: project.role as Project['role'],
   };
 }
 

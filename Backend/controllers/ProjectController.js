@@ -156,6 +156,8 @@ class ProjectController {
                     folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
                     role: membership?.role || 'member',
                     status: membership?.status || 'accepted',
+                    lastVisitedAt: membership?.lastVisitedAt || null,
+                    isFavorite: membership?.isFavorite || false,
                 };
             });
 
@@ -205,6 +207,7 @@ class ProjectController {
                 status: m.status,
                 invitedBy: m.invitedBy,
                 createdAt: m.createdAt,
+                isFavorite: m.isFavorite || false,
                 user: m.userId ? (() => {
                     const u = userMap.get(m.userId);
                     return u ? { fullName: u.fullName, email: u.email, avatar: u.avatar } : null;
@@ -214,6 +217,7 @@ class ProjectController {
             return res.status(200).json({
                 success: true,
                 data: members,
+                isFavorite: member.isFavorite || false,
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load project members');
@@ -557,6 +561,32 @@ class ProjectController {
         }
     }
 
+    async touchProject(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return unauthorized(res);
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member) {
+                return forbidden(res);
+            }
+
+            await ProjectMemberRepository.updateLastVisited(normalizedProjectId, userId);
+            await invalidateUserCaches(userId);
+
+            return res.status(200).json({ success: true });
+        } catch (error) {
+            return handleServerError(res, 'Touch project failed');
+        }
+    }
+
     async getWorkflow(req, res) {
         try {
             const normalizedProjectId = getNormalizedProjectId(req);
@@ -677,6 +707,84 @@ class ProjectController {
             });
         } catch (error) {
             return handleServerError(res, 'Failed to update workflow');
+        }
+    }
+
+    async toggleFavorite(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member) {
+                return forbidden(res);
+            }
+
+            const updatedMember = await ProjectMemberRepository.toggleFavorite(normalizedProjectId, userId);
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:favorite-toggled', {
+                projectId: normalizedProjectId,
+                userId,
+                isFavorite: updatedMember.isFavorite,
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: updatedMember.isFavorite ? 'Project added to favorites' : 'Project removed from favorites',
+                data: {
+                    projectId: normalizedProjectId,
+                    isFavorite: updatedMember.isFavorite,
+                },
+            });
+        } catch (error) {
+            return handleServerError(res, 'Toggle favorite failed');
+        }
+    }
+
+    async getFavoriteProjects(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const memberships = await ProjectMemberRepository.getFavoriteProjects(userId);
+            const projectIds = memberships.map((m) => m.projectId);
+
+            const projects = await Project.find({ publicId: { $in: projectIds } }).select(
+                '-_id -updatedAt'
+            );
+
+            const membershipMap = new Map(
+                memberships.map((membership) => [membership.projectId, membership])
+            );
+
+            const data = projects.map((project) => {
+                const membership = membershipMap.get(project.publicId);
+                return {
+                    publicId: project.publicId,
+                    name: project.name,
+                    description: project.description,
+                    industry: project.industry,
+                    coverImageUrl: project.coverImageUrl,
+                    folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
+                    role: membership?.role || 'member',
+                    status: membership?.status || 'accepted',
+                    lastVisitedAt: membership?.lastVisitedAt || null,
+                    isFavorite: membership?.isFavorite || false,
+                };
+            });
+
+            return res.status(200).json({
+                success: true,
+                data,
+            });
+        } catch (error) {
+            return handleServerError(res, 'Failed to load favorite projects');
         }
     }
 }

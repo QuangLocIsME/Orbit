@@ -12,7 +12,15 @@ class ProjectMemberRepository {
 
     async getProjectsByUser(userId) {
         return await ProjectMember.find({ userId, status: 'accepted' }).select(
-            'projectId role status'
+            'projectId role status lastVisitedAt isFavorite'
+        );
+    }
+
+    async updateLastVisited(projectId, userId) {
+        return await ProjectMember.findOneAndUpdate(
+            { projectId, userId },
+            { lastVisitedAt: new Date() },
+            { returnDocument: 'after' }
         );
     }
 
@@ -47,7 +55,23 @@ class ProjectMemberRepository {
     }
 
     async getMembersWithUsers(projectId) {
-        return await ProjectMember.find({ projectId }).lean();
+        return await ProjectMember.find({ projectId }).select(
+            '-_id projectId userId role status invitedBy createdAt isFavorite'
+        ).lean();
+    }
+
+    async toggleFavorite(projectId, userId) {
+        const member = await ProjectMember.findOne({ projectId, userId });
+        if (!member) return null;
+        member.isFavorite = !member.isFavorite;
+        await member.save();
+        return member;
+    }
+
+    async getFavoriteProjects(userId) {
+        return await ProjectMember.find({ userId, isFavorite: true }).select(
+            'projectId role status lastVisitedAt isFavorite'
+        );
     }
 }
 

@@ -19,6 +19,7 @@ interface Project {
   category: 'favorites' | 'shared' | 'private';
   isFavorite?: boolean;
   coverImageUrl?: string;
+  role?: 'admin' | 'member' | 'viewer';
 }
 
 const mainNavItems = [
@@ -59,6 +60,11 @@ const IconMap: Record<string, React.FC<{ className?: string }>> = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
     </svg>
   ),
+  star: ({ className }) => (
+    <svg className={className} fill="currentColor" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+    </svg>
+  ),
 };
 
 export default function Sidebar({ currentPath }: SidebarProps) {
@@ -93,8 +99,9 @@ export default function Sidebar({ currentPath }: SidebarProps) {
             name: p.name,
             description: p.description,
             category: 'shared' as const,
-            isFavorite: p.status === 'favorite',
+            isFavorite: p.isFavorite === true,
             coverImageUrl: p.coverImageUrl,
+            role: p.role as Project['role'],
           }));
           setProjects(mappedProjects);
         }
@@ -190,8 +197,10 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
   // FAVORITES shows only projects with isFavorite: true
   const favorites = projects.filter(p => p.isFavorite === true);
-  const shared = projects.filter(p => p.category === 'shared' && !p.isFavorite);
-  const privateProjects = projects.filter(p => p.category === 'private' && !p.isFavorite);
+  // MY PROJECTS: role === 'admin' (user created/owns)
+  const myProjects = projects.filter(p => p.role === 'admin' && !p.isFavorite);
+  // SHARED: role !== 'admin' (invited to project)
+  const shared = projects.filter(p => p.role !== 'admin' && !p.isFavorite);
 
   return (
     <aside
@@ -403,8 +412,8 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         {!isCollapsed && (
           <>
             <ProjectGroup title="FAVORITES" projects={favorites} currentPath={currentPath} />
+            <ProjectGroup title="MY PROJECTS" projects={myProjects} currentPath={currentPath} />
             <ProjectGroup title="SHARED" projects={shared} currentPath={currentPath} />
-            <ProjectGroup title="PRIVATE" projects={privateProjects} currentPath={currentPath} />
           </>
         )}
       </nav>
@@ -662,7 +671,10 @@ function ProjectGroup({ title, projects, currentPath }: ProjectGroupProps) {
                 )}
               >
                 <IconMap.project className="h-4 w-4 shrink-0" />
-                <span className="truncate">{project.name}</span>
+                <span className="truncate flex-1">{project.name}</span>
+                {project.isFavorite && (
+                  <IconMap.star className="h-4 w-4 shrink-0 text-yellow-500" />
+                )}
               </a>
             </li>
           );

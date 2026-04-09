@@ -14,6 +14,8 @@ const ProjectMemberSchema = new mongoose.Schema({
         default: 'accepted',
     },
     invitedBy: { type: String, default: null },
+    lastVisitedAt: { type: Date, default: null, index: true },
+    isFavorite: { type: Boolean, default: false, index: true },
     createdAt: { type: Date, default: Date.now },
 });
 

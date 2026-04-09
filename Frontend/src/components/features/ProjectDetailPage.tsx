@@ -35,6 +35,7 @@ interface ProjectDetailPageProps {
     role?: string;
     status?: string;
     lastVisited?: string;
+    isFavorite?: boolean;
   };
 }
 
@@ -411,17 +412,18 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 
 function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
-  const [isFavorite, setIsFavorite] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
   const [documentsCount, setDocumentsCount] = useState(0);
+  const [clashCount, setClashCount] = useState(0);
 
-  // Fetch real team members + documents count from backend API
+  // Fetch real team members + documents count + clash count from backend API
   useEffect(() => {
     let cancelled = false;
 
     const fetchProjectOverviewData = async () => {
       try {
-        const [membersRes, documentsRes] = await Promise.all([
+        const [membersRes, documentsRes, touchRes, clashCountRes] = await Promise.all([
           fetch('/api/projects/member-list', {
             method: 'POST',
             credentials: 'include',
@@ -434,6 +436,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({ projectId: project.publicId }),
           }),
+          fetch('/api/projects/touch', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: project.publicId }),
+          }),
+          apiFetch(`/api/projects/${project.publicId}/navisworks/clashes/count`),
         ]);
 
         if (membersRes.ok) {
@@ -453,6 +462,10 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
           if (!cancelled) {
             setTeamMembers(mappedMembers);
+            // Update isFavorite from API response
+            if (payload?.isFavorite !== undefined) {
+              setIsFavorite(payload.isFavorite === true);
+            }
           }
         }
 
@@ -461,6 +474,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           const total = Number(payload?.data?.total || 0);
           if (!cancelled) {
             setDocumentsCount(Number.isFinite(total) ? total : 0);
+          }
+        }
+
+        if (clashCountRes.ok) {
+          const payload = await clashCountRes.json();
+          if (!cancelled) {
+            setClashCount(payload?.total || 0);
           }
         }
       } catch {
@@ -561,13 +581,17 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     const date = new Date(dateStr);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffHours / 24);
-    
-    if (diffHours < 1) return 'Just now';
-    if (diffHours < 24) return `${diffHours} hours ago`;
-    if (diffDays === 1) return 'Yesterday';
-    return `${diffDays} days ago`;
+
+    if (diffMs < 0) return 'Just now';
+
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 30) return 'Just now';
+    if (diffHours < 1) return `${diffMins} min ago`;
+    if (diffDays < 1) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
   };
 
   const getStatusColor = (status: string) => {
@@ -684,7 +708,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     documents: documentsCount,
     versions: 124,
     teamMembers: teamMembers.length,
-    openClashes: (project as any).issues || 0,
+    openClashes: clashCount,
     startDate: 'Jan 15, 2024',
     deadline: 'Dec 15, 2025',
   };
@@ -696,7 +720,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         projectName={project.name}
         projectSlug={project.publicId}
         activeTab={activeTab}
+        isFavorite={isFavorite}
         onTabChange={setActiveTab}
+        onFavoriteChange={setIsFavorite}
       />
 
       {/* Hero Section - Only show on Overview tab */}

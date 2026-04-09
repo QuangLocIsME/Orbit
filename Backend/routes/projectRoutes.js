@@ -15,5 +15,8 @@ router.post('/members/update-role', authenticate, (req, res) => ProjectControlle
 router.post('/members/remove', authenticate, (req, res) => ProjectController.removeMember(req, res));
 router.post('/workflow', authenticate, (req, res) => ProjectController.getWorkflow(req, res));
 router.post('/workflow/update', authenticate, (req, res) => ProjectController.updateWorkflow(req, res));
+router.post('/touch', authenticate, (req, res) => ProjectController.touchProject(req, res));
+router.post('/favorite/toggle', authenticate, (req, res) => ProjectController.toggleFavorite(req, res));
+router.get('/favorites', authenticate, (req, res) => ProjectController.getFavoriteProjects(req, res));
 
 module.exports = router;

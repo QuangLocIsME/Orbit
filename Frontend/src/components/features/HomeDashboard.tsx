@@ -129,15 +129,17 @@ function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} minutes ago`;
-  if (diffHours < 24) return `${diffHours} hours ago`;
-  if (diffDays === 1) return 'Yesterday';
-  return `${diffDays} days ago`;
+
+  if (diffMs < 0) return 'Just now';
+
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 30) return 'Just now';
+  if (diffHours < 1) return `${diffMins} min ago`;
+  if (diffDays < 1) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 }
 
 // Main component
@@ -167,16 +169,17 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
             status?: string;
             role?: string;
             folderId?: string | null;
+            lastVisitedAt?: string | null;
           }) => ({
             id: p.publicId,
             slug: p.publicId,
             name: p.name,
             description: p.description,
             thumbnail: p.coverImageUrl || '',
-            lastVisited: new Date().toISOString(),
+            lastVisited: p.lastVisitedAt ? new Date(p.lastVisitedAt).toISOString() : new Date().toISOString(),
             category: 'shared' as const,
             status: (p.status as Project['status']) || 'active',
-            projectType: 'construction' as const,
+            projectType: (p.industry || 'software').toLowerCase() as Project['projectType'],
             isFavorite: false,
           }));
           setProjects(mappedProjects);
@@ -461,21 +464,27 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
                 <div className={cn(
                   "absolute inset-0 flex items-center justify-center",
                   project.thumbnail ? "hidden" : "",
-                  project.projectType === 'software' && "bg-gradient-to-br from-indigo-100 to-indigo-200",
-                  project.projectType === 'design' && "bg-gradient-to-br from-pink-100 to-pink-200",
-                  project.projectType === 'construction' && "bg-gradient-to-br from-amber-100 to-amber-200",
-                  project.projectType === 'research' && "bg-gradient-to-br from-emerald-100 to-emerald-200",
-                  !project.projectType && "bg-gradient-to-br from-gray-100 to-gray-200"
+                  project.projectType === 'software' && "bg-gradient-to-br from-cyan-50 to-cyan-100",
+                  project.projectType === 'design' && "bg-gradient-to-br from-purple-50 to-purple-100",
+                  project.projectType === 'construction' && "bg-gradient-to-br from-blue-50 to-blue-100",
+                  project.projectType === 'research' && "bg-gradient-to-br from-teal-50 to-teal-100",
+                  !project.projectType && "bg-gradient-to-br from-gray-50 to-gray-100"
                 )}>
                   <div className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-lg",
-                    project.projectType === 'software' && "bg-indigo-500 text-white",
-                    project.projectType === 'design' && "bg-pink-500 text-white",
-                    project.projectType === 'construction' && "bg-amber-500 text-white",
-                    project.projectType === 'research' && "bg-emerald-500 text-white",
+                    project.projectType === 'software' && "bg-cyan-500 text-white",
+                    project.projectType === 'design' && "bg-purple-500 text-white",
+                    project.projectType === 'construction' && "bg-blue-500 text-white",
+                    project.projectType === 'research' && "bg-teal-500 text-white",
                     !project.projectType && "bg-gray-500 text-white"
                   )}>
-                    <FolderIcon />
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      {project.projectType === 'software' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />}
+                      {project.projectType === 'design' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />}
+                      {project.projectType === 'construction' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />}
+                      {project.projectType === 'research' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />}
+                      {!project.projectType && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />}
+                    </svg>
                   </div>
                 </div>
               </div>

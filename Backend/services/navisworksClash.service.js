@@ -197,6 +197,32 @@ class NavisworksClashService {
         return { clashes: allResults, summary };
     }
 
+    async getClashCount(projectSlug) {
+        const workspace = await readWorkspace(projectSlug);
+        const federatedModel = await modelService.getFederatedModel(projectSlug, workspace);
+        const objectLookup = new Map(federatedModel.objects.map((o) => [o.id, o]));
+
+        const allResults = [];
+        for (const test of workspace.clashTests) {
+            if (!test.lastRunId) continue;
+            const run = workspace.clashRuns.find((r) => r.id === test.lastRunId);
+            if (!run) continue;
+            for (const result of run.results) {
+                allResults.push({ ...toFrontendResult(result, test, objectLookup), testId: test.id });
+            }
+        }
+
+        return {
+            total: allResults.length,
+            hard: allResults.filter((r) => r.type === 'HARD').length,
+            soft: allResults.filter((r) => r.type === 'SOFT').length,
+            duplicate: allResults.filter((r) => r.type === 'DUPLICATE').length,
+            resolved: allResults.filter((r) => r.status === 'resolved').length,
+            reviewed: allResults.filter((r) => r.status === 'reviewed').length,
+            new: allResults.filter((r) => r.status === 'new').length,
+        };
+    }
+
     async listWorkspace(projectSlug) {
         const workspace = await readWorkspace(projectSlug);
         const federatedModel = await modelService.getFederatedModel(projectSlug, workspace);

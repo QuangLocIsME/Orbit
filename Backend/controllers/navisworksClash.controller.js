@@ -23,6 +23,17 @@ class NavisworksClashController {
         }
     }
 
+    async getClashCount(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            const payload = await navisworksClashService.getClashCount(projectSlug);
+            return res.status(200).json({ success: true, ...payload });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to get clash count');
+        }
+    }
+
     async getWorkspace(req, res) {
         try {
             const projectSlug = getProjectSlug(req);
