@@ -16,6 +16,7 @@ import { ClashViewerProvider } from './clash/state/clashStore';
 import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
+import ChangesTab from './ChangesTab';
 import TaskDetailPage from './TaskDetailPage';
 import {
   Dialog,
@@ -92,70 +93,20 @@ interface DocFolder {
   children: (DocFolder | DocFile)[];
 }
 
-// Mock change requests data
+// Change requests data
 interface ChangeRequest {
-  id: string;
+  publicId: string;
   crId: string;
   status: 'in-progress' | 'approved' | 'completed' | 'pending' | 'rejected';
   priority: 'urgent' | 'high' | 'medium' | 'low';
   title: string;
   description: string;
-  assignee: string;
+  affectedModels: string[];
+  assignedTo: string | null;
+  createdBy: string;
   createdAt: string;
+  updatedAt?: string;
 }
-
-const mockChangeRequests: ChangeRequest[] = [
-  {
-    id: '1',
-    crId: 'CR-044',
-    status: 'in-progress',
-    priority: 'urgent',
-    title: 'Relocate main entrance',
-    description: 'Building orientation change requires entrance relocation',
-    assignee: 'Hoang Nam',
-    createdAt: '5 hours ago',
-  },
-  {
-    id: '2',
-    crId: 'CR-043',
-    status: 'approved',
-    priority: 'medium',
-    title: 'Update fire safety system',
-    description: 'Add additional fire sprinkler heads per regulations',
-    assignee: 'Thu Trang',
-    createdAt: '1 day ago',
-  },
-  {
-    id: '3',
-    crId: 'CR-042',
-    status: 'completed',
-    priority: 'low',
-    title: 'Parking layout modification',
-    description: 'Reconfigure parking spaces to meet accessibility standards',
-    assignee: 'Tuan Kiet',
-    createdAt: '3 days ago',
-  },
-  {
-    id: '4',
-    crId: 'CR-041',
-    status: 'in-progress',
-    priority: 'high',
-    title: 'Revise HVAC duct routing in corridor',
-    description: 'Optimize duct path to avoid structural beams and reduce pressure loss',
-    assignee: 'Ava Collins',
-    createdAt: '8 hours ago',
-  },
-  {
-    id: '5',
-    crId: 'CR-040',
-    status: 'approved',
-    priority: 'medium',
-    title: 'Structural reinforcement for roof garden',
-    description: 'Add steel beams to support additional load from planned roof garden',
-    assignee: 'Nathan Reed',
-    createdAt: '2 days ago',
-  },
-];
 
 // Mock Tasks data
 interface Task {
@@ -500,6 +451,161 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       sessionStorage.removeItem('projectActiveTab');
     }
   }, []);
+
+  // Fetch change requests when 'changes' tab is active
+  useEffect(() => {
+    if (activeTab !== 'changes') return;
+    let cancelled = false;
+
+    // Helper to extract IFC files from tree structure
+    const extractIfcFiles = (nodes: any[]): { id: string; name: string }[] => {
+      const files: { id: string; name: string }[] = [];
+      for (const node of nodes) {
+        if (node.type === 'file' && node.isIfc) {
+          files.push({ id: node.id, name: node.name });
+        }
+        if (node.children && Array.isArray(node.children)) {
+          files.push(...extractIfcFiles(node.children));
+        }
+      }
+      return files;
+    };
+
+    // Check localStorage cache first
+    const cacheKey = `orbit-ifc-files-${project.publicId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTime = localStorage.getItem(`${cacheKey}-time`);
+    const cacheExpiry = 5 * 60 * 1000; // 5 minutes
+
+    const loadIfcFiles = async () => {
+      const res = await apiFetch(`/api/projects/packages/documents/list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: project.publicId }),
+      });
+
+      if (res.ok) {
+        const payload = await res.json();
+        const tree = payload?.data?.tree;
+        if (tree && !cancelled) {
+          const ifcFiles = extractIfcFiles(tree.children || []);
+          setAvailableIfcFiles(ifcFiles);
+          // Cache the result
+          localStorage.setItem(cacheKey, JSON.stringify(ifcFiles));
+          localStorage.setItem(`${cacheKey}-time`, String(Date.now()));
+        }
+      }
+    };
+
+    const fetchChangeRequests = async () => {
+      setIsLoadingChangeRequests(true);
+      setIsLoadingIfcFiles(true);
+      try {
+        // Load change requests
+        const crRes = await apiFetch(`/api/projects/${project.publicId}/change-requests`);
+        if (crRes.ok && !cancelled) {
+          const payload = await crRes.json();
+          setChangeRequests(payload.data || []);
+        }
+
+        // Load IFC files from cache or API
+        if (cachedData && cachedTime && Date.now() - Number(cachedTime) < cacheExpiry) {
+          try {
+            setAvailableIfcFiles(JSON.parse(cachedData));
+          } catch {
+            await loadIfcFiles();
+          }
+        } else {
+          await loadIfcFiles();
+        }
+      } catch {
+        // Keep empty state on error
+      } finally {
+        if (!cancelled) {
+          setIsLoadingChangeRequests(false);
+          setIsLoadingIfcFiles(false);
+        }
+      }
+    };
+
+    fetchChangeRequests();
+    return () => { cancelled = true; };
+  }, [activeTab, project.publicId]);
+
+  const handleCreateChangeRequest = async () => {
+    if (!newRequestTitle.trim()) {
+      toast.error('Title is required');
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/projects/${project.publicId}/change-requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newRequestTitle,
+          description: newRequestDescription,
+          detailedDescription: newRequestDetailedDescription,
+          priority: newRequestPriority,
+          affectedModels: newRequestAffectedModels,
+          assignees: newRequestAssignees,
+          reviewers: newRequestReviewers,
+          discipline: newRequestDiscipline,
+          deadline: newRequestDeadline,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Change request created');
+        setIsNewRequestModalOpen(false);
+        setNewRequestTitle('');
+        setNewRequestDescription('');
+        setNewRequestDetailedDescription('');
+        setNewRequestPriority('medium');
+        setNewRequestAffectedModels([]);
+        setNewRequestAssignees([]);
+        setNewRequestReviewers([]);
+        setNewRequestAttachments([]);
+        setNewRequestDiscipline('');
+        setNewRequestDeadline('');
+        // Refresh list
+        const crRes = await apiFetch(`/api/projects/${project.publicId}/change-requests`);
+        if (crRes.ok) {
+          const payload = await crRes.json();
+          setChangeRequests(payload.data || []);
+        }
+      } else {
+        toast.error(data.message || 'Failed to create change request');
+      }
+    } catch {
+      toast.error('Failed to create change request');
+    }
+  };
+
+  const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files);
+    const validFiles = files.filter(file => {
+      const maxSize = 50 * 1024 * 1024; // 50MB
+      if (file.size > maxSize) {
+        toast.error(`${file.name} exceeds 50MB limit`);
+        return false;
+      }
+      return true;
+    });
+    setNewRequestAttachments(prev => [...prev, ...validFiles]);
+  };
+
+  const removeAttachment = (index: number) => {
+    setNewRequestAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
   const [docViewMode, setDocViewMode] = useState<'list' | 'grid'>('list');
   const [docSearchQuery, setDocSearchQuery] = useState('');
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -514,9 +620,22 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [isCompareResultOpen, setIsCompareResultOpen] = useState(false);
   const [crFilter, setCrFilter] = useState<'all' | 'pending' | 'in-progress'>('all');
   const [crSearchQuery, setCrSearchQuery] = useState('');
+  const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
+  const [isLoadingChangeRequests, setIsLoadingChangeRequests] = useState(false);
+  const [availableIfcFiles, setAvailableIfcFiles] = useState<Array<{ id: string; name: string }>>([]);
+  const [isLoadingIfcFiles, setIsLoadingIfcFiles] = useState(false);
+  const [newRequestDetailedDescription, setNewRequestDetailedDescription] = useState('');
+  const [newRequestAssignees, setNewRequestAssignees] = useState<string[]>([]);
+  const [newRequestReviewers, setNewRequestReviewers] = useState<string[]>([]);
+  const [newRequestAttachments, setNewRequestAttachments] = useState<File[]>([]);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
+  const [newRequestDiscipline, setNewRequestDiscipline] = useState('');
+  const [newRequestDeadline, setNewRequestDeadline] = useState('');
   const [isNewRequestModalOpen, setIsNewRequestModalOpen] = useState(false);
+  const [newRequestTitle, setNewRequestTitle] = useState('');
+  const [newRequestDescription, setNewRequestDescription] = useState('');
   const [newRequestPriority, setNewRequestPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
-  const [newRequestImpact, setNewRequestImpact] = useState<'low' | 'medium' | 'high'>('medium');
+  const [newRequestAffectedModels, setNewRequestAffectedModels] = useState<string[]>([]);
   const [tasksViewMode, setTasksViewMode] = useState<'board' | 'list' | 'calendar'>('board');
   const [tasksSearchQuery, setTasksSearchQuery] = useState('');
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
@@ -1109,6 +1228,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Changes Tab */}
         {activeTab === 'changes' && (
+          <ChangesTab projectPublicId={project.publicId} />
+        )}
+        {activeTab === 'changes_DISABLED_INLINE' && (
           <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
             {/* Header */}
             <div className="flex items-center justify-between">
@@ -1182,112 +1304,151 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
             {/* Change Requests List */}
             <div className="rounded-[10px] border border-[#E5E7EB] bg-white overflow-hidden">
-              {mockChangeRequests
-                .filter(cr => {
-                  if (crFilter === 'pending') return cr.status === 'pending';
-                  if (crFilter === 'in-progress') return cr.status === 'in-progress';
-                  return true;
-                })
-                .filter(cr => 
-                  cr.title.toLowerCase().includes(crSearchQuery.toLowerCase()) ||
-                  cr.crId.toLowerCase().includes(crSearchQuery.toLowerCase()) ||
-                  cr.description.toLowerCase().includes(crSearchQuery.toLowerCase())
-                )
-                .map((cr, index, arr) => (
-                <div 
-                  key={cr.id} 
-                  className={cn(
-                    "flex items-start gap-4 px-6 py-6",
-                    index !== arr.length - 1 && "border-b border-[#E5E7EB]"
-                  )}
-                >
-                  {/* Icon - Document with edit */}
-                  <div className={cn(
-                    "flex h-12 w-12 items-center justify-center rounded-[10px] shrink-0",
-                    (cr.status === 'in-progress' || cr.status === 'pending') && "bg-[#EEF2FF]",
-                    (cr.status === 'approved' || cr.status === 'completed') && "bg-[#ECFDF5]"
-                  )}>
-                    <svg 
-                      className="h-6 w-6"
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path 
-                        d="M12.659 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8.00001C20.0008 7.68312 19.9388 7.36921 19.8176 7.0764C19.6964 6.78359 19.5185 6.51768 19.294 6.29401L15.706 2.70601C15.4823 2.48153 15.2164 2.30357 14.9236 2.18239C14.6308 2.06122 14.3169 1.99923 14 2.00001H6C5.46957 2.00001 4.96086 2.21072 4.58579 2.58579C4.21071 2.96087 4 3.46957 4 4.00001V13.34" 
-                        stroke={(cr.status === 'in-progress' || cr.status === 'pending') ? "#4F39F6" : "#009966"}
-                        strokeWidth="2" 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round"
-                      />
-                      <path 
-                        d="M14 2V7C14 7.26522 14.1054 7.51957 14.2929 7.70711C14.4804 7.89464 14.7348 8 15 8H20" 
-                        stroke={(cr.status === 'in-progress' || cr.status === 'pending') ? "#4F39F6" : "#009966"}
-                        strokeWidth="2" 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round"
-                      />
-                      <path 
-                        d="M10.378 12.6219C10.7762 12.224 11.3162 12.0007 11.8791 12.001C12.442 12.0013 12.9817 12.2251 13.3795 12.6234C13.7773 13.0216 14.0007 13.5615 14.0004 14.1244C14.0001 14.6873 13.7762 15.227 13.378 15.6249L8.36002 20.6369C8.1224 20.8746 7.82869 21.0486 7.50602 21.1429L4.63902 21.9799C4.55298 22.005 4.46176 22.0065 4.37493 21.9842C4.2881 21.962 4.20885 21.9168 4.14547 21.8534C4.08209 21.79 4.03691 21.7108 4.01467 21.6239C3.99242 21.5371 3.99393 21.4459 4.01902 21.3599L4.85502 18.4909C4.9494 18.1686 5.12341 17.8752 5.36102 17.6379L10.378 12.6219Z" 
-                        stroke={(cr.status === 'in-progress' || cr.status === 'pending') ? "#4F39F6" : "#009966"}
-                        strokeWidth="2" 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round"
-                      />
+              {isLoadingChangeRequests ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : changeRequests.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 mb-4">
+                    <svg className="h-8 w-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    {/* ID and badges row */}
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[14px] font-mono text-[#101828]">{cr.crId}</span>
-                      {/* Status badge */}
-                      <span className={cn(
-                        "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
-                        cr.status === 'in-progress' && "bg-[#EEF2FF] text-[#432DD7]",
-                        cr.status === 'approved' && "bg-[#ECFDF5] text-[#007A55]",
-                        cr.status === 'completed' && "bg-[#ECFDF5] text-[#007A55]",
-                        cr.status === 'pending' && "bg-[#FEF3C7] text-[#B45309]",
-                        cr.status === 'rejected' && "bg-[#FEE2E2] text-[#DC2626]"
-                      )}>
-                        {cr.status}
-                      </span>
-                      {/* Priority badge */}
-                      <span className={cn(
-                        "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
-                        cr.priority === 'urgent' && "bg-[#FFF1F2] text-[#C70036]",
-                        cr.priority === 'high' && "bg-[#FFF1F2] text-[#C70036]",
-                        cr.priority === 'medium' && "bg-[#F0F9FF] text-[#0069A8]",
-                        cr.priority === 'low' && "bg-[#F3F4F6] text-[#364153]"
-                      )}>
-                        {cr.priority}
-                      </span>
-                    </div>
-
-                    {/* Title */}
-                    <h3 className="text-[14px] font-normal text-[#101828] mb-1">{cr.title}</h3>
-
-                    {/* Description */}
-                    <p className="text-[14px] text-[#4A5565] mb-4">{cr.description}</p>
-
-                    {/* Metadata */}
-                    <div className="flex items-center gap-3 text-[12px] text-[#6A7282]">
-                      <span>Assigned to {cr.assignee}</span>
-                      <span>•</span>
-                      <span>{cr.createdAt}</span>
-                    </div>
-                  </div>
-
-                  {/* View Details button */}
-                  <button className="shrink-0 inline-flex items-center rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] font-normal text-[#364153] hover:bg-gray-50 transition-colors">
-                    View Details
-                  </button>
+                  <p className="text-[14px] text-[#6A7282]">No change requests yet</p>
+                  <p className="text-[12px] text-[#9CA3AF] mt-1">Create your first change request</p>
                 </div>
-              ))}
+              ) : (
+                changeRequests
+                  .filter(cr => {
+                    if (crFilter === 'pending') return cr.status === 'pending';
+                    if (crFilter === 'in-progress') return cr.status === 'in-progress';
+                    return true;
+                  })
+                  .filter(cr =>
+                    cr.title.toLowerCase().includes(crSearchQuery.toLowerCase()) ||
+                    cr.crId.toLowerCase().includes(crSearchQuery.toLowerCase()) ||
+                    cr.description.toLowerCase().includes(crSearchQuery.toLowerCase())
+                  )
+                  .map((cr, index, arr) => (
+                    <div
+                      key={cr.publicId}
+                      className={cn(
+                        "flex items-start gap-4 px-6 py-6",
+                        index !== arr.length - 1 && "border-b border-[#E5E7EB]"
+                      )}
+                    >
+                      {/* Icon - Document with edit */}
+                      <div className={cn(
+                        "flex h-12 w-12 items-center justify-center rounded-[10px] shrink-0",
+                        (cr.status === 'in-progress' || cr.status === 'pending') && "bg-[#EEF2FF]",
+                        (cr.status === 'approved' || cr.status === 'completed') && "bg-[#ECFDF5]"
+                      )}>
+                        <svg
+                          className="h-6 w-6"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path
+                            d="M12.659 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8.00001C20.0008 7.68312 19.9388 7.36921 19.8176 7.0764C19.6964 6.78359 19.5185 6.51768 19.294 6.29401L15.706 2.70601C15.4823 2.48153 15.2164 2.30357 14.9236 2.18239C14.6308 2.06122 14.3169 1.99923 14 2.00001H6C5.46957 2.00001 4.96086 2.21072 4.58579 2.58579C4.21071 2.96087 4 3.46957 4 4.00001V13.34"
+                            stroke={(cr.status === 'in-progress' || cr.status === 'pending') ? "#4F39F6" : "#009966"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M14 2V7C14 7.26522 14.1054 7.51957 14.2929 7.70711C14.4804 7.89464 14.7348 8 15 8H20"
+                            stroke={(cr.status === 'in-progress' || cr.status === 'pending') ? "#4F39F6" : "#009966"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M10.378 12.6219C10.7762 12.224 11.3162 12.0007 11.8791 12.001C12.442 12.0013 12.9817 12.2251 13.3795 12.6234C13.7773 13.0216 14.0007 13.5615 14.0004 14.1244C14.0001 14.6873 13.7762 15.227 13.378 15.6249L8.36002 20.6369C8.1224 20.8746 7.82869 21.0486 7.50602 21.1429L4.63902 21.9799C4.55298 22.005 4.46176 22.0065 4.37493 21.9842C4.2881 21.962 4.20885 21.9168 4.14547 21.8534C4.08209 21.79 4.03691 21.7108 4.01467 21.6239C3.99242 21.5371 3.99393 21.4459 4.01902 21.3599L4.85502 18.4909C4.9494 18.1686 5.12341 17.8752 5.36102 17.6379L10.378 12.6219Z"
+                            stroke={(cr.status === 'in-progress' || cr.status === 'pending') ? "#4F39F6" : "#009966"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        {/* ID and badges row */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[14px] font-mono text-[#101828]">{cr.crId}</span>
+                          {/* Status badge */}
+                          <span className={cn(
+                            "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
+                            cr.status === 'in-progress' && "bg-[#EEF2FF] text-[#432DD7]",
+                            cr.status === 'approved' && "bg-[#ECFDF5] text-[#007A55]",
+                            cr.status === 'completed' && "bg-[#ECFDF5] text-[#007A55]",
+                            cr.status === 'pending' && "bg-[#FEF3C7] text-[#B45309]",
+                            cr.status === 'rejected' && "bg-[#FEE2E2] text-[#DC2626]"
+                          )}>
+                            {cr.status}
+                          </span>
+                          {/* Priority badge */}
+                          <span className={cn(
+                            "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
+                            cr.priority === 'urgent' && "bg-[#FFF1F2] text-[#C70036]",
+                            cr.priority === 'high' && "bg-[#FFF1F2] text-[#C70036]",
+                            cr.priority === 'medium' && "bg-[#F0F9FF] text-[#0069A8]",
+                            cr.priority === 'low' && "bg-[#F3F4F6] text-[#364153]"
+                          )}>
+                            {cr.priority}
+                          </span>
+                        </div>
+
+                        {/* Title */}
+                        <h3 className="text-[14px] font-normal text-[#101828] mb-1">{cr.title}</h3>
+
+                        {/* Description */}
+                        <p className="text-[14px] text-[#4A5565] mb-4 line-clamp-2">{cr.description}</p>
+
+                        {/* Affected Models */}
+                        {cr.affectedModels && cr.affectedModels.length > 0 && (
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-[12px] text-[#6A7282]">Affected Models:</span>
+                            <div className="flex flex-wrap gap-1">
+                              {cr.affectedModels.slice(0, 3).map((model, i) => (
+                                <span key={i} className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-[11px] text-[#4A5565]">
+                                  {model}
+                                </span>
+                              ))}
+                              {cr.affectedModels.length > 3 && (
+                                <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-[11px] text-[#6A7282]">
+                                  +{cr.affectedModels.length - 3} more
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Metadata */}
+                        <div className="flex items-center gap-3 text-[12px] text-[#6A7282]">
+                          {cr.assignedTo && (
+                            <>
+                              <span>Assigned to {cr.assignedTo}</span>
+                              <span>•</span>
+                            </>
+                          )}
+                          <span>{new Date(cr.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+
+                      {/* View Details button */}
+                      <button className="shrink-0 inline-flex items-center rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] font-normal text-[#364153] hover:bg-gray-50 transition-colors">
+                        View Details
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* Tasks Tab */}
         {activeTab === 'tasks' && (
@@ -1639,8 +1800,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           </div>
         )}
 
-        {/* New Change Request Modal */}
-        {isNewRequestModalOpen && (
+        {/* New Change Request Modal — disabled, handled by ChangesTab */}
+        {false && isNewRequestModalOpen && (
           <div 
             className="fixed inset-0 z-50 flex items-center justify-center"
             onClick={() => setIsNewRequestModalOpen(false)}
@@ -1650,7 +1811,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             
             {/* Modal */}
             <div 
-              className="relative z-10 w-full max-w-[768px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
+              className="relative z-10 w-full max-w-[700px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
@@ -1687,6 +1848,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   <input
                     type="text"
                     placeholder="Enter change request title..."
+                    value={newRequestTitle}
+                    onChange={(e) => setNewRequestTitle(e.target.value)}
                     className="w-full h-[37px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]"
                   />
                 </div>
@@ -1700,6 +1863,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                     {(['low', 'medium', 'high', 'urgent'] as const).map((priority) => (
                       <button
                         key={priority}
+                        type="button"
                         onClick={() => setNewRequestPriority(priority)}
                         className={cn(
                           "h-10 rounded-[10px] text-[14px] font-normal capitalize transition-colors text-center",
@@ -1714,29 +1878,6 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   </div>
                 </div>
 
-                {/* Estimated Impact */}
-                <div className="flex flex-col gap-2">
-                  <label className="text-[14px] font-normal text-[#101828]">
-                    Estimated Impact <span className="text-[#FF2056]">*</span>
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(['low', 'medium', 'high'] as const).map((impact) => (
-                      <button
-                        key={impact}
-                        onClick={() => setNewRequestImpact(impact)}
-                        className={cn(
-                          "h-10 rounded-[10px] text-[14px] font-normal capitalize transition-colors text-center",
-                          newRequestImpact === impact
-                            ? "bg-[#FFFBEB] border-2 border-[#FE9A00] text-[#BB4D00]"
-                            : "bg-white border border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50"
-                        )}
-                      >
-                        {impact === 'low' ? 'Low' : impact === 'medium' ? 'Medium' : 'High'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 {/* Description */}
                 <div className="flex flex-col gap-2">
                   <label className="text-[14px] font-normal text-[#101828]">
@@ -1744,169 +1885,283 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   </label>
                   <textarea
                     placeholder="Brief description of the requested change..."
+                    value={newRequestDescription}
+                    onChange={(e) => setNewRequestDescription(e.target.value)}
                     className="w-full min-h-[77px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4] resize-none"
                   />
-                </div>
-
-                {/* Assignee and Discipline */}
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Assignee */}
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[14px] font-normal text-[#101828]">Assignee</label>
-                    <div className="relative">
-                      <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                        <path d="M8 7.33333C9.47276 7.33333 10.6667 6.13943 10.6667 4.66667C10.6667 3.19391 9.47276 2 8 2C6.52724 2 5.33333 3.19391 5.33333 4.66667C5.33333 6.13943 6.52724 7.33333 8 7.33333Z" />
-                        <path d="M3.33333 14V12.6667C3.33333 11.9594 3.61428 11.2811 4.11438 10.781C4.61448 10.281 5.29276 10 6 10H10C10.7072 10 11.3855 10.281 11.8856 10.781C12.3857 11.2811 12.6667 11.9594 12.6667 12.6667V14" />
-                      </svg>
-                      <select className="w-full h-[37px] appearance-none rounded-[10px] border border-[#E5E7EB] bg-white pl-9 pr-10 text-[14px] text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]">
-                        <option value=""></option>
-                        {teamMembers.map((member) => (
-                          <option key={member.id} value={member.id}>{member.name}</option>
-                        ))}
-                      </select>
-                      <svg className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </div>
-                  </div>
-
-                  {/* Discipline */}
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[14px] font-normal text-[#101828]">Discipline</label>
-                    <div className="relative">
-                      <select className="w-full h-[37px] appearance-none rounded-[10px] border border-[#E5E7EB] bg-white px-4 pr-10 text-[14px] text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]">
-                        <option value=""></option>
-                        <option value="architecture">Architecture</option>
-                        <option value="structure">Structure</option>
-                        <option value="mep">MEP</option>
-                        <option value="civil">Civil</option>
-                        <option value="landscape">Landscape</option>
-                      </select>
-                      <svg className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </div>
-                  </div>
                 </div>
 
                 {/* Detailed Description */}
                 <div className="flex flex-col gap-2">
                   <label className="text-[14px] font-normal text-[#101828]">Detailed Description</label>
                   <textarea
-                    placeholder="Provide detailed information about the change, including affected systems, reasoning, and expected outcomes."
-                    className="w-full min-h-[117px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4] resize-none"
+                    placeholder="Provide detailed information about the change, including affected systems, reasoning, and expected outcomes..."
+                    value={newRequestDetailedDescription}
+                    onChange={(e) => setNewRequestDetailedDescription(e.target.value)}
+                    className="w-full min-h-[100px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4] resize-none"
                   />
                 </div>
 
-                {/* Estimated Cost and Duration */}
+                {/* Two Column Layout: Discipline & Deadline */}
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Estimated Cost */}
+                  {/* Discipline */}
                   <div className="flex flex-col gap-2">
-                    <label className="text-[14px] font-normal text-[#101828]">Estimated Cost</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-[#99A1AF]">$</span>
-                      <input
-                        type="text"
-                        placeholder="e.g., 10,000"
-                        className="w-full h-[37px] rounded-[10px] border border-[#E5E7EB] bg-white pl-7 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]"
-                      />
-                    </div>
+                    <label className="text-[14px] font-normal text-[#101828]">Discipline</label>
+                    <select
+                      value={newRequestDiscipline}
+                      onChange={(e) => setNewRequestDiscipline(e.target.value)}
+                      className="w-full h-[37px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]"
+                    >
+                      <option value="">Select discipline...</option>
+                      <option value="Architecture">Architecture</option>
+                      <option value="Structure">Structure</option>
+                      <option value="MEP">MEP</option>
+                      <option value="Electrical">Electrical</option>
+                      <option value="Plumbing">Plumbing</option>
+                      <option value="Mechanical">Mechanical</option>
+                      <option value="Civil">Civil</option>
+                      <option value="Landscape">Landscape</option>
+                      <option value="Interior">Interior</option>
+                      <option value="Other">Other</option>
+                    </select>
                   </div>
 
-                  {/* Estimated Duration */}
+                  {/* Deadline */}
                   <div className="flex flex-col gap-2">
-                    <label className="text-[14px] font-normal text-[#101828]">Estimated Duration</label>
-                    <div className="relative">
-                      <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                        <circle cx="8" cy="8" r="6.5" />
-                        <path d="M8 4v4l2.5 2.5" />
-                      </svg>
-                      <input
-                        type="text"
-                        placeholder="e.g., 2 weeks"
-                        className="w-full h-[37px] rounded-[10px] border border-[#E5E7EB] bg-white pl-9 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]"
-                      />
-                    </div>
+                    <label className="text-[14px] font-normal text-[#101828]">Deadline</label>
+                    <input
+                      type="date"
+                      value={newRequestDeadline}
+                      onChange={(e) => setNewRequestDeadline(e.target.value)}
+                      className="w-full h-[37px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]"
+                    />
                   </div>
                 </div>
 
-                {/* Reviewers */}
-                <div className="flex flex-col gap-2">
-                  <label className="text-[14px] font-normal text-[#101828]">Reviewers</label>
-                  <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#E5E7EB]">
-                    {mockTeamMembers.map((member) => (
-                      <label key={member.id} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50">
-                        <input type="checkbox" className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500" />
-                        <svg className="h-4 w-4 text-[#99A1AF]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                          <path d="M8 7.33333C9.47276 7.33333 10.6667 6.13943 10.6667 4.66667C10.6667 3.19391 9.47276 2 8 2C6.52724 2 5.33333 3.19391 5.33333 4.66667C5.33333 6.13943 6.52724 7.33333 8 7.33333Z" />
-                          <path d="M3.33333 14V12.6667C3.33333 11.9594 3.61428 11.2811 4.11438 10.781C4.61448 10.281 5.29276 10 6 10H10C10.7072 10 11.3855 10.281 11.8856 10.781C12.3857 11.2811 12.6667 11.9594 12.6667 12.6667V14" />
-                        </svg>
-                        <span className="text-[14px] text-[#101828]">{member.name}</span>
-                      </label>
-                    ))}
+                {/* Two Column Layout: Assignee & Reviewers */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Assignee */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[14px] font-normal text-[#101828]">Assignee</label>
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#E5E7EB] max-h-[150px] overflow-y-auto">
+                      {teamMembers.length === 0 ? (
+                        <div className="px-4 py-3 text-[14px] text-[#6A7282]">No team members available</div>
+                      ) : (
+                        teamMembers.map((member) => (
+                          <label key={member.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50">
+                            <input
+                              type="checkbox"
+                              checked={newRequestAssignees.includes(member.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewRequestAssignees([...newRequestAssignees, member.id]);
+                                } else {
+                                  setNewRequestAssignees(newRequestAssignees.filter(id => id !== member.id));
+                                }
+                              }}
+                              className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500"
+                            />
+                            <div className="flex items-center gap-2">
+                              <div className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium text-white", member.color)}>
+                                {member.avatar}
+                              </div>
+                              <span className="text-[14px] text-[#101828]">{member.name}</span>
+                            </div>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    {newRequestAssignees.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {newRequestAssignees.map(id => {
+                          const member = teamMembers.find(m => m.id === id);
+                          return member ? (
+                            <span key={id} className="inline-flex items-center gap-1 rounded bg-blue-100 px-2 py-0.5 text-[12px] text-blue-700">
+                              {member.name}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Reviewers */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[14px] font-normal text-[#101828]">Reviewers</label>
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#E5E7EB] max-h-[150px] overflow-y-auto">
+                      {teamMembers.length === 0 ? (
+                        <div className="px-4 py-3 text-[14px] text-[#6A7282]">No team members available</div>
+                      ) : (
+                        teamMembers.map((member) => (
+                          <label key={member.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-50">
+                            <input
+                              type="checkbox"
+                              checked={newRequestReviewers.includes(member.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewRequestReviewers([...newRequestReviewers, member.id]);
+                                } else {
+                                  setNewRequestReviewers(newRequestReviewers.filter(id => id !== member.id));
+                                }
+                              }}
+                              className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500"
+                            />
+                            <div className="flex items-center gap-2">
+                              <div className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium text-white", member.color)}>
+                                {member.avatar}
+                              </div>
+                              <span className="text-[14px] text-[#101828]">{member.name}</span>
+                            </div>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    {newRequestReviewers.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {newRequestReviewers.map(id => {
+                          const member = teamMembers.find(m => m.id === id);
+                          return member ? (
+                            <span key={id} className="inline-flex items-center gap-1 rounded bg-purple-100 px-2 py-0.5 text-[12px] text-purple-700">
+                              {member.name}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Affected Models - Dynamic from project documents */}
+                {/* Affected Models */}
                 <div className="flex flex-col gap-2">
                   <label className="text-[14px] font-normal text-[#101828]">Affected Models</label>
-                  <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] divide-y divide-[#E5E7EB]">
-                    {(() => {
-                      // Extract all files from mockDocuments
-                      const extractFiles = (folder: DocFolder): { id: string; name: string }[] => {
-                        const files: { id: string; name: string }[] = [];
-                        folder.children.forEach((child) => {
-                          if (child.type === 'file') {
-                            files.push({ id: child.id, name: child.name });
-                          } else if (child.type === 'folder' && child.children) {
-                            files.push(...extractFiles(child));
-                          }
-                        });
-                        return files;
-                      };
-                      const projectFiles = extractFiles(mockDocuments);
-                      return projectFiles.slice(0, 5).map((file) => (
-                        <label key={file.id} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-100">
-                          <input type="checkbox" className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500 bg-[#F9FAFB]" />
+                  {isLoadingIfcFiles ? (
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] py-4 px-4 text-[14px] text-[#6A7282]">
+                      Loading IFC files...
+                    </div>
+                  ) : availableIfcFiles.length === 0 ? (
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] py-4 px-4 text-[14px] text-[#6A7282]">
+                      No IFC files available. Upload IFC files to see them here.
+                    </div>
+                  ) : (
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] divide-y divide-[#E5E7EB] max-h-[150px] overflow-y-auto">
+                      {availableIfcFiles.map((file) => (
+                        <label key={file.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-gray-100">
+                          <input
+                            type="checkbox"
+                            checked={newRequestAffectedModels.includes(file.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setNewRequestAffectedModels([...newRequestAffectedModels, file.id]);
+                              } else {
+                                setNewRequestAffectedModels(newRequestAffectedModels.filter(id => id !== file.id));
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500"
+                          />
                           <svg className="h-4 w-4 text-[#6A7282]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
                             <path d="M9.33333 1.33333H4C3.64638 1.33333 3.30724 1.47381 3.05719 1.72386C2.80714 1.97391 2.66667 2.31304 2.66667 2.66667V13.3333C2.66667 13.687 2.80714 14.0261 3.05719 14.2761C3.30724 14.5262 3.64638 14.6667 4 14.6667H12C12.3536 14.6667 12.6928 14.5262 12.9428 14.2761C13.1929 14.0261 13.3333 13.687 13.3333 13.3333V5.33333L9.33333 1.33333Z" />
                             <path d="M9.33333 1.33333V5.33333H13.3333" />
                           </svg>
                           <span className="text-[14px] text-[#101828]">{file.name}</span>
                         </label>
-                      ));
-                    })()}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Attachments */}
                 <div className="flex flex-col gap-2">
-                  <label className="text-[14px] font-normal text-[#101828]">Attachments</label>
-                  <div className="rounded-[10px] border border-dashed border-[#D1D5DC] bg-[#F9FAFB] py-8 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-100 transition-colors">
-                    <svg className="h-8 w-8 text-[#99A1AF] mb-3" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <label className="text-[14px] font-normal text-[#101828]">Attachments <span className="text-[#6A7282] font-normal">(Max 50MB)</span></label>
+                  
+                  {/* Selected files list */}
+                  {newRequestAttachments.length > 0 && (
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] divide-y divide-[#E5E7EB]">
+                      {newRequestAttachments.map((file, index) => (
+                        <div key={index} className="flex items-center justify-between px-4 py-2.5">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <svg className="h-4 w-4 text-[#6A7282] shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
+                              <path d="M9.33333 1.33333H4C3.64638 1.33333 3.30724 1.47381 3.05719 1.72386C2.80714 1.97391 2.66667 2.31304 2.66667 2.66667V13.3333C2.66667 13.687 2.80714 14.0261 3.05719 14.2761C3.30724 14.5262 3.64638 14.6667 4 14.6667H12C12.3536 14.6667 12.6928 14.5262 12.9428 14.2761C13.1929 14.0261 13.3333 13.687 13.3333 13.3333V5.33333L9.33333 1.33333Z" />
+                              <path d="M9.33333 1.33333V5.33333H13.3333" />
+                            </svg>
+                            <div className="min-w-0">
+                              <p className="text-[14px] text-[#101828] truncate">{file.name}</p>
+                              <p className="text-[12px] text-[#6A7282]">{formatFileSize(file.size)}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => removeAttachment(index)}
+                            className="p-1 text-[#6A7282] hover:text-red-500 transition-colors shrink-0"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Drop zone */}
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleFileDrop}
+                    className="rounded-[10px] border-2 border-dashed border-[#D1D5DC] bg-[#F9FAFB] py-6 flex flex-col items-center justify-center cursor-pointer hover:bg-gray-100 hover:border-[#155DFC] transition-colors"
+                    onClick={() => document.getElementById('cr-file-input')?.click()}
+                  >
+                    <svg className="h-8 w-8 text-[#99A1AF] mb-2" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth={1.5}>
                       <path d="M21.333 21.333L16 16L10.667 21.333" strokeLinecap="round" strokeLinejoin="round" />
                       <path d="M16 16V28" strokeLinecap="round" strokeLinejoin="round" />
                       <path d="M27.187 24.52C28.458 23.787 29.431 22.63 29.936 21.246C30.441 19.862 30.447 18.34 29.953 16.952C29.459 15.564 28.495 14.399 27.229 13.656C25.964 12.913 24.477 12.641 23.04 12.88H21.467C21.029 11.207 20.207 9.66 19.067 8.368C17.927 7.077 16.502 6.078 14.905 5.454C13.309 4.829 11.586 4.598 9.879 4.778C8.172 4.959 6.531 5.546 5.096 6.489C3.66 7.433 2.471 8.707 1.626 10.207C0.78 11.707 0.304 13.39 0.238 15.114C0.172 16.839 0.519 18.555 1.249 20.117C1.979 21.68 3.069 23.043 4.427 24.093" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M21.333 21.333L16 16L10.667 21.333" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                     <p className="text-[14px] text-[#364153] mb-1">Drop files here or click to upload</p>
-                    <p className="text-[12px] text-[#6A7282]">Supported: PDF, DWG, RVT, JPG, PNG (Max 50MB)</p>
+                    <p className="text-[12px] text-[#6A7282]">PDF, DWG, RVT, JPG, PNG</p>
+                    <input
+                      id="cr-file-input"
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        const validFiles = files.filter(file => {
+                          const maxSize = 50 * 1024 * 1024;
+                          if (file.size > maxSize) {
+                            toast.error(`${file.name} exceeds 50MB limit`);
+                            return false;
+                          }
+                          return true;
+                        });
+                        setNewRequestAttachments(prev => [...prev, ...validFiles]);
+                        e.target.value = '';
+                      }}
+                    />
                   </div>
                 </div>
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-[#E5E7EB] shrink-0">
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E5E7EB] shrink-0">
                 <button 
-                  onClick={() => setIsNewRequestModalOpen(false)} 
-                  className="text-[14px] font-normal text-[#364153] hover:text-gray-900 transition-colors"
+                  onClick={() => {
+                    setIsNewRequestModalOpen(false);
+                    setNewRequestTitle('');
+                    setNewRequestDescription('');
+                    setNewRequestDetailedDescription('');
+                    setNewRequestPriority('medium');
+                    setNewRequestAffectedModels([]);
+                    setNewRequestAssignees([]);
+                    setNewRequestReviewers([]);
+                    setNewRequestAttachments([]);
+                    setNewRequestDiscipline('');
+                    setNewRequestDeadline('');
+                  }} 
+                  className="text-[14px] font-normal text-[#364153] hover:text-gray-900 transition-colors px-4 py-2"
                 >
                   Cancel
                 </button>
-                <button className="inline-flex items-center gap-2 rounded-[10px] bg-[#93B4FF] px-4 py-2.5 text-[14px] font-normal text-white hover:bg-[#155DFC] transition-colors">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                  </svg>
+                <button 
+                  onClick={handleCreateChangeRequest}
+                  className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[14px] font-normal text-white hover:bg-[#155DFC]/90 transition-colors"
+                >
                   Create Request
                 </button>
               </div>

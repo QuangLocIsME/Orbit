@@ -239,6 +239,9 @@ interface Discipline {
   name: string;
   description: string;
   color: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface SettingsTabProps {
@@ -277,7 +280,7 @@ export default function SettingsTab({
   const [name, setName] = useState(projectName);
   const [code, setCode] = useState(projectCode);
   const [description, setDescription] = useState(projectDescription);
-  const [disciplines, setDisciplines] = useState<Discipline[]>(defaultDisciplines);
+  const [disciplines, setDisciplines] = useState<Discipline[]>([]);
   const [navigationPages, setNavigationPages] = useState<NavigationPage[]>(defaultNavigationPages);
   const [taskTags, setTaskTags] = useState<TaskTag[]>(defaultTaskTags);
   const [isLoadingTaskTags, setIsLoadingTaskTags] = useState(false);
@@ -318,6 +321,7 @@ export default function SettingsTab({
   
   // Discipline validation error
   const [disciplineNameError, setDisciplineNameError] = useState(false);
+  const [isLoadingDisciplines, setIsLoadingDisciplines] = useState(false);
   
   // Edit Discipline Modal state
   const [showEditDisciplineModal, setShowEditDisciplineModal] = useState(false);
@@ -413,8 +417,43 @@ export default function SettingsTab({
   const [showDeleteProjectModal, setShowDeleteProjectModal] = useState(false);
   const [deleteProjectConfirmText, setDeleteProjectConfirmText] = useState('');
 
-  const handleDeleteDiscipline = (id: string) => {
-    setDisciplines(disciplines.filter(d => d.id !== id));
+  useEffect(() => {
+    if (!projectPublicId) return;
+    setIsLoadingDisciplines(true);
+    apiFetch(`/api/projects/${projectPublicId}/disciplines`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.data) {
+          setDisciplines(data.data.map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            description: d.description,
+            color: d.color,
+            createdBy: d.createdBy,
+            createdAt: d.createdAt,
+            updatedAt: d.updatedAt,
+          })));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingDisciplines(false));
+  }, [projectPublicId]);
+
+  const handleDeleteDiscipline = async (id: string) => {
+    try {
+      const res = await apiFetch(`/api/projects/${projectPublicId}/disciplines/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setDisciplines(prev => prev.filter(d => d.id !== id));
+        toast.success('Discipline deleted');
+      } else {
+        const data = await res.json();
+        toast.error(data.message || 'Failed to delete discipline');
+      }
+    } catch {
+      toast.error('Failed to delete discipline');
+    }
   };
   
   // Handle General Settings Save
@@ -447,20 +486,42 @@ export default function SettingsTab({
     setEditingDiscipline(discipline);
     setNewDisciplineName(discipline.name);
     setNewDisciplineDescription(discipline.description);
+    setNewDisciplineColor(discipline.color || '#6366f1');
     setShowEditDisciplineModal(true);
   };
   
-  const handleSaveEditedDiscipline = () => {
+  const handleSaveEditedDiscipline = async () => {
     if (!newDisciplineName.trim()) {
       setDisciplineNameError(true);
       return;
     }
-    if (editingDiscipline) {
-      setDisciplines(disciplines.map(d => 
-        d.id === editingDiscipline.id 
-          ? { ...d, name: newDisciplineName.trim(), description: newDisciplineDescription.trim() }
-          : d
-      ));
+    if (!editingDiscipline) return;
+
+    try {
+      const res = await apiFetch(`/api/projects/${projectPublicId}/disciplines/${editingDiscipline.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newDisciplineName.trim(),
+          description: newDisciplineDescription.trim(),
+          color: newDisciplineColor,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDisciplines(prev => prev.map(d =>
+          d.id === editingDiscipline.id
+            ? { ...d, name: data.data.name, description: data.data.description, color: data.data.color }
+            : d
+        ));
+        toast.success('Discipline updated');
+      } else {
+        const data = await res.json();
+        toast.error(data.message || 'Failed to update discipline');
+      }
+    } catch {
+      toast.error('Failed to update discipline');
+    } finally {
       setShowEditDisciplineModal(false);
       setEditingDiscipline(null);
       setNewDisciplineName('');
@@ -663,6 +724,25 @@ export default function SettingsTab({
     }
   };
 
+  const getColorClass = (color: string) => {
+    const colorMap: Record<string, string> = {
+      '#6366f1': 'bg-indigo-100 text-indigo-600',
+      '#8B5CF6': 'bg-purple-100 text-purple-600',
+      '#3B82F6': 'bg-blue-100 text-blue-600',
+      '#10B981': 'bg-emerald-100 text-emerald-600',
+      '#F97316': 'bg-orange-100 text-orange-600',
+      '#14B8A6': 'bg-teal-100 text-teal-600',
+      '#EF4444': 'bg-red-100 text-red-600',
+      '#F59E0B': 'bg-amber-100 text-amber-600',
+      '#6B7280': 'bg-gray-100 text-gray-600',
+      '#EC4899': 'bg-pink-100 text-pink-600',
+      '#84CC16': 'bg-lime-100 text-lime-600',
+      '#06B6D4': 'bg-cyan-100 text-cyan-600',
+    };
+    const hex = color.startsWith('#') ? color : `#${color}`;
+    return colorMap[hex] || 'bg-indigo-100 text-indigo-600';
+  };
+
   const getRoleBadge = (role: string) => {
     switch (role) {
       case 'Owner': return { bg: 'bg-purple-100', color: 'text-purple-600' };
@@ -673,23 +753,38 @@ export default function SettingsTab({
     }
   };
 
-  const handleAddDiscipline = () => {
+  const handleAddDiscipline = async () => {
     if (!newDisciplineName.trim()) {
       setDisciplineNameError(true);
       return;
     }
-    const newDiscipline: Discipline = {
-      id: Date.now().toString(),
-      name: newDisciplineName.trim(),
-      description: newDisciplineDescription.trim(),
-      color: `bg-[${newDisciplineColor}]/10 text-[${newDisciplineColor}]`
-    };
-    setDisciplines([...disciplines, newDiscipline]);
-    setNewDisciplineName('');
-    setNewDisciplineDescription('');
-    setNewDisciplineColor('#6366f1');
-    setDisciplineNameError(false);
-    setShowAddDisciplineModal(false);
+    try {
+      const res = await apiFetch(`/api/projects/${projectPublicId}/disciplines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newDisciplineName.trim(),
+          description: newDisciplineDescription.trim(),
+          color: newDisciplineColor,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDisciplines(prev => [...prev, data.data]);
+        toast.success('Discipline added');
+      } else {
+        const data = await res.json();
+        toast.error(data.message || 'Failed to add discipline');
+      }
+    } catch {
+      toast.error('Failed to add discipline');
+    } finally {
+      setNewDisciplineName('');
+      setNewDisciplineDescription('');
+      setNewDisciplineColor('#6366f1');
+      setDisciplineNameError(false);
+      setShowAddDisciplineModal(false);
+    }
   };
 
   const resetAndCloseModal = () => {
@@ -843,6 +938,12 @@ export default function SettingsTab({
                   onChange={(e) => setNewDisciplineColor(e.target.value)}
                   className="flex-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
                 />
+                <label
+                  htmlFor="color-picker"
+                  className="flex items-center gap-2 px-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  Pick Color
+                </label>
                 <input
                   type="color"
                   value={newDisciplineColor}
@@ -1129,13 +1230,27 @@ export default function SettingsTab({
               </div>
 
               <div className="mt-4 space-y-3">
-                {disciplines.map((discipline) => (
+                {isLoadingDisciplines && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-[#155DFC]" />
+                  </div>
+                )}
+                {!isLoadingDisciplines && disciplines.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <div className="h-12 w-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                      <FileText className="h-6 w-6 text-gray-400" />
+                    </div>
+                    <p className="text-[14px] text-[#6A7282] mb-1">No disciplines yet</p>
+                    <p className="text-[13px] text-[#9CA3AF]">Add a discipline to organize change requests</p>
+                  </div>
+                )}
+                {!isLoadingDisciplines && disciplines.map((discipline) => (
                   <div
                     key={discipline.id}
                     className="flex items-center justify-between p-4 rounded-[10px] border border-[#E5E7EB] bg-white"
                   >
                     <div className="flex items-center gap-3">
-                      <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center", discipline.color)}>
+                      <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center", getColorClass(discipline.color))}>
                         <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
                           <line x1="7" y1="7" x2="7.01" y2="7" />
@@ -2232,6 +2347,37 @@ export default function SettingsTab({
                 rows={3}
                 className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#9CA3AF] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
               />
+            </div>
+
+            {/* Color */}
+            <div className="mb-2">
+              <label className="block text-[14px] font-medium text-[#374151] mb-2">Color</label>
+              <div className="flex items-center gap-3">
+                <div
+                  className="h-10 w-10 rounded-lg flex-shrink-0 border border-[#E5E7EB]"
+                  style={{ backgroundColor: newDisciplineColor }}
+                />
+                <input
+                  type="text"
+                  value={newDisciplineColor}
+                  onChange={(e) => setNewDisciplineColor(e.target.value)}
+                  className="flex-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+                />
+                <input
+                  type="color"
+                  value={newDisciplineColor}
+                  onChange={(e) => setNewDisciplineColor(e.target.value)}
+                  className="sr-only"
+                  id="edit-color-picker"
+                />
+                <label
+                  htmlFor="edit-color-picker"
+                  className="flex items-center gap-2 px-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  <RefreshCcw className="h-4 w-4" />
+                  Change Color
+                </label>
+              </div>
             </div>
           </div>
 

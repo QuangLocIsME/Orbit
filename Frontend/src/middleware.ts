@@ -20,7 +20,7 @@ const GUEST_ONLY_PATHS = new Set([
 
 const PUBLIC_PREFIXES = ['/auth/', '/api/', '/_astro/', '/favicon', '/_image'];
 
-export const onRequest = defineMiddleware(async (context, next) => {
+export const onRequest = defineMiddleware(async (context, nextHandler) => {
   const { pathname } = context.url;
 
   const accessToken = context.cookies.get('accessToken')?.value;
@@ -28,7 +28,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Static/public prefixes should always pass through
   if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-    return next();
+    return nextHandler();
   }
 
   // Guest-only pages: only redirect when accessToken exists.
@@ -38,12 +38,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
     if (accessToken) {
       return context.redirect('/home');
     }
-    return next();
+    return nextHandler();
   }
 
   // Other public pages still accessible for everyone
   if (PUBLIC_PATHS.has(pathname)) {
-    return next();
+    return nextHandler();
   }
 
   // No tokens at all → redirect to login
@@ -53,7 +53,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Access token present → pass through (API layer handles expiry / 401)
   if (accessToken) {
-    return next();
+    return nextHandler();
   }
 
   // Only refreshToken present → try server-side token refresh
@@ -75,7 +75,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
 
     const isGuestOnlyPage = GUEST_ONLY_PATHS.has(pathname);
-    const response = isGuestOnlyPage ? context.redirect('/home') : await next();
+    const response = isGuestOnlyPage ? context.redirect('/home') : await nextHandler();
 
     // Forward the new Set-Cookie headers so the browser gets the new tokens
     const setCookie = refreshRes.headers.get('set-cookie');

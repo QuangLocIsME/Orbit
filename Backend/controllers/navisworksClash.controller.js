@@ -260,6 +260,25 @@ class NavisworksClashController {
         }
     }
 
+    async listModels(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            const models = await modelService.listModels(projectSlug);
+            return res.status(200).json({
+                success: true,
+                models: models.map((m) => ({
+                    id: m.id,
+                    name: m.name,
+                    sourceFormat: m.sourceFormat,
+                    sourceFile: m.sourceFile,
+                })),
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to list models');
+        }
+    }
+
     /** POST /projects/:projectSlug/navisworks/models/import-from-documents */
     async importFromDocuments(req, res) {
         try {
