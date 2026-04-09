@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
-import type { Project } from '../../types';
-
-// Import mock data
-import projectsData from '../../data/projects.json';
+import { useAppStore, type ApiProject } from '../../stores/appStore';
+import { apiFetch } from '../../lib/api-client';
 
 interface SidebarProps {
   currentPath: string;
@@ -13,7 +11,15 @@ interface SidebarProps {
 let sidebarUserCache: User | null = null;
 let sidebarCollapsedCache = false;
 
-const projects = projectsData as Project[];
+interface Project {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  category: 'favorites' | 'shared' | 'private';
+  isFavorite?: boolean;
+  coverImageUrl?: string;
+}
 
 const mainNavItems = [
   { title: 'Home', href: '/home', icon: 'home' },
@@ -72,6 +78,33 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  // Fetch projects from API
+  useEffect(() => {
+    const fetchProjects = async () => {
+      try {
+        const res = await apiFetch('/api/projects/me');
+        if (res.ok) {
+          const data = await res.json();
+          const mappedProjects: Project[] = (data.data || []).map((p: ApiProject) => ({
+            id: p.publicId,
+            slug: p.publicId,
+            name: p.name,
+            description: p.description,
+            category: 'shared' as const,
+            isFavorite: p.status === 'favorite',
+            coverImageUrl: p.coverImageUrl,
+          }));
+          setProjects(mappedProjects);
+        }
+      } catch (error) {
+        console.error('Failed to fetch projects:', error);
+      }
+    };
+
+    fetchProjects();
+  }, []);
 
   // Show cached user immediately (module + localStorage), then refresh from backend
   useEffect(() => {

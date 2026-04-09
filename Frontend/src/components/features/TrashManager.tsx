@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { TableSkeleton } from '@/components/ui/skeletons';
+import { apiFetch } from '@/lib/api-client';
 
 interface TrashItem {
   id: string;
@@ -14,7 +15,7 @@ interface TrashItem {
 }
 
 interface TrashManagerProps {
-  initialItems: TrashItem[];
+  initialItems?: TrashItem[];
 }
 
 // Icons
@@ -154,7 +155,8 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
 
 export function TrashManager({ initialItems }: TrashManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
-  const [items, setItems] = useState<TrashItem[]>(initialItems);
+  const [items, setItems] = useState<TrashItem[]>(initialItems || []);
+  const [loading, setLoading] = useState(!initialItems);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -167,6 +169,53 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
   } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState<string | null>(null);
+
+  // Fetch data from API if initialItems is not provided
+  useEffect(() => {
+    if (initialItems) {
+      setItems(initialItems);
+      setLoading(false);
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        // Fetch trash items from API
+        const res = await apiFetch('/api/trash/list');
+        if (res.ok) {
+          const data = await res.json();
+          // Map API response to component's expected format
+          const mappedItems: TrashItem[] = (data.data || []).map((item: {
+            _id: string;
+            name: string;
+            type: 'folder' | 'project';
+            thumbnail?: string;
+            deletedAt: string;
+            deletedBy?: { fullName: string };
+            parentFolder?: { name: string };
+            daysUntilPermanentDeletion: number;
+          }) => ({
+            id: item._id,
+            name: item.name,
+            type: item.type,
+            thumbnail: item.thumbnail || '/images/projects/office-complex.jpg',
+            deletedAt: item.deletedAt,
+            deletedBy: item.deletedBy?.fullName || 'Unknown',
+            parentFolder: item.parentFolder?.name || null,
+            daysUntilPermanentDeletion: item.daysUntilPermanentDeletion,
+          }));
+          setItems(mappedItems);
+        }
+      } catch (error) {
+        console.error('Failed to fetch trash items:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+    setIsHydrated(true);
+  }, [initialItems]);
 
   // Filter items based on search
   const filteredItems = useMemo(() => {
@@ -283,7 +332,7 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
 
   useEffect(() => { setIsHydrated(true); }, []);
 
-  if (!isHydrated) return <TableSkeleton rows={8} cols={5} />;
+  if (!isHydrated || loading) return <TableSkeleton rows={8} cols={5} />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

@@ -1,9 +1,10 @@
-// WorkflowTemplates v1.0.6
+// WorkflowTemplates v1.0.7 - Real data from API
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { TableSkeleton } from '@/components/ui/skeletons';
 import { TemplateSearch } from './TemplateSearch';
 import { WorkflowEditor, type StageData } from './workflow-editor';
+import { apiFetch } from '@/lib/api-client';
 
 // Custom workflow icon SVG
 const WorkflowIcon = () => (
@@ -36,8 +37,8 @@ interface WorkflowStage {
 }
 
 interface WorkflowTemplatesProps {
-  templates: Template[];
-  allTags: string[];
+  templates?: Template[];
+  allTags?: string[];
 }
 
 const STAGE_COLORS = {
@@ -690,7 +691,7 @@ function CreateWorkflowForm({ onClose, onSave }: { onClose: () => void; onSave: 
   );
 }
 
-export function WorkflowTemplates({ templates, allTags }: WorkflowTemplatesProps) {
+export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTags }: WorkflowTemplatesProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState<'my' | 'library'>('my');
   const [searchQuery, setSearchQuery] = useState('');
@@ -698,6 +699,24 @@ export function WorkflowTemplates({ templates, allTags }: WorkflowTemplatesProps
   const [sortBy, setSortBy] = useState<'popular' | 'recent' | 'rating'>('popular');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [myTemplates, setMyTemplates] = useState<Template[]>([]);
+  const [templates, setTemplates] = useState<Template[]>(propsTemplates || []);
+  const [allTags, setAllTags] = useState<string[]>(propsTags || []);
+
+  // Fetch data from API if props are not provided
+  useEffect(() => {
+    const fetchData = async () => {
+      // If props are provided, use them
+      if (propsTemplates) {
+        setTemplates(propsTemplates);
+      }
+      if (propsTags) {
+        setAllTags(propsTags);
+      }
+    };
+
+    fetchData();
+    setIsHydrated(true);
+  }, [propsTemplates, propsTags]);
 
   const handleSearch = useCallback((query: string, tags: string[]) => {
     setSearchQuery(query);

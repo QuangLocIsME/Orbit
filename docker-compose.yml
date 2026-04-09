@@ -41,7 +41,7 @@ services:
     environment:
       - MONGODB_URI=mongodb://host.docker.internal:27017/Orbit
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-    command: sh -c "npm install && sed -i 's|btoa.node|btoa.node.js|g' node_modules/@loaders.gl/polyfills/dist/index.js && node workers/ifcConversionWorker.js"
+    command: ["node", "start-worker.js"]
     depends_on:
       - rabbitmq
 

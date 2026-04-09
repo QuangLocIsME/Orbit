@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
 import { DashboardSkeleton } from '@/components/ui/skeletons';
 import { useAppStore } from '@/stores/appStore';
+import { apiFetch } from '@/lib/api-client';
 
 // Types
 interface Project {
@@ -140,7 +141,75 @@ function formatRelativeTime(dateString: string): string {
 }
 
 // Main component
-export default function HomeDashboard({ projects, events, tasks }: Omit<HomeDashboardProps, 'userName'> & { userName?: string }) {
+export default function HomeDashboard({ userName: initialUserName }: HomeDashboardProps) {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch data from API
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [projectsRes, tasksRes] = await Promise.all([
+          apiFetch('/api/projects/me'),
+          apiFetch('/api/tasks/list'),
+        ]);
+
+        if (projectsRes.ok) {
+          const projectsData = await projectsRes.json();
+          // Map API response to component's expected format
+          const mappedProjects: Project[] = (projectsData.data || []).map((p: {
+            publicId: string;
+            name: string;
+            description?: string;
+            coverImageUrl?: string;
+            status?: string;
+            role?: string;
+            folderId?: string | null;
+          }) => ({
+            id: p.publicId,
+            slug: p.publicId,
+            name: p.name,
+            description: p.description,
+            thumbnail: p.coverImageUrl || '',
+            lastVisited: new Date().toISOString(),
+            category: 'shared' as const,
+            status: (p.status as Project['status']) || 'active',
+            projectType: 'construction' as const,
+            isFavorite: false,
+          }));
+          setProjects(mappedProjects);
+        }
+
+        if (tasksRes.ok) {
+          const tasksData = await tasksRes.json();
+          // Map API response to component's expected format
+          const mappedTasks: Task[] = (tasksData.data || []).map((t: {
+            _id: string;
+            title: string;
+            project?: { name: string };
+            dueDate: string;
+            priority: 'high' | 'medium' | 'low';
+          }) => ({
+            id: t._id,
+            title: t.title,
+            project: t.project?.name || 'Unknown Project',
+            dueDate: t.dueDate,
+            priority: t.priority,
+          }));
+          setTasks(mappedTasks);
+        }
+      } catch (error) {
+        console.error('Failed to fetch dashboard data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
   // Sync init from localStorage to avoid flash of wrong name
   const [displayUserName, setDisplayUserName] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
@@ -277,7 +346,7 @@ export default function HomeDashboard({ projects, events, tasks }: Omit<HomeDash
     }
   };
 
-  if (!isHydrated) return <DashboardSkeleton />;
+  if (!isHydrated || loading) return <DashboardSkeleton />;
 
   return (
     <div className="space-y-8 py-6 px-6 lg:px-[80px] xl:px-[160px]">
