@@ -18,6 +18,7 @@ import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import ChangesTab from './ChangesTab';
 import TaskBoard from './TaskBoard';
+import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import {
   Dialog,
@@ -809,7 +810,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         linkedItem: t.linkedUrl ? { type: 'link', name: t.linkedUrl } : undefined,
         comments: Number(t.commentsCount || 0),
         attachments: Number(t.attachmentsCount || 0),
-        dueDate: t.dueDate ? formatDate(t.dueDate) : '',
+        dueDate: t.dueDate || '',
         assigneeId: String(t.assigneeId || ''),
       }));
 
@@ -1690,7 +1691,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                             </span>
                           </div>
                           <div className="text-[14px] text-[#6A7282]">
-                            {task.dueDate || '-'}
+                            {task.dueDate ? formatDate(task.dueDate) : '-'}
                           </div>
                           <div>
                             {assignee && (
@@ -1715,17 +1716,14 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               </div>
             )}
 
-            {/* Calendar View Placeholder */}
+            {/* Calendar View */}
             {tasksViewMode === 'calendar' && (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center">
-                  <svg className="h-16 w-16 text-[#D1D5DC] mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
-                    <rect x="3" y="4" width="18" height="18" rx="2" />
-                    <path d="M3 10h18M16 2v4M8 2v4" />
-                  </svg>
-                  <h3 className="text-[16px] font-medium text-[#101828] mb-1">Calendar View</h3>
-                  <p className="text-[14px] text-[#6A7282]">Calendar view coming soon</p>
-                </div>
+              <div className="flex-1 overflow-auto">
+                <TaskCalendar
+                  tasks={filteredTasks}
+                  teamMembers={teamMembers}
+                  onTaskClick={setSelectedTaskId}
+                />
               </div>
             )}
           </div>
