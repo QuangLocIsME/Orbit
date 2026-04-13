@@ -34,6 +34,7 @@ interface Task {
   id: string;
   title: string;
   project: string;
+  projectPublicId: string;
   dueDate: string;
   priority: 'high' | 'medium' | 'low';
 }
@@ -191,13 +192,15 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
           const mappedTasks: Task[] = (tasksData.data || []).map((t: {
             _id: string;
             title: string;
-            project?: { name: string };
+            project?: { name: string; publicId?: string };
+            projectId?: string;
             dueDate: string;
             priority: 'high' | 'medium' | 'low';
           }) => ({
             id: t._id,
             title: t.title,
             project: t.project?.name || 'Unknown Project',
+            projectPublicId: t.project?.publicId || t.projectId || '',
             dueDate: t.dueDate,
             priority: t.priority,
           }));
@@ -297,7 +300,8 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
           type: 'task',
           id: t.id,
           title: t.title,
-          subtitle: `${t.project} - Due ${formatDate(t.dueDate)}`
+          subtitle: `${t.project} - Due ${formatDate(t.dueDate)}`,
+          href: t.projectPublicId ? `/projects/${t.projectPublicId}/tasks/${t.id}` : undefined,
         });
       }
     });

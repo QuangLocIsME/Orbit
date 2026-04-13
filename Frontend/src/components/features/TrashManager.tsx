@@ -153,6 +153,30 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
   );
 }
 
+// Map raw API item to TrashItem
+function mapItem(item: {
+  publicId?: string;
+  _id?: string;
+  name: string;
+  type?: 'folder' | 'project';
+  thumbnail?: string;
+  deletedAt: string;
+  deletedBy?: { fullName: string };
+  parentFolder?: { name: string };
+  daysUntilPermanentDeletion: number;
+}): TrashItem {
+  return {
+    id: item.publicId || item._id || '',
+    name: item.name,
+    type: item.type || 'project',
+    thumbnail: item.thumbnail || '/images/projects/office-complex.jpg',
+    deletedAt: item.deletedAt,
+    deletedBy: item.deletedBy?.fullName || 'Unknown',
+    parentFolder: item.parentFolder?.name || null,
+    daysUntilPermanentDeletion: item.daysUntilPermanentDeletion,
+  };
+}
+
 export function TrashManager({ initialItems }: TrashManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [items, setItems] = useState<TrashItem[]>(initialItems || []);
@@ -185,25 +209,7 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
         if (res.ok) {
           const data = await res.json();
           // Map API response to component's expected format
-          const mappedItems: TrashItem[] = (data.data || []).map((item: {
-            _id: string;
-            name: string;
-            type: 'folder' | 'project';
-            thumbnail?: string;
-            deletedAt: string;
-            deletedBy?: { fullName: string };
-            parentFolder?: { name: string };
-            daysUntilPermanentDeletion: number;
-          }) => ({
-            id: item._id,
-            name: item.name,
-            type: item.type,
-            thumbnail: item.thumbnail || '/images/projects/office-complex.jpg',
-            deletedAt: item.deletedAt,
-            deletedBy: item.deletedBy?.fullName || 'Unknown',
-            parentFolder: item.parentFolder?.name || null,
-            daysUntilPermanentDeletion: item.daysUntilPermanentDeletion,
-          }));
+          const mappedItems: TrashItem[] = (data.data || []).map(mapItem);
           setItems(mappedItems);
         }
       } catch (error) {
@@ -256,23 +262,48 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
   };
 
   // Restore single item
-  const restoreItem = (id: string) => {
+  const restoreItem = async (id: string) => {
     const item = items.find(i => i.id === id);
+    // Optimistic update
     setItems(prev => prev.filter(i => i.id !== id));
-    setSelectedItems(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(id);
-      return newSet;
-    });
-    showToast(`"${item?.name}" has been restored`);
+    setSelectedItems(prev => { const s = new Set(prev); s.delete(id); return s; });
+    try {
+      const res = await apiFetch('/api/projects/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: id }),
+      });
+      if (!res.ok) {
+        // Rollback: reload from API
+        const listRes = await apiFetch('/api/trash/list');
+        if (listRes.ok) { const d = await listRes.json(); setItems((d.data || []).map(mapItem)); }
+        showToast('Failed to restore project', 'info');
+        return;
+      }
+      showToast(`"${item?.name}" has been restored`);
+    } catch {
+      showToast('Failed to restore project', 'info');
+    }
   };
 
   // Restore selected items
-  const restoreSelected = () => {
+  const restoreSelected = async () => {
     const count = selectedItems.size;
+    const ids = [...selectedItems];
     setItems(prev => prev.filter(item => !selectedItems.has(item.id)));
     setSelectedItems(new Set());
-    showToast(`${count} item${count > 1 ? 's' : ''} restored`);
+    try {
+      await Promise.all(ids.map(id =>
+        apiFetch('/api/projects/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: id }),
+        })
+      ));
+      showToast(`${count} item${count > 1 ? 's' : ''} restored`);
+    } catch {
+      showToast('Some items could not be restored', 'info');
+    }
   };
 
   // Permanently delete single item
@@ -284,14 +315,19 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
       message: `"${item?.name}" will be permanently deleted. This action cannot be undone.`,
       confirmText: 'Delete permanently',
       variant: 'danger',
-      onConfirm: () => {
+      onConfirm: async () => {
         setItems(prev => prev.filter(i => i.id !== id));
-        setSelectedItems(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(id);
-          return newSet;
-        });
-        showToast(`"${item?.name}" permanently deleted`);
+        setSelectedItems(prev => { const s = new Set(prev); s.delete(id); return s; });
+        try {
+          await apiFetch('/api/projects/delete-permanent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: id }),
+          });
+          showToast(`"${item?.name}" permanently deleted`);
+        } catch {
+          showToast('Delete failed', 'info');
+        }
       }
     });
   };
@@ -299,16 +335,28 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
   // Delete selected items permanently
   const deleteSelectedPermanently = () => {
     const count = selectedItems.size;
+    const ids = [...selectedItems];
     setConfirmDialog({
       isOpen: true,
       title: `Delete ${count} item${count > 1 ? 's' : ''} permanently?`,
-      message: `These items will be permanently deleted. This action cannot be undone.`,
+      message: 'These items will be permanently deleted. This action cannot be undone.',
       confirmText: 'Delete permanently',
       variant: 'danger',
-      onConfirm: () => {
+      onConfirm: async () => {
         setItems(prev => prev.filter(item => !selectedItems.has(item.id)));
         setSelectedItems(new Set());
-        showToast(`${count} item${count > 1 ? 's' : ''} permanently deleted`);
+        try {
+          await Promise.all(ids.map(id =>
+            apiFetch('/api/projects/delete-permanent', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectId: id }),
+            })
+          ));
+          showToast(`${count} item${count > 1 ? 's' : ''} permanently deleted`);
+        } catch {
+          showToast('Some items could not be deleted', 'info');
+        }
       }
     });
   };
@@ -316,16 +364,28 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
   // Empty trash
   const emptyTrash = () => {
     if (items.length === 0) return;
+    const ids = items.map(i => i.id);
     setConfirmDialog({
       isOpen: true,
       title: 'Empty trash?',
       message: `All ${items.length} items in trash will be permanently deleted. This action cannot be undone.`,
       confirmText: 'Empty trash',
       variant: 'danger',
-      onConfirm: () => {
+      onConfirm: async () => {
         setItems([]);
         setSelectedItems(new Set());
-        showToast('Trash emptied');
+        try {
+          await Promise.all(ids.map(id =>
+            apiFetch('/api/projects/delete-permanent', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectId: id }),
+            })
+          ));
+          showToast('Trash emptied');
+        } catch {
+          showToast('Some items could not be deleted', 'info');
+        }
       }
     });
   };
@@ -465,6 +525,16 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
                     Deleted {formatTimeAgo(item.deletedAt)}
                   </span>
                   <span>by {item.deletedBy}</span>
+                  <span className={cn(
+                    'flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                    item.daysUntilPermanentDeletion <= 3
+                      ? 'bg-red-100 text-red-600'
+                      : item.daysUntilPermanentDeletion <= 7
+                        ? 'bg-amber-100 text-amber-600'
+                        : 'bg-gray-100 text-gray-500'
+                  )}>
+                    {item.daysUntilPermanentDeletion}d left
+                  </span>
                   {item.parentFolder && (
                     <span className="flex items-center gap-1.5">
                       <FolderIcon />

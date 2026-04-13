@@ -18,5 +18,8 @@ router.post('/workflow/update', authenticate, (req, res) => ProjectController.up
 router.post('/touch', authenticate, (req, res) => ProjectController.touchProject(req, res));
 router.post('/favorite/toggle', authenticate, (req, res) => ProjectController.toggleFavorite(req, res));
 router.get('/favorites', authenticate, (req, res) => ProjectController.getFavoriteProjects(req, res));
+router.post('/trash', authenticate, (req, res) => ProjectController.trashProject(req, res));
+router.post('/restore', authenticate, (req, res) => ProjectController.restoreProject(req, res));
+router.post('/delete-permanent', authenticate, (req, res) => ProjectController.deletePermanentProject(req, res));
 
 module.exports = router;

@@ -381,59 +381,73 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
           <MessageSquare className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">Comments</h3>
           {comments.length > 0 && (
-            <span className="ml-auto inline-flex h-5 items-center rounded bg-muted px-1.5 text-[10px]">{comments.length}</span>
+            <span className="ml-auto inline-flex h-5 items-center rounded-full bg-muted px-2 text-[10px] font-medium text-muted-foreground">{comments.length}</span>
           )}
         </div>
 
-        <div className="flex gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-            Y
-          </div>
-          <div className="flex flex-1 flex-col gap-2">
-            <textarea
-              placeholder="Write a comment..."
-              value={commentInput}
-              onChange={(e) => setCommentInput(e.target.value)}
-              className="min-h-[70px] resize-none rounded-md border border-muted bg-muted/30 px-3 py-2 text-sm focus:bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  submitComment();
-                }
-              }}
-            />
-            <div className="flex justify-end">
-              <button
-                onClick={submitComment}
-                disabled={!commentInput.trim()}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-xs text-background disabled:opacity-50"
-              >
-                <Send className="h-3 w-3" />
-                Post
-              </button>
-            </div>
+        {/* Input box */}
+        <div className="rounded-xl border border-border bg-background shadow-sm">
+          <textarea
+            placeholder="Write a comment…"
+            value={commentInput}
+            onChange={(e) => setCommentInput(e.target.value)}
+            className="w-full resize-none rounded-t-xl bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none min-h-[72px]"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment();
+            }}
+          />
+          <div className="flex items-center justify-between border-t border-border px-3 py-2">
+            <span className="text-[11px] text-muted-foreground/60">Ctrl + Enter to post</span>
+            <button
+              onClick={submitComment}
+              disabled={!commentInput.trim()}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity disabled:opacity-40 hover:opacity-80"
+            >
+              <Send className="h-3 w-3" />
+              Post
+            </button>
           </div>
         </div>
 
         {comments.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-6 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-              <MessageSquare className="h-5 w-5 text-muted-foreground" />
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted/60">
+              <MessageSquare className="h-4 w-4 text-muted-foreground/50" />
             </div>
-            <p className="mt-2 text-sm text-muted-foreground">No comments yet.</p>
+            <p className="mt-2 text-[13px] text-muted-foreground">No comments yet.</p>
           </div>
         ) : (
-          <div className="space-y-3 pt-1">
+          <div className="space-y-1 pt-1">
             {comments.map((comment) => (
-              <div key={comment.id} className="flex gap-2.5">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+              <div key={comment.id} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30">
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+                  style={{ backgroundColor: (() => {
+                    const PALETTE = ['#6366F1','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899'];
+                    let h = 0;
+                    for (let i = 0; i < (comment.author || '').length; i++) h = (comment.author || '').charCodeAt(i) + ((h << 5) - h);
+                    return PALETTE[Math.abs(h) % PALETTE.length];
+                  })() }}
+                >
                   {String(comment.author || 'U').charAt(0).toUpperCase()}
                 </div>
-                <div className="flex-1 space-y-0.5">
+                <div className="flex-1 min-w-0 space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{comment.author}</span>
-                    <span className="text-[11px] text-muted-foreground">{toDisplayTime(comment.createdAt)}</span>
+                    <span className="text-[13px] font-semibold text-foreground">{comment.author}</span>
+                    <span className="text-[11px] text-muted-foreground/60" title={toDisplayTime(comment.createdAt)}>
+                      {(() => {
+                        const diff = Date.now() - new Date(comment.createdAt).getTime();
+                        const m = Math.floor(diff / 60000);
+                        if (m < 1) return 'just now';
+                        if (m < 60) return `${m}m ago`;
+                        const h = Math.floor(m / 60);
+                        if (h < 24) return `${h}h ago`;
+                        const d = Math.floor(h / 24);
+                        return d < 7 ? `${d}d ago` : new Date(comment.createdAt).toLocaleDateString();
+                      })()}
+                    </span>
                   </div>
-                  <p className="text-sm text-foreground/80">{comment.content}</p>
+                  <p className="text-[13px] leading-relaxed text-foreground/80 whitespace-pre-wrap">{comment.content}</p>
                 </div>
               </div>
             ))}

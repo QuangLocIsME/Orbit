@@ -591,22 +591,413 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
   );
 }
 
+// ─── Edit Modal ───────────────────────────────────────────────────────────────
+
+interface EditModalProps {
+  cr: ChangeRequest;
+  disciplines: Discipline[];
+  modelFiles: ModelFile[];
+  teamMembers: TeamMember[];
+  loadingFiles: boolean;
+  onClose: () => void;
+  onUpdated: (cr: ChangeRequest) => void;
+}
+
+function EditModal({ cr, disciplines, modelFiles, teamMembers, loadingFiles, onClose, onUpdated }: EditModalProps) {
+  const [title, setTitle]                         = useState(cr.title);
+  const [description, setDescription]             = useState(cr.description);
+  const [priority, setPriority]                   = useState<ChangeRequest['priority']>(cr.priority);
+  const [estimatedImpact, setEstimatedImpact]     = useState<'low' | 'medium' | 'high' | ''>(cr.estimatedImpact ?? '');
+  const [detailedDescription, setDetailedDesc]    = useState(cr.detailedDescription ?? '');
+  const [estimatedCost, setEstimatedCost]         = useState(cr.estimatedCost != null ? String(cr.estimatedCost) : '');
+  const [estimatedDuration, setEstimatedDuration] = useState(cr.estimatedDuration ?? '');
+  const [deadline, setDeadline]                   = useState(cr.deadline ? cr.deadline.slice(0, 10) : '');
+  const [disciplineId, setDisciplineId]           = useState(cr.disciplineId ?? '');
+  const [affectedModels, setAffectedModels]       = useState<string[]>(cr.affectedModels);
+  const [assignedTo, setAssignedTo]               = useState<string[]>(cr.assignedTo);
+  const [reviewers, setReviewers]                 = useState<string[]>(cr.reviewers);
+  const [submitting, setSubmitting]               = useState(false);
+
+  const toggleModel = (id: string) =>
+    setAffectedModels(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
+
+  const handleSubmit = async () => {
+    if (!title.trim())    { toast.error('Title is required'); return; }
+    if (!description.trim()) { toast.error('Description is required'); return; }
+    if (!estimatedImpact) { toast.error('Estimated Impact is required'); return; }
+
+    setSubmitting(true);
+    try {
+      const res = await apiFetch('/api/change-requests', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          crId: cr.publicId,
+          title: title.trim(),
+          description: description.trim(),
+          priority,
+          estimatedImpact,
+          detailedDescription: detailedDescription.trim() || undefined,
+          estimatedCost: estimatedCost.trim() ? Number(estimatedCost) : null,
+          estimatedDuration: estimatedDuration.trim() || undefined,
+          deadline: deadline || null,
+          disciplineId: disciplineId || null,
+          affectedModels,
+          assignedTo,
+          reviewers,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Change request updated');
+        onUpdated({ ...cr, ...data.data });
+        onClose();
+      } else {
+        toast.error(data.message || 'Failed to update change request');
+      }
+    } catch {
+      toast.error('Failed to update change request');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+      <div
+        className="relative z-10 w-full max-w-[680px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[92vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-5 border-b border-[#E5E7EB] shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#FFFBEB]">
+              <svg className="h-5 w-5 text-[#F59E0B]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-[18px] font-semibold text-[#101828]">Edit Change Request</h2>
+              <p className="text-[12px] text-[#6A7282]"><span className="font-mono">{cr.crId}</span> · {cr.title}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 text-[#6A7282] hover:text-gray-700 rounded-[10px] hover:bg-gray-100 transition-colors">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Body — reuse exact same field layout as CreateModal */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* Title */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Title <span className="text-[#FF2056]">*</span></label>
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)}
+              className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]" />
+          </div>
+
+          {/* Priority */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Priority <span className="text-[#FF2056]">*</span></label>
+            <div className="grid grid-cols-4 gap-2">
+              {(['low','medium','high','urgent'] as const).map(p => (
+                <button key={p} type="button" onClick={() => setPriority(p)}
+                  className={cn('h-10 rounded-[10px] text-[14px] capitalize transition-colors border',
+                    priority === p ? 'bg-[#F0F9FF] border-[#155DFC] text-[#0069A8]' : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
+                  )}>{p.charAt(0).toUpperCase() + p.slice(1)}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Estimated Impact */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Estimated Impact <span className="text-[#FF2056]">*</span></label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { val: 'low',    label: 'Low',    active: 'bg-[#F0FDF4] border-[#22C55E] text-[#15803D]', dot: 'bg-[#22C55E]' },
+                { val: 'medium', label: 'Medium', active: 'bg-[#FFFBEB] border-[#F59E0B] text-[#B45309]', dot: 'bg-[#F59E0B]' },
+                { val: 'high',   label: 'High',   active: 'bg-[#FFF1F2] border-[#F43F5E] text-[#C70036]', dot: 'bg-[#F43F5E]' },
+              ] as const).map(({ val, label, active, dot }) => (
+                <button key={val} type="button" onClick={() => setEstimatedImpact(val)}
+                  className={cn('h-10 rounded-[10px] text-[14px] font-medium transition-colors border flex items-center justify-center gap-2',
+                    estimatedImpact === val ? active : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
+                  )}>
+                  <span className={cn('h-2 w-2 rounded-full', estimatedImpact === val ? dot : 'bg-[#D1D5DC]')} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Description */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Description <span className="text-[#FF2056]">*</span></label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
+              className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none" />
+          </div>
+
+          {/* Detailed Description */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Detailed Description <span className="text-[12px] font-normal text-[#6A7282]">(optional)</span></label>
+            <textarea value={detailedDescription} onChange={e => setDetailedDesc(e.target.value)} rows={4}
+              placeholder="Provide a thorough explanation..."
+              className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none" />
+          </div>
+
+          {/* Cost + Duration */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Estimated Cost</label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[14px] text-[#6A7282] select-none">$</span>
+                <input type="number" min={0} placeholder="0.00" value={estimatedCost} onChange={e => setEstimatedCost(e.target.value)}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-7 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Estimated Duration</label>
+              <div className="relative">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <input type="text" placeholder="e.g. 2 weeks" value={estimatedDuration} onChange={e => setEstimatedDuration(e.target.value)}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-9 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]" />
+              </div>
+            </div>
+          </div>
+
+          {/* Deadline + Discipline */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Deadline</label>
+              <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)}
+                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Discipline</label>
+              {disciplines.length === 0 ? (
+                <p className="text-[13px] text-[#6A7282] mt-1">No disciplines — add in <strong>Settings</strong>.</p>
+              ) : (
+                <select value={disciplineId} onChange={e => setDisciplineId(e.target.value)}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]">
+                  <option value="">Select discipline...</option>
+                  {disciplines.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              )}
+            </div>
+          </div>
+
+          {/* Assignees + Reviewers */}
+          <div className="grid grid-cols-2 gap-4">
+            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} />
+            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers}  />
+          </div>
+
+          {/* Affected Models */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Affected Models</label>
+            {loadingFiles ? (
+              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#6A7282]">Loading…</div>
+            ) : modelFiles.length === 0 ? (
+              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#6A7282]">No model files found.</div>
+            ) : (
+              <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#F3F4F6] max-h-[160px] overflow-y-auto">
+                {modelFiles.map(f => (
+                  <label key={f.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[#F9FAFB]">
+                    <input type="checkbox" checked={affectedModels.includes(f.id)} onChange={() => toggleModel(f.id)}
+                      className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]" />
+                    <FileIcon className="shrink-0 text-[#6A7282]" />
+                    <div className="min-w-0">
+                      <p className="text-[14px] text-[#101828] truncate">{f.name}</p>
+                      {f.folderPath && <p className="text-[11px] text-[#6A7282] truncate">{f.folderPath}</p>}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            {affectedModels.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {affectedModels.map(id => {
+                  const f = modelFiles.find(m => m.id === id);
+                  return f ? (
+                    <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] px-2 py-0.5 text-[11px] text-[#1D4ED8]">
+                      {f.name}
+                      <button type="button" onClick={() => toggleModel(id)} className="ml-0.5 text-[#93C5FD] hover:text-[#1D4ED8] font-bold">×</button>
+                    </span>
+                  ) : null;
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E5E7EB] shrink-0">
+          <button onClick={onClose} className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors">Cancel</button>
+          <button type="button" onClick={handleSubmit} disabled={submitting}
+            className="inline-flex items-center gap-2 rounded-[10px] bg-[#F59E0B] px-5 py-2 text-[14px] font-medium text-white hover:bg-amber-600 transition-colors disabled:opacity-60">
+            {submitting ? (
+              <><svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Saving…</>
+            ) : (
+              <><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>Save Changes</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Delete Confirm Modal ──────────────────────────────────────────────────────
+
+function DeleteConfirmModal({ cr, onClose, onDeleted }: {
+  cr: ChangeRequest;
+  onClose: () => void;
+  onDeleted: (publicId: string) => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const res = await apiFetch('/api/change-requests', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crId: cr.publicId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Change request deleted');
+        onDeleted(cr.publicId);
+        onClose();
+      } else {
+        toast.error(data.message || 'Failed to delete');
+      }
+    } catch {
+      toast.error('Failed to delete change request');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-[420px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] p-6"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-start gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#FEE2E2]">
+            <svg className="h-5 w-5 text-[#DC2626]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-[16px] font-semibold text-[#101828]">Delete Change Request</h3>
+            <p className="text-[13px] text-[#6A7282] mt-1">
+              Are you sure you want to delete <span className="font-medium text-[#101828]">"{cr.title}"</span> (<span className="font-mono">{cr.crId}</span>)? This action cannot be undone.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 mt-6">
+          <button onClick={onClose} className="px-4 py-2 rounded-[10px] border border-[#E5E7EB] text-[14px] text-[#364153] hover:bg-gray-50 transition-colors">
+            Cancel
+          </button>
+          <button onClick={handleDelete} disabled={deleting}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-[10px] bg-[#DC2626] text-[14px] font-medium text-white hover:bg-red-700 transition-colors disabled:opacity-60">
+            {deleting ? (
+              <><svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Deleting…</>
+            ) : (
+              <><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>Delete</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CR Comment types ─────────────────────────────────────────────────────────
+
+interface CRComment {
+  publicId: string;
+  authorId: string;
+  authorName: string;
+  content: string;
+  createdAt: string;
+}
+
+function fmtCommentTime(d: string) {
+  const diff = Date.now() - new Date(d).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(d).toLocaleDateString();
+}
+
+function nameToColor(name: string) {
+  const PALETTE = ['#6366F1','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6'];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return PALETTE[Math.abs(hash) % PALETTE.length];
+}
+
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
 function DetailModal({
-  cr, disciplines, modelFiles, teamMembers, onClose, onStatusChange,
+  cr, disciplines, modelFiles, teamMembers, projectPublicId, currentUserId, currentRole, onClose, onStatusChange,
 }: {
   cr: ChangeRequest;
   disciplines: Discipline[];
   modelFiles: ModelFile[];
   teamMembers: TeamMember[];
+  projectPublicId: string;
+  currentUserId: string;
+  currentRole: 'admin' | 'member' | 'viewer';
   onClose: () => void;
   onStatusChange: (id: string, s: ChangeRequest['status']) => void;
 }) {
   const [updating, setUpdating] = useState(false);
+  const [comments, setComments] = useState<CRComment[]>([]);
+  const [loadingComments, setLoadingComments] = useState(true);
+  const [commentInput, setCommentInput] = useState('');
+  const [posting, setPosting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const disc = disciplines.find(d => d.id === cr.disciplineId);
   const sc = STATUS_CFG[cr.status];
   const pc = PRIORITY_CFG[cr.priority];
+
+  // Permission: admin, CR creator, or reviewer can update status
+  const isCreator  = cr.createdBy === currentUserId;
+  const isReviewer = cr.reviewers.includes(currentUserId);
+  const canUpdateStatus = currentRole === 'admin' || isCreator || isReviewer;
+
+  // Load comments on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingComments(true);
+      try {
+        const res = await apiFetch('/api/change-requests/comments/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ crId: cr.publicId, projectId: projectPublicId }),
+        });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          setComments(Array.isArray(d?.data) ? d.data : []);
+        }
+      } catch { /* silent */ }
+      finally { if (!cancelled) setLoadingComments(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [cr.publicId, projectPublicId]);
 
   const handleStatus = async (status: ChangeRequest['status']) => {
     setUpdating(true);
@@ -617,17 +1008,45 @@ function DetailModal({
         body: JSON.stringify({ crId: cr.publicId, status }),
       });
       const data = await res.json();
-      if (data.success) { toast.success(`Status → ${status}`); onStatusChange(cr.publicId, status); }
+      if (data.success) { toast.success(`Status → ${STATUS_CFG[status].label}`); onStatusChange(cr.publicId, status); }
       else toast.error(data.message || 'Failed to update');
     } catch { toast.error('Failed to update status'); }
     finally { setUpdating(false); }
+  };
+
+  const submitComment = async () => {
+    const content = commentInput.trim();
+    if (!content || posting) return;
+    setPosting(true);
+    try {
+      const res = await apiFetch('/api/change-requests/comments/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crId: cr.publicId, projectId: projectPublicId, content }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => [...prev, data.data]);
+        setCommentInput('');
+        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      } else {
+        toast.error(data.message || 'Failed to post comment');
+      }
+    } catch { toast.error('Failed to post comment'); }
+    finally { setPosting(false); }
+  };
+
+  const autoResize = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setCommentInput(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = `${e.target.scrollHeight}px`;
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
       <div
-        className="relative z-10 w-full max-w-[600px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[90vh] flex flex-col"
+        className="relative z-10 w-full max-w-[660px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[92vh] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -674,7 +1093,6 @@ function DetailModal({
             </div>
           </div>
 
-          {/* Assignees */}
           {cr.assignedTo.length > 0 && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Assigned To</p>
@@ -691,7 +1109,6 @@ function DetailModal({
             </div>
           )}
 
-          {/* Reviewers */}
           {cr.reviewers.length > 0 && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Reviewers</p>
@@ -708,7 +1125,6 @@ function DetailModal({
             </div>
           )}
 
-          {/* Affected Models */}
           {cr.affectedModels.length > 0 && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Affected Models</p>
@@ -725,7 +1141,6 @@ function DetailModal({
             </div>
           )}
 
-          {/* Attachments */}
           {cr.attachments.length > 0 && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Attachments</p>
@@ -746,8 +1161,8 @@ function DetailModal({
             </div>
           )}
 
-          {/* Status actions */}
-          {cr.status !== 'completed' && cr.status !== 'rejected' && (
+          {/* Status actions — only for admin / creator / reviewer */}
+          {canUpdateStatus && cr.status !== 'completed' && cr.status !== 'rejected' && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-2">Update Status</p>
               <div className="flex flex-wrap gap-2">
@@ -764,10 +1179,101 @@ function DetailModal({
               </div>
             </div>
           )}
+          {!canUpdateStatus && (
+            <p className="text-[12px] text-[#99A1AF]">Only admins, the CR creator, or reviewers can update status.</p>
+          )}
+
+          {/* ── Comments Section ──────────────────────────────────────────── */}
+          <div className="border-t border-[#E5E7EB] pt-5">
+            <div className="flex items-center gap-2 mb-4">
+              <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
+              </svg>
+              <p className="text-[13px] font-semibold text-[#101828]">
+                Comments
+                {comments.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-[#F3F4F6] px-2 py-0.5 text-[11px] font-medium text-[#6A7282]">{comments.length}</span>
+                )}
+              </p>
+            </div>
+
+            {/* Comment input */}
+            <div className="flex gap-3 mb-5">
+              <div className="shrink-0 mt-0.5">
+                <div className="h-8 w-8 rounded-full flex items-center justify-center text-[12px] font-semibold text-white bg-[#6366F1]">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
+                  </svg>
+                </div>
+              </div>
+              <div className="flex-1 flex flex-col gap-2">
+                <textarea
+                  ref={textareaRef}
+                  value={commentInput}
+                  onChange={autoResize}
+                  onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment(); }}
+                  placeholder="Write a comment… (Ctrl+Enter to post)"
+                  rows={2}
+                  className="w-full resize-none rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[13px] text-[#101828] placeholder:text-[#99A1AF] focus:border-[#155DFC] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#155DFC] transition-colors overflow-hidden"
+                />
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] text-[#99A1AF]">Ctrl + Enter to post</p>
+                  <button
+                    onClick={submitComment}
+                    disabled={!commentInput.trim() || posting}
+                    className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#155DFC] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {posting ? (
+                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    ) : (
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
+                    )}
+                    {posting ? 'Posting…' : 'Post'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Comment list */}
+            {loadingComments ? (
+              <div className="flex items-center justify-center py-6">
+                <svg className="h-5 w-5 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              </div>
+            ) : comments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 rounded-[10px] bg-[#F9FAFB] border border-dashed border-[#E5E7EB]">
+                <svg className="h-8 w-8 text-[#D1D5DC] mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
+                </svg>
+                <p className="text-[13px] text-[#99A1AF]">No comments yet. Be the first to comment.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {comments.map(c => (
+                  <div key={c.publicId} className="flex gap-3">
+                    <div
+                      className="h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-[12px] font-bold text-white mt-0.5"
+                      style={{ backgroundColor: nameToColor(c.authorName) }}
+                    >
+                      {c.authorName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="inline-block max-w-full rounded-[10px] rounded-tl-[4px] bg-[#F3F4F6] px-4 py-3">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-[13px] font-semibold text-[#101828]">{c.authorName}</span>
+                          <span className="text-[11px] text-[#99A1AF]">{fmtCommentTime(c.createdAt)}</span>
+                        </div>
+                        <p className="text-[13px] text-[#364153] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex justify-end px-6 py-4 border-t border-[#E5E7EB] shrink-0">
-          <button onClick={onClose} className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828]">Close</button>
+          <button onClick={onClose} className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors">Close</button>
         </div>
       </div>
     </div>
@@ -783,16 +1289,35 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
   const [modelFiles, setModelFiles]         = useState<ModelFile[]>([]);
   const [teamMembers, setTeamMembers]       = useState<TeamMember[]>([]);
   const [loadingFiles, setLoadingFiles]     = useState(false);
+  const [currentUserId, setCurrentUserId]   = useState('');
+  const [currentRole, setCurrentRole]       = useState<'admin' | 'member' | 'viewer'>('member');
   const [filter, setFilter]                 = useState<'all'|'pending'|'in-progress'|'approved'>('all');
   const [search, setSearch]                 = useState('');
   const [showCreate, setShowCreate]         = useState(false);
   const [detailCR, setDetailCR]             = useState<ChangeRequest | null>(null);
+  const [editCR, setEditCR]                 = useState<ChangeRequest | null>(null);
+  const [deleteCR, setDeleteCR]             = useState<ChangeRequest | null>(null);
 
   const loadCR = useCallback(async () => {
     setLoadingCR(true);
     try {
       const res = await apiFetch(`/api/projects/${projectPublicId}/change-requests`);
-      if (res.ok) { const d = await res.json(); setChangeRequests(d?.data ?? []); }
+      if (res.ok) {
+        const d = await res.json();
+        const normalized = (d?.data ?? []).map((cr: ChangeRequest) => ({
+          ...cr,
+          affectedModels:      Array.isArray(cr.affectedModels)  ? cr.affectedModels  : [],
+          assignedTo:          Array.isArray(cr.assignedTo)      ? cr.assignedTo      : [],
+          reviewers:           Array.isArray(cr.reviewers)       ? cr.reviewers       : [],
+          attachments:         Array.isArray(cr.attachments)     ? cr.attachments     : [],
+          estimatedImpact:     cr.estimatedImpact  ?? null,
+          estimatedCost:       cr.estimatedCost    ?? null,
+          estimatedDuration:   cr.estimatedDuration ?? '',
+          deadline:            cr.deadline         ?? null,
+          detailedDescription: cr.detailedDescription ?? '',
+        }));
+        setChangeRequests(normalized);
+      }
     } catch { /* silent */ }
     finally { setLoadingCR(false); }
   }, [projectPublicId]);
@@ -827,7 +1352,12 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
         const tree = d?.data?.tree;
         if (tree) setModelFiles(flatten(tree.children || []));
       }
-      if (teamRes.ok) { const d = await teamRes.json(); setTeamMembers(d?.data || []); }
+      if (teamRes.ok) {
+        const d = await teamRes.json();
+        setTeamMembers(d?.data || []);
+        if (d?.currentUserId) setCurrentUserId(d.currentUserId);
+        if (d?.currentRole)   setCurrentRole(d.currentRole as 'admin' | 'member' | 'viewer');
+      }
     } catch { /* silent */ }
     finally { setLoadingFiles(false); }
   }, [projectPublicId]);
@@ -845,7 +1375,32 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
     return true;
   });
 
-  const handleCreated = (cr: ChangeRequest) => setChangeRequests(p => [cr, ...p]);
+  const handleUpdated = (updated: ChangeRequest) => {
+    setChangeRequests(p => p.map(c => c.publicId === updated.publicId ? updated : c));
+    if (detailCR?.publicId === updated.publicId) setDetailCR(updated);
+  };
+
+  const handleDeleted = (publicId: string) => {
+    setChangeRequests(p => p.filter(c => c.publicId !== publicId));
+    if (detailCR?.publicId === publicId) setDetailCR(null);
+  };
+
+  const handleCreated = (cr: ChangeRequest) => {
+    // Normalize all array fields so the list never crashes on missing data
+    const safe: ChangeRequest = {
+      ...cr,
+      affectedModels:  Array.isArray(cr.affectedModels)  ? cr.affectedModels  : [],
+      assignedTo:      Array.isArray(cr.assignedTo)      ? cr.assignedTo      : [],
+      reviewers:       Array.isArray(cr.reviewers)        ? cr.reviewers       : [],
+      attachments:     Array.isArray(cr.attachments)     ? cr.attachments     : [],
+      estimatedImpact: cr.estimatedImpact ?? null,
+      estimatedCost:   cr.estimatedCost   ?? null,
+      estimatedDuration: cr.estimatedDuration ?? '',
+      deadline:        cr.deadline        ?? null,
+      detailedDescription: cr.detailedDescription ?? '',
+    };
+    setChangeRequests(p => [safe, ...p]);
+  };
   const handleStatusChange = (id: string, status: ChangeRequest['status']) => {
     setChangeRequests(p => p.map(c => c.publicId === id ? { ...c, status } : c));
     setDetailCR(p => p?.publicId === id ? { ...p, status } : p);
@@ -976,26 +1531,44 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
                     </div>
                   )}
 
-                  {/* Assignees + Reviewers avatars */}
-                  <div className="flex items-center gap-4 text-[12px] text-[#6A7282]">
+                  {/* Assignees + Reviewers with full names */}
+                  <div className="flex flex-col gap-2 mt-1">
                     {assigneeMembers.length > 0 && (
-                      <div className="flex items-center gap-1.5">
-                        <span>Assigned:</span>
-                        <div className="flex -space-x-1.5">
-                          {assigneeMembers.slice(0, 4).map(m => <Avatar key={m.userId} name={m.user?.fullName} color="#3B82F6" />)}
-                          {assigneeMembers.length > 4 && <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E5E7EB] text-[10px] text-[#4A5565]">+{assigneeMembers.length - 4}</span>}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-medium text-[#6A7282] w-[56px] shrink-0">Assigned:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {assigneeMembers.slice(0, 4).map(m => (
+                            <span key={m.userId} className="inline-flex items-center gap-1.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-0.5 pr-2.5 py-0.5 text-[11px] text-[#1D4ED8]">
+                              <Avatar name={m.user?.fullName} color="#3B82F6" />
+                              <span className="font-medium">{m.user?.fullName}</span>
+                            </span>
+                          ))}
+                          {assigneeMembers.length > 4 && (
+                            <span className="inline-flex items-center justify-center rounded-full bg-[#E5E7EB] px-2 py-0.5 text-[11px] text-[#4A5565]">+{assigneeMembers.length - 4} more</span>
+                          )}
                         </div>
                       </div>
                     )}
                     {reviewerMembers.length > 0 && (
-                      <div className="flex items-center gap-1.5">
-                        <span>Review:</span>
-                        <div className="flex -space-x-1.5">
-                          {reviewerMembers.slice(0, 4).map(m => <Avatar key={m.userId} name={m.user?.fullName} color="#22C55E" />)}
-                          {reviewerMembers.length > 4 && <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E5E7EB] text-[10px] text-[#4A5565]">+{reviewerMembers.length - 4}</span>}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-medium text-[#6A7282] w-[56px] shrink-0">Review:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {reviewerMembers.slice(0, 4).map(m => (
+                            <span key={m.userId} className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-0.5 pr-2.5 py-0.5 text-[11px] text-[#166534]">
+                              <Avatar name={m.user?.fullName} color="#22C55E" />
+                              <span className="font-medium">{m.user?.fullName}</span>
+                            </span>
+                          ))}
+                          {reviewerMembers.length > 4 && (
+                            <span className="inline-flex items-center justify-center rounded-full bg-[#E5E7EB] px-2 py-0.5 text-[11px] text-[#4A5565]">+{reviewerMembers.length - 4} more</span>
+                          )}
                         </div>
                       </div>
                     )}
+                  </div>
+
+                  {/* Meta row */}
+                  <div className="flex items-center gap-3 text-[11px] text-[#6A7282] mt-2">
                     {cr.attachments.length > 0 && (
                       <span className="flex items-center gap-1">
                         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -1004,13 +1577,45 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
                         {cr.attachments.length} file{cr.attachments.length > 1 ? 's' : ''}
                       </span>
                     )}
-                    <span>· {fmtRel(cr.createdAt)}</span>
+                    <span>{fmtRel(cr.createdAt)}</span>
                   </div>
                 </div>
 
-                <button onClick={() => setDetailCR(cr)}
-                  className="shrink-0 inline-flex items-center rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-gray-50 transition-colors"
-                >View Details</button>
+                {/* Action buttons */}
+                <div className="shrink-0 flex items-center gap-1.5">
+                  {/* View Details */}
+                  <button
+                    onClick={() => setDetailCR(cr)}
+                    title="View Details"
+                    className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    View
+                  </button>
+                  {/* Edit */}
+                  <button
+                    onClick={() => setEditCR(cr)}
+                    title="Edit"
+                    className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] border border-[#E5E7EB] bg-white text-[#364153] hover:bg-[#FFFBEB] hover:border-[#F59E0B] hover:text-[#F59E0B] transition-colors"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
+                    </svg>
+                  </button>
+                  {/* Delete */}
+                  <button
+                    onClick={() => setDeleteCR(cr)}
+                    title="Delete"
+                    className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] border border-[#E5E7EB] bg-white text-[#364153] hover:bg-[#FEF2F2] hover:border-[#FCA5A5] hover:text-[#DC2626] transition-colors"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
             );
           })
@@ -1035,8 +1640,29 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
           disciplines={disciplines}
           modelFiles={modelFiles}
           teamMembers={teamMembers}
+          projectPublicId={projectPublicId}
+          currentUserId={currentUserId}
+          currentRole={currentRole}
           onClose={() => setDetailCR(null)}
           onStatusChange={handleStatusChange}
+        />
+      )}
+      {editCR && (
+        <EditModal
+          cr={editCR}
+          disciplines={disciplines}
+          modelFiles={modelFiles}
+          teamMembers={teamMembers}
+          loadingFiles={loadingFiles}
+          onClose={() => setEditCR(null)}
+          onUpdated={handleUpdated}
+        />
+      )}
+      {deleteCR && (
+        <DeleteConfirmModal
+          cr={deleteCR}
+          onClose={() => setDeleteCR(null)}
+          onDeleted={handleDeleted}
         />
       )}
     </div>

@@ -10,10 +10,19 @@ router.get('/projects/:projectSlug/change-requests', authenticate, (req, res) =>
 router.post('/projects/:projectSlug/change-requests', authenticate, (req, res) =>
     ChangeRequestController.create(req, res));
 
+router.put('/change-requests', authenticate, (req, res) =>
+    ChangeRequestController.update(req, res));
+
 router.post('/change-requests/update-status', authenticate, (req, res) =>
     ChangeRequestController.updateStatus(req, res));
 
 router.delete('/change-requests', authenticate, (req, res) =>
     ChangeRequestController.delete(req, res));
+
+router.post('/change-requests/comments/list', authenticate, (req, res) =>
+    ChangeRequestController.listComments(req, res));
+
+router.post('/change-requests/comments/create', authenticate, (req, res) =>
+    ChangeRequestController.createComment(req, res));
 
 module.exports = router;

@@ -1205,16 +1205,6 @@ export default function SettingsTab({
               />
             </div>
 
-            {/* Project Code */}
-            <div className="mb-6 pb-6 border-b border-[#E5E7EB]">
-              <label className="block text-[14px] font-normal text-[#101828] mb-2">Project Code</label>
-              <input
-                type="text"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2.5 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
-              />
-            </div>
 
             {/* Disciplines Section */}
             <div>
