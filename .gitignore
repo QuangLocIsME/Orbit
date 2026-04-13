@@ -1,7 +1,10 @@
 Backend/.env
 Backend/node_modules
 *.md
-.github/skills/skill-root-cause-tracing/skill-root-cause-tracing/find-polluter.sh
-.github/skills/skill-condition-based-waiting/skill-condition-based-waiting/example.ts
+.github/skills/
+
 /Backend/tmp
 .gitnexus
+Backend/node_modules/
+Frontend/node_modules/
+

@@ -17,7 +17,7 @@ import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import ChangesTab from './ChangesTab';
-import TaskBoard from './TaskBoard';
+import TaskBoard, { type WorkflowStage } from './TaskBoard';
 import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import {
@@ -132,13 +132,13 @@ interface ChangeRequest {
 }
 
 // Mock Tasks data
-type TaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
+type TaskStatus = string;
 
 interface Task {
   id: string;
   title: string;
   priority: 'urgent' | 'high' | 'medium' | 'low';
-  status: TaskStatus;
+  status: string;
   tags: string[];
   linkedItem?: { type: 'link'; name: string };
   comments: number;
@@ -682,6 +682,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [projectTaskTags, setProjectTaskTags] = useState<string[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedWorkflowStages, setSelectedWorkflowStages] = useState<WorkflowStage[]>([]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
 
   // Get current folder based on path
   const getCurrentFolder = (): DocFolder => {
@@ -805,7 +807,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         id: String(t.publicId || t.id || ''),
         title: String(t.title || 'Untitled task'),
         priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as Task['priority'],
-        status: (['backlog', 'todo', 'in-progress', 'review', 'done'].includes(t.status) ? t.status : 'backlog') as Task['status'],
+        status: String(t.status || 'backlog'),
         tags: Array.isArray(t.tags) ? t.tags : [],
         linkedItem: t.linkedUrl ? { type: 'link', name: t.linkedUrl } : undefined,
         comments: Number(t.commentsCount || 0),
@@ -827,8 +829,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     loadProjectTasks();
   }, [activeTab, loadProjectTasks]);
 
-  const handleTaskStatusChange = useCallback((taskId: string, newStatus: TaskStatus) => {
-    setTasksData(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+  const handleTaskStatusChange = useCallback((taskId: string, newStatus: string) => {
+    setTasksData(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as any } : t));
     // TODO: sync with backend API when ready
   }, []);
 
@@ -840,7 +842,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   useEffect(() => {
     let cancelled = false;
 
-    const loadProjectTaskTags = async () => {
+    const loadProjectWorkflowData = async () => {
       try {
         const res = await apiFetch('/api/projects/workflow', {
           method: 'POST',
@@ -851,16 +853,35 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         if (!res.ok) return;
 
         const payload = await res.json();
-        const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
+        const data = payload?.data || {};
+        
+        // Load task tags
+        const tags = Array.isArray(data.taskTags) ? data.taskTags : [];
         if (!cancelled) {
           setProjectTaskTags(tags.map((t: any) => String(t?.name || '').toLowerCase()).filter(Boolean));
+        }
+        
+        // Load workflow stages and template ID
+        if (!cancelled) {
+          const stages = Array.isArray(data.stages) ? data.stages : [];
+          if (stages.length > 0) {
+            setSelectedWorkflowStages(stages.map((s: any) => ({
+              id: String(s.id || ''),
+              name: String(s.label || s.name || ''),
+              description: String(s.description || ''),
+            })));
+          }
+          // Set workflow template ID if available
+          if (data.workflowTemplateId) {
+            setSelectedWorkflowId(data.workflowTemplateId);
+          }
         }
       } catch {
         // keep empty => CreateTaskModal fallback handles it
       }
     };
 
-    loadProjectTaskTags();
+    loadProjectWorkflowData();
     return () => {
       cancelled = true;
     };
@@ -1520,12 +1541,18 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             {/* Header */}
             <div className="flex items-center justify-between pb-4 border-b border-[#E5E7EB]">
 <div className="flex items-center gap-3">
-  {/* Workflow dropdown */}
-  <WorkflowTemplatesDropdown 
-    selectedWorkflow="construction-standard"
-    onSelect={(workflowId) => console.log('Selected workflow:', workflowId)}
-    onConfigureClick={() => console.log('Configure workflow clicked')}
-  />
+              {/* Workflow dropdown */}
+              <WorkflowTemplatesDropdown 
+                selectedWorkflow={selectedWorkflowId}
+                projectId={project.publicId}
+                currentStages={selectedWorkflowStages.map(s => ({ id: s.id, name: s.name }))}
+                existingTasks={tasksData.map(t => ({ id: t.id, title: t.title, priority: t.priority, status: t.status, assigneeId: t.assigneeId }))}
+                onSelect={(workflowId, stages) => {
+                  setSelectedWorkflowId(workflowId);
+                  setSelectedWorkflowStages(stages.map(s => ({ id: s.id, name: s.name })));
+                }}
+                onConfigureClick={() => console.log('Configure workflow clicked')}
+              />
   {/* New Task button */}
   <button
   onClick={() => setIsNewTaskModalOpen(true)}
@@ -1625,9 +1652,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   tasks={filteredTasks}
                   teamMembers={teamMembers}
                   loading={isTasksLoading}
+                  stages={selectedWorkflowStages}
                   onTaskStatusChange={handleTaskStatusChange}
                   onTaskClick={setSelectedTaskId}
-                  onAddTask={() => setIsNewTaskModalOpen(true)}
+                  onAddTask={(stageId) => {
+                    // TODO: pass stageId to create task modal
+                    setIsNewTaskModalOpen(true);
+                  }}
                 />
               </div>
             )}
@@ -1648,7 +1679,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   {/* Table Body */}
                   {filteredTasks.map((task) => {
                       const assignee = teamMembers.find(m => m.id === task.assigneeId);
-                      const column = taskColumns.find(c => c.id === task.status);
+                      const stage = selectedWorkflowStages.find(s => s.id === task.status);
                       return (
                         <div key={task.id} className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 border-b border-[#E5E7EB] hover:bg-gray-50 items-center">
                           <div className="flex flex-col gap-1">
@@ -1669,14 +1700,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                           </div>
                           <div>
                             <span className={cn(
-                              "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
-                              task.status === 'done' && "bg-[#ECFDF5] text-[#007A55]",
-                              task.status === 'in-progress' && "bg-[#EFF6FF] text-[#155DFC]",
-                              task.status === 'review' && "bg-[#FEF3C7] text-[#B45309]",
-                              task.status === 'todo' && "bg-[#F3F4F6] text-[#364153]",
-                              task.status === 'backlog' && "bg-[#F3F4F6] text-[#6A7282]"
+                              "inline-flex items-center rounded px-2 py-0.5 text-[12px] bg-[#F3F4F6] text-[#364153]"
                             )}>
-                              {column?.label}
+                              {stage?.name || task.status}
                             </span>
                           </div>
                           <div>
@@ -2763,6 +2789,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           onClose={() => setIsNewTaskModalOpen(false)}
           assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
+          workflowStages={selectedWorkflowStages}
           onSubmit={async (task) => {
             try {
               const response = await apiFetch('/api/tasks/create', {

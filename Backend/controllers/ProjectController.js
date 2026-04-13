@@ -602,7 +602,7 @@ class ProjectController {
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member) return forbidden(res);
 
-            const project = await Project.findOne({ publicId: normalizedProjectId }).select('publicId workflow');
+            const project = await Project.findOne({ publicId: normalizedProjectId }).select('publicId workflow workflowTemplateId');
             if (!project) return notFound(res, 'Project not found');
 
             const template = project.workflow?.template || 'construction-standard';
@@ -618,10 +618,80 @@ class ProjectController {
 
             return res.status(200).json({
                 success: true,
-                data: { template, stages, settings, taskTags },
+                data: { template, stages, settings, taskTags, workflowTemplateId: project.workflowTemplateId },
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load workflow');
+        }
+    }
+
+    async applyWorkflowTemplate(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            const { workflowTemplateId } = req.body || {};
+            
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            if (!workflowTemplateId) {
+                return badRequest(res, 'Missing workflowTemplateId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.role !== 'admin') return forbidden(res);
+
+            // Fetch the workflow template
+            const WorkflowTemplate = require('../models/WorkflowTemplate');
+            const template = await WorkflowTemplate.findOne({ publicId: workflowTemplateId });
+            
+            if (!template) {
+                return notFound(res, 'Workflow template not found');
+            }
+
+            // Update project with template stages
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                {
+                    workflowTemplateId: workflowTemplateId,
+                    workflow: {
+                        template: template.name,
+                        stages: template.stages.map(s => ({ id: s.id, label: s.name })),
+                        settings: {
+                            autoAssignTasks: false,
+                            notifyOnStatusChange: true,
+                            requireApprovalForCompletion: false,
+                        },
+                        taskTags: [],
+                    },
+                    updatedAt: new Date(),
+                },
+                { returnDocument: 'after' }
+            );
+
+            if (!project) return notFound(res, 'Project not found');
+
+            await invalidateUserCaches(userId);
+            socketService.broadcastProject(normalizedProjectId, 'project:workflow-updated', {
+                projectId: normalizedProjectId,
+                workflowTemplateId,
+                workflow: project.workflow,
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Workflow template applied',
+                data: {
+                    workflowTemplateId: project.workflowTemplateId,
+                    workflow: project.workflow,
+                },
+            });
+        } catch (error) {
+            console.error('Error applying workflow template:', error);
+            return handleServerError(res, 'Failed to apply workflow template');
         }
     }
 

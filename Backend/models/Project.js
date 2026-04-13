@@ -14,6 +14,7 @@ const ProjectSchema = new mongoose.Schema({
     industry: { type: String, default: '', trim: true },
     coverImageUrl: { type: String, default: '', trim: true },
     folderIds: { type: [String], default: [], index: true },
+    workflowTemplateId: { type: String, default: null, index: true },
     workflow: {
         template: { type: String, default: 'construction-standard' },
         stages: {

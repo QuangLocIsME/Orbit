@@ -27,7 +27,13 @@ import { CSS } from '@dnd-kit/utilities';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
+type TaskStatus = string;
+
+export interface WorkflowStage {
+  id: string;
+  name: string;
+  description?: string;
+}
 
 interface Task {
   id: string;
@@ -48,14 +54,6 @@ interface TaskMember {
   color: string;
   avatar: string;
 }
-
-const taskColumns = [
-  { id: 'backlog',      label: 'Backlog',      icon: 'circle' },
-  { id: 'todo',         label: 'To Do',         icon: 'circle' },
-  { id: 'in-progress',  label: 'In Progress',  icon: 'clock'  },
-  { id: 'review',       label: 'Review',        icon: 'clock'  },
-  { id: 'done',         label: 'Done',          icon: 'check'  },
-] as const;
 
 const PRIORITY_STYLE: Record<string, string> = {
   urgent: 'bg-[#FEE2E2] text-[#DC2626]',
@@ -171,40 +169,71 @@ function SortableTaskCard({
   );
 }
 
-// ─── Column Header ────────────────────────────────────────────────────────────
+// ─── Column Wrapper (handles droppable) ────────────────────────────────────────
 
-function ColumnHeader({ label, icon, count, columnId }: { label: string; icon: string; count: number; columnId: string }) {
-  const { setNodeRef, isOver } = useDroppable({ id: columnId });
+function StageColumn({
+  stageId,
+  label,
+  icon,
+  count,
+  children,
+  onAddTask,
+}: {
+  stageId: string;
+  label: string;
+  icon: string;
+  count: number;
+  children: React.ReactNode;
+  onAddTask: () => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: stageId });
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        'flex items-center justify-between mb-3 rounded transition-colors',
-        isOver && 'bg-[#EFF6FF] ring-2 ring-[#155DFC]'
+        'w-[280px] flex flex-col rounded-lg p-1 transition-all',
+        isOver && 'bg-[#EFF6FF] ring-2 ring-[#155DFC] ring-opacity-50'
       )}
     >
-      <div className="flex items-center gap-2">
-        {icon === 'circle' && <div className="h-4 w-4 rounded-full border-2 border-[#D1D5DC]" />}
-        {icon === 'clock' && (
-          <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 6v6l4 2" />
-          </svg>
+      {/* Column Header */}
+      <div
+        className={cn(
+          'flex items-center justify-between mb-3 rounded transition-colors',
+          isOver && 'bg-[#EFF6FF] ring-2 ring-[#155DFC]'
         )}
-        {icon === 'check' && (
-          <svg className="h-4 w-4 text-[#009966]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-            <circle cx="12" cy="12" r="9" />
-            <path d="M9 12l2 2 4-4" />
+      >
+        <div className="flex items-center gap-2">
+          {icon === 'circle' && <div className="h-4 w-4 rounded-full border-2 border-[#D1D5DC]" />}
+          {icon === 'clock' && (
+            <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+          )}
+          {icon === 'check' && (
+            <svg className="h-4 w-4 text-[#009966]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M9 12l2 2 4-4" />
+            </svg>
+          )}
+          <span className="text-[14px] font-normal text-[#101828]">{label}</span>
+          <span className="text-[12px] text-[#6A7282] bg-[#F3F4F6] px-1.5 py-0.5 rounded">{count}</span>
+        </div>
+        <button className="p-1 hover:bg-gray-100 rounded">
+          <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
           </svg>
-        )}
-        <span className="text-[14px] font-normal text-[#101828]">{label}</span>
-        <span className="text-[12px] text-[#6A7282] bg-[#F3F4F6] px-1.5 py-0.5 rounded">{count}</span>
+        </button>
       </div>
-      <button className="p-1 hover:bg-gray-100 rounded">
-        <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-        </svg>
+
+      {children}
+
+      <button
+        onClick={onAddTask}
+        className="mt-2 w-full py-2 rounded-[10px] border border-dashed border-[#D1D5DC] text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors"
+      >
+        + Add task
       </button>
     </div>
   );
@@ -229,21 +258,22 @@ interface TaskBoardProps {
   tasks: Task[];
   teamMembers: TaskMember[];
   loading: boolean;
+  stages: WorkflowStage[];
   onTaskStatusChange: (taskId: string, newStatus: TaskStatus) => void;
   onTaskClick: (taskId: string) => void;
-  onAddTask: () => void;
+  onAddTask: (stageId?: string) => void;
 }
 
 export default function TaskBoard({
   tasks,
   teamMembers,
   loading,
+  stages,
   onTaskStatusChange,
   onTaskClick,
   onAddTask,
 }: TaskBoardProps) {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -253,23 +283,18 @@ export default function TaskBoard({
     setActiveTaskId(String(event.active.id));
   }, []);
 
-  const handleDragOver = useCallback((event: any) => {
-    setOverId(event.over?.id ?? null);
-  }, []);
-
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     setActiveTaskId(null);
-    setOverId(null);
 
     if (!over) return;
 
     const draggedTaskId = String(active.id);
 
-    // Dropped on a column header (column id matches column.id)
-    const targetColumn = taskColumns.find((c) => c.id === over.id);
-    if (targetColumn) {
-      onTaskStatusChange(draggedTaskId, targetColumn.id as TaskStatus);
+    // Dropped on a stage column (check by stage id)
+    const targetStage = stages.find((s) => s.id === over.id);
+    if (targetStage) {
+      onTaskStatusChange(draggedTaskId, targetStage.id);
       return;
     }
 
@@ -278,16 +303,9 @@ export default function TaskBoard({
     if (targetTask) {
       onTaskStatusChange(draggedTaskId, targetTask.status);
     }
-  }, [tasks, onTaskStatusChange]);
+  }, [tasks, stages, onTaskStatusChange]);
 
   const activeTask = activeTaskId ? tasks.find((t) => t.id === activeTaskId) : null;
-
-  // Always call hooks before any early returns — hooks must run on every render in the same order
-  const columnDropRefs = taskColumns.map((column) => {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { setNodeRef, isOver } = useDroppable({ id: column.id });
-    return { setNodeRef, isOver };
-  });
 
   if (loading) {
     return <div className="py-12 text-center text-[14px] text-[#6A7282]">Loading tasks...</div>;
@@ -298,34 +316,26 @@ export default function TaskBoard({
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-4 min-w-max pb-4">
-        {taskColumns.map((column, idx) => {
-          const columnTasks = tasks.filter((t) => t.status === column.id);
-          const taskIds = columnTasks.map((t) => t.id);
-          const { setNodeRef: setColumnRef, isOver: isOverColumn } = columnDropRefs[idx];
+        {stages.map((stage, idx) => {
+          const icon = idx === 0 ? 'circle' : idx === stages.length - 1 ? 'check' : 'clock';
+          const stageTasks = tasks.filter((t) => t.status === stage.id);
+          const taskIds = stageTasks.map((t) => t.id);
 
           return (
-            <div
-              key={column.id}
-              ref={setColumnRef}
-              className={cn(
-                'w-[280px] flex flex-col rounded-lg p-1 transition-all',
-                isOverColumn && 'bg-[#EFF6FF] ring-2 ring-[#155DFC] ring-opacity-50'
-              )}
+            <StageColumn
+              key={stage.id}
+              stageId={stage.id}
+              label={stage.name}
+              icon={icon}
+              count={stageTasks.length}
+              onAddTask={() => onAddTask(stage.id)}
             >
-              <ColumnHeader
-                label={column.label}
-                icon={column.icon}
-                count={columnTasks.length}
-                columnId={column.id}
-              />
-
               <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
                 <div className="flex flex-col gap-2 min-h-[80px]">
-                  {columnTasks.map((task) => {
+                  {stageTasks.map((task) => {
                     const assignee = teamMembers.find((m) => m.id === task.assigneeId);
                     return (
                       <SortableTaskCard
@@ -338,14 +348,7 @@ export default function TaskBoard({
                   })}
                 </div>
               </SortableContext>
-
-              <button
-                onClick={onAddTask}
-                className="mt-2 w-full py-2 rounded-[10px] border border-dashed border-[#D1D5DC] text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors"
-              >
-                + Add task
-              </button>
-            </div>
+            </StageColumn>
           );
         })}
       </div>

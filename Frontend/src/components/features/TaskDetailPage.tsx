@@ -66,11 +66,14 @@ const fallbackStages: WorkflowStage[] = [
   { id: 'done', label: 'Done' },
 ];
 
-const normalizeStageId = (value: string) =>
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-');
+// Normalize stage ID - only lowercase and replace spaces if it's text-based
+const normalizeStageId = (value: string) => {
+  const str = String(value || '').trim();
+  // If it's a numeric ID (like "1", "2"), keep as-is
+  if (/^\d+$/.test(str)) return str;
+  // Otherwise lowercase and replace spaces with dashes
+  return str.toLowerCase().replace(/\s+/g, '-');
+};
 
 const toDisplayTime = (iso: string) => {
   const d = new Date(iso);

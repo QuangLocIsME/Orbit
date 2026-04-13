@@ -1,10 +1,13 @@
-// WorkflowTemplates v1.0.7 - Real data from API
+// WorkflowTemplates v1.0.8 - Real data from API
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { TableSkeleton } from '@/components/ui/skeletons';
 import { TemplateSearch } from './TemplateSearch';
 import { WorkflowEditor, type StageData } from './workflow-editor';
+import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { apiFetch } from '@/lib/api-client';
+import { toast } from '@/components/ui/sonner';
+import { Loader2 } from 'lucide-react';
 
 // Custom workflow icon SVG
 const WorkflowIcon = () => (
@@ -61,7 +64,23 @@ const CATEGORIES = [
   'Other',
 ];
 
-function TemplateCard({ template }: { template: Template }) {
+// Helper to convert API template to card format
+function toCardTemplate(template: WorkflowTemplate): Template {
+  return {
+    id: template.publicId,
+    name: template.name,
+    description: template.description || '',
+    author: template.authorName || template.authorId,
+    isPrivate: template.isPrivate,
+    tags: template.tags || [],
+    stages: template.stages?.map(s => s.name) || [],
+    downloads: template.downloads || 0,
+    rating: template.rating || 0,
+    category: template.category,
+  };
+}
+
+function TemplateCard({ template, onEdit, onDelete }: { template: Template; onEdit?: () => void; onDelete?: () => void }) {
   const visibleStages = template.stages.slice(0, 4);
   const remainingStages = template.stages.length - 4;
 
@@ -143,14 +162,31 @@ function TemplateCard({ template }: { template: Template }) {
           </div>
         </div>
         
-        {/* Use Template Button */}
-        <button className="inline-flex items-center gap-1.5 rounded-lg border border-blue-600 bg-white px-3 py-1.5 text-sm font-medium text-blue-600 transition-all duration-150 hover:bg-blue-50 active:scale-95">
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Use Template
-        </button>
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2">
+          {onEdit && (
+            <button
+              onClick={onEdit}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-all duration-150 hover:bg-gray-50 hover:border-gray-400"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+              Edit
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 transition-all duration-150 hover:bg-red-50 hover:border-red-300"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -697,41 +733,57 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'popular' | 'recent' | 'rating'>('popular');
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [myTemplates, setMyTemplates] = useState<Template[]>([]);
-  const [templates, setTemplates] = useState<Template[]>(propsTemplates || []);
-  const [allTags, setAllTags] = useState<string[]>(propsTags || []);
+  const [showEditor, setShowEditor] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<WorkflowTemplate | null>(null);
+  const [deletingTemplate, setDeletingTemplate] = useState<WorkflowTemplate | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  
+  // API data state
+  const [myTemplates, setMyTemplates] = useState<WorkflowTemplate[]>([]);
+  const [libraryTemplates, setLibraryTemplates] = useState<WorkflowTemplate[]>([]);
+  const [availableTags, setAvailableTags] = useState<string[]>(propsTags || []);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Fetch data from API if props are not provided
+  // Fetch data from API
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [myRes, libraryRes, tagsRes] = await Promise.all([
+        workflowTemplateService.getMyTemplates(),
+        workflowTemplateService.getTemplates({ limit: 50 }),
+        workflowTemplateService.getTags().catch(() => []),
+      ]);
+      
+      setMyTemplates(myRes.templates);
+      setLibraryTemplates(libraryRes.templates);
+      setAvailableTags(tagsRes);
+    } catch (error) {
+      console.error('Failed to fetch templates:', error);
+      toast.error('Failed to load templates');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const fetchData = async () => {
-      // If props are provided, use them
-      if (propsTemplates) {
-        setTemplates(propsTemplates);
-      }
-      if (propsTags) {
-        setAllTags(propsTags);
-      }
-    };
-
     fetchData();
     setIsHydrated(true);
-  }, [propsTemplates, propsTags]);
+  }, [fetchData]);
 
   const handleSearch = useCallback((query: string, tags: string[]) => {
     setSearchQuery(query);
     setSelectedTags(tags);
   }, []);
 
+  // Get current templates based on tab
+  const currentTemplates = activeTab === 'my' ? myTemplates : libraryTemplates;
+
+  // Convert to card format
+  const cardTemplates = currentTemplates.map(toCardTemplate);
+
   // Filter templates based on search query and selected tags
   const filteredTemplates = useMemo(() => {
-    // My Templates: show user's created templates
-    // Template Library: show all public templates from other users
-    const baseTemplates = activeTab === 'my' 
-      ? [...myTemplates, ...templates.filter(t => t.author === 'You')]
-      : templates.filter(t => !t.isPrivate && t.author !== 'You');
-
-    return baseTemplates.filter(template => {
+    return cardTemplates.filter(template => {
       // Filter by tags
       if (selectedTags.length > 0) {
         const hasAllTags = selectedTags.every(tag => template.tags.includes(tag));
@@ -749,7 +801,7 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
       
       return true;
     });
-  }, [templates, myTemplates, searchQuery, selectedTags, activeTab]);
+  }, [cardTemplates, searchQuery, selectedTags]);
 
   // Sort templates
   const sortedTemplates = useMemo(() => {
@@ -760,35 +812,72 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
     });
   }, [filteredTemplates, sortBy]);
 
-  const handleSaveTemplate = (templateData: Partial<Template> & { stages: WorkflowStage[] }) => {
-    const newTemplate: Template = {
-      id: Date.now().toString(),
-      name: templateData.name || 'Untitled',
-      description: templateData.description || '',
-      author: 'You',
-      isPrivate: templateData.isPrivate || false,
-      tags: templateData.tags || [],
-      stages: templateData.stages.map(s => s.name),
-      downloads: 0,
-      rating: 0,
-      category: templateData.category,
-    };
-    setMyTemplates(prev => [newTemplate, ...prev]);
-    setShowCreateForm(false);
+  const handleCreateNew = () => {
+    setEditingTemplate(null);
+    setShowEditor(true);
+  };
+
+  const handleEdit = (template: Template) => {
+    const fullTemplate = currentTemplates.find(t => t.publicId === template.id);
+    if (fullTemplate) {
+      setEditingTemplate(fullTemplate);
+      setShowEditor(true);
+    }
+  };
+
+  const handleDelete = (template: Template) => {
+    const fullTemplate = currentTemplates.find(t => t.publicId === template.id);
+    if (fullTemplate) {
+      setDeletingTemplate(fullTemplate);
+      setShowDeleteModal(true);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingTemplate) return;
+    try {
+      await workflowTemplateService.deleteTemplate(deletingTemplate.publicId);
+      setMyTemplates(prev => prev.filter(t => t.publicId !== deletingTemplate.publicId));
+      setShowDeleteModal(false);
+      setDeletingTemplate(null);
+      toast.success('Template deleted successfully');
+    } catch (error) {
+      toast.error('Failed to delete template');
+    }
+  };
+
+  const handleEditorSave = async (template: WorkflowTemplate) => {
+    if (editingTemplate) {
+      setMyTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+    } else {
+      setMyTemplates(prev => [template, ...prev]);
+    }
+    setShowEditor(false);
+    setEditingTemplate(null);
+    toast.success(editingTemplate ? 'Template updated successfully' : 'Template created successfully');
   };
 
   useEffect(() => { setIsHydrated(true); }, []);
 
   if (!isHydrated) return <TableSkeleton rows={6} cols={4} />;
 
-  if (showCreateForm) {
-    return <CreateWorkflowForm onClose={() => setShowCreateForm(false)} onSave={handleSaveTemplate} />;
+  if (showEditor) {
+    return (
+      <WorkflowEditorModal
+        workflow={editingTemplate}
+        onClose={() => {
+          setShowEditor(false);
+          setEditingTemplate(null);
+        }}
+        onSuccess={handleEditorSave}
+      />
+    );
   }
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       {/* Search Bar */}
-      <TemplateSearch allTags={allTags} onSearch={handleSearch} />
+      <TemplateSearch allTags={availableTags} onSearch={handleSearch} />
 
       {/* Tabs and Actions */}
       <div className="flex items-center justify-between">
@@ -803,7 +892,7 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            My Templates
+            My Templates ({myTemplates.length})
           </button>
           <button
             type="button"
@@ -815,12 +904,12 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            Template Library
+            Template Library ({libraryTemplates.length})
           </button>
           
           {/* Create Workflow Button */}
           <button 
-            onClick={() => setShowCreateForm(true)}
+            onClick={handleCreateNew}
             className="ml-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -834,7 +923,7 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
       {/* Results Count and Sort */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Showing {sortedTemplates.length} template{sortedTemplates.length !== 1 ? 's' : ''}
+          {isLoading ? 'Loading...' : `Showing ${sortedTemplates.length} template${sortedTemplates.length !== 1 ? 's' : ''}`}
         </p>
         <button
           type="button"
@@ -848,10 +937,19 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
       </div>
 
       {/* Templates Grid */}
-      {sortedTemplates.length > 0 ? (
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      ) : sortedTemplates.length > 0 ? (
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {sortedTemplates.map(template => (
-            <TemplateCard key={template.id} template={template} />
+            <TemplateCard 
+              key={template.id} 
+              template={template}
+              onEdit={activeTab === 'my' ? () => handleEdit(template) : undefined}
+              onDelete={activeTab === 'my' ? () => handleDelete(template) : undefined}
+            />
           ))}
         </div>
       ) : (
@@ -865,14 +963,526 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
               ? 'Create your first workflow template to get started'
               : 'Try adjusting your search or filters'}
           </p>
-          <button 
-            onClick={() => setShowCreateForm(true)}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
-          >
-            Create New Template
-          </button>
+          {activeTab === 'my' && (
+            <button 
+              onClick={handleCreateNew}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
+            >
+              Create New Template
+            </button>
+          )}
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && deletingTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowDeleteModal(false)} />
+          <div className="relative bg-white rounded-[16px] shadow-xl w-[480px] max-w-[90vw] p-6">
+            <h2 className="text-[20px] font-medium text-red-600 mb-4">Delete Template</h2>
+            <p className="text-[14px] text-[#6A7282] mb-6">
+              Are you sure you want to delete "{deletingTemplate.name}"? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="flex-1 h-11 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] font-medium text-[#374151] hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="flex-1 h-11 rounded-[10px] bg-red-600 text-[14px] font-medium text-white hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== WORKFLOW EDITOR MODAL ====================
+
+interface WorkflowEditorModalProps {
+  workflow?: WorkflowTemplate | null;
+  onClose: () => void;
+  onSuccess: (template: WorkflowTemplate) => void;
+}
+
+function WorkflowEditorModal({ workflow, onClose, onSuccess }: WorkflowEditorModalProps) {
+  const isEditing = !!workflow;
+  const [name, setName] = useState(workflow?.name || '');
+  const [description, setDescription] = useState(workflow?.description || '');
+  const [category, setCategory] = useState(workflow?.category || 'Construction');
+  const [tags, setTags] = useState<string[]>(workflow?.tags || []);
+  const [tagInput, setTagInput] = useState('');
+  const [isPrivate, setIsPrivate] = useState(workflow?.isPrivate || false);
+  const [stageView, setStageView] = useState<'list' | 'visual'>('list');
+  const [draggedStage, setDraggedStage] = useState<string | null>(null);
+  const [editorStages, setEditorStages] = useState<StageData[]>(
+    workflow?.stages.map((s, i) => ({
+      id: s.id || `stage-${i + 1}`,
+      name: s.name,
+      description: s.description || '',
+      color: (s.color || 'gray') as any,
+      type: 'process' as const,
+    })) || [
+      { id: '1', name: 'Backlog', description: 'Tasks waiting to be started', color: 'gray' as const, type: 'start' as const },
+      { id: '2', name: 'To Do', description: 'Ready to be worked on', color: 'blue' as const, type: 'process' as const },
+      { id: '3', name: 'In Progress', description: 'Currently being worked on', color: 'yellow' as const, type: 'process' as const },
+      { id: '4', name: 'Done', description: 'Completed', color: 'green' as const, type: 'end' as const },
+    ]
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && tagInput.trim()) {
+      e.preventDefault();
+      if (!tags.includes(tagInput.trim())) {
+        setTags([...tags, tagInput.trim()]);
+      }
+      setTagInput('');
+    }
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setTags(tags.filter(t => t !== tag));
+  };
+
+  const handleAddStage = () => {
+    const newStage: StageData = {
+      id: Date.now().toString(),
+      name: `Stage ${editorStages.length + 1}`,
+      description: '',
+      color: 'blue' as const,
+      type: 'process' as const,
+    };
+    setEditorStages([...editorStages, newStage]);
+  };
+
+  const handleUpdateStage = (id: string, field: keyof StageData, value: any) => {
+    setEditorStages(editorStages.map(stage => 
+      stage.id === id ? { ...stage, [field]: value } : stage
+    ));
+  };
+
+  const handleDeleteStage = (id: string) => {
+    if (editorStages.length > 1) {
+      setEditorStages(editorStages.filter(stage => stage.id !== id));
+    }
+  };
+
+  const handleDragStart = (stageId: string) => {
+    setDraggedStage(stageId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggedStage && draggedStage !== targetId) {
+      const draggedIndex = editorStages.findIndex(s => s.id === draggedStage);
+      const targetIndex = editorStages.findIndex(s => s.id === targetId);
+      const newStages = [...editorStages];
+      const [removed] = newStages.splice(draggedIndex, 1);
+      newStages.splice(targetIndex, 0, removed);
+      setEditorStages(newStages);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedStage(null);
+  };
+
+  const handleEditorChange = (data: { nodes: any[]; edges: any[] }) => {
+    const newStages = data.nodes.map((node) => ({
+      id: node.data.id,
+      name: node.data.name,
+      description: node.data.description,
+      color: node.data.color,
+      type: node.data.type || 'process',
+    }));
+    setEditorStages(newStages);
+  };
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return;
+
+    setIsSaving(true);
+    try {
+      const stagesData = editorStages.map((s, i) => ({
+        id: s.id || `stage-${i + 1}`,
+        name: s.name,
+        description: s.description,
+        color: s.color,
+      }));
+
+      if (isEditing && workflow) {
+        const updatedTemplate = await workflowTemplateService.updateTemplate(workflow.publicId, {
+          name: name.trim(),
+          description: description.trim(),
+          category,
+          tags,
+          stages: stagesData,
+          isPrivate,
+        });
+        onSuccess(updatedTemplate);
+      } else {
+        const newTemplate = await workflowTemplateService.createTemplate({
+          name: name.trim(),
+          description: description.trim(),
+          category,
+          tags,
+          stages: stagesData,
+          isPrivate,
+        });
+        onSuccess(newTemplate);
+      }
+    } catch (error) {
+      toast.error(isEditing ? 'Failed to update template' : 'Failed to create template');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const isValid = name.trim() && editorStages.length > 0;
+
+  // Full page editor mode
+  if (stageView === 'visual') {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-white">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-[#E5E7EB]">
+          <h2 className="text-[18px] font-medium text-[#101828]">
+            {isEditing ? 'Edit Workflow' : 'Create Workflow'} - Visual Editor
+          </h2>
+          <button 
+            onClick={() => setStageView('list')}
+            className="p-2 rounded-lg text-[#6A7282] hover:bg-gray-100 transition-colors"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Workflow Editor */}
+        <div className="flex-1 min-h-0">
+          <WorkflowEditor
+            initialStages={editorStages}
+            onChange={handleEditorChange}
+            onSave={(json) => console.log('Workflow JSON:', json)}
+          />
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-3 p-4 border-t border-[#E5E7EB] bg-gray-50">
+          <button
+            onClick={() => setStageView('list')}
+            className="flex-1 h-11 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
+          >
+            Back to Settings
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-full bg-white">
+      <div className="max-w-[720px] mx-auto py-6 px-6">
+        {/* Back button and title */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+            </button>
+            <h1 className="text-[18px] font-medium text-[#101828]">
+              {isEditing ? 'Edit Workflow Template' : 'Create Workflow Template'}
+            </h1>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Basic Information */}
+          <div className="space-y-6">
+            <h2 className="text-[18px] font-medium text-[#101828]">Basic Information</h2>
+
+            {/* Template Name */}
+            <div className="space-y-2">
+              <label className="text-[14px] text-[#364153]">
+                Template Name <span className="text-[#FB2C36]">*</span>
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g., Construction Standard Workflow"
+                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[16px] text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Description */}
+            <div className="space-y-2">
+              <label className="text-[14px] text-[#364153]">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Describe what this workflow template is for..."
+                rows={3}
+                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+              />
+            </div>
+
+            {/* Category */}
+            <div className="space-y-2">
+              <label className="text-[14px] text-[#364153]">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="Construction">Construction</option>
+                <option value="Software Development">Software Development</option>
+                <option value="Marketing">Marketing</option>
+                <option value="Design">Design</option>
+                <option value="Operations">Operations</option>
+                <option value="HR">HR</option>
+                <option value="Finance">Finance</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            {/* Tags */}
+            <div className="space-y-2">
+              <label className="text-[14px] text-[#364153]">Tags</label>
+              <div className="flex flex-wrap items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2.5 min-h-[48px] focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+                {tags.map((tag) => (
+                  <span key={tag} className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-[13px] font-medium text-blue-700">
+                    {tag}
+                    <button onClick={() => handleRemoveTag(tag)} className="hover:text-blue-900 p-0.5 rounded-full hover:bg-blue-200 transition-colors">
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </span>
+                ))}
+                <input
+                  type="text"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={handleAddTag}
+                  placeholder={tags.length === 0 ? "Type tag and press Enter..." : "Add more..."}
+                  className="flex-1 min-w-[120px] bg-transparent text-[14px] placeholder:text-[#99A1AF] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Visibility */}
+            <div className="space-y-2">
+              <label className="text-[14px] text-[#364153]">Visibility</label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPrivate(false)}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-[10px] h-[45px] text-[14px] font-medium transition-colors",
+                    !isPrivate
+                      ? "bg-[#EFF6FF] border border-[#155DFC] text-[#155DFC]"
+                      : "border border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50"
+                  )}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Public
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPrivate(true)}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-[10px] h-[45px] text-[14px] font-medium transition-colors",
+                    isPrivate
+                      ? "bg-[#EFF6FF] border border-[#155DFC] text-[#155DFC]"
+                      : "border border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50"
+                  )}
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  Private
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Workflow Stages */}
+          <div className="space-y-4 border-t border-[#E5E7EB] pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-[16px] font-medium text-[#101828]">Workflow Stages</h2>
+                <p className="text-[13px] text-[#6A7282]">{editorStages.length} stages defined</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* View Toggle */}
+                <div className="flex items-center gap-1 p-1 bg-[#F3F4F6] rounded-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setStageView('list')}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors",
+                      stageView === 'list'
+                        ? "bg-white shadow-sm text-[#101828]"
+                        : "text-[#4A5565] hover:text-[#101828]"
+                    )}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    </svg>
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStageView('visual')}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors",
+                      stageView === 'visual'
+                        ? "bg-white shadow-sm text-[#101828]"
+                        : "text-[#4A5565] hover:text-[#101828]"
+                    )}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                    </svg>
+                    Visual
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* List View */}
+            <div className="space-y-3">
+              {editorStages.map((stage, index) => (
+                <div
+                  key={stage.id}
+                  draggable
+                  onDragStart={() => handleDragStart(stage.id)}
+                  onDragOver={(e) => handleDragOver(e, stage.id)}
+                  onDragEnd={handleDragEnd}
+                  className={cn(
+                    "flex items-start gap-3 p-4 rounded-[10px] border border-[#E5E7EB] bg-white transition-all",
+                    draggedStage === stage.id && "opacity-50"
+                  )}
+                >
+                  {/* Drag Handle */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <button type="button" className="cursor-grab text-[#9CA3AF] hover:text-[#6B7280]">
+                      <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                      </svg>
+                    </button>
+                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-[12px] font-medium text-blue-600">
+                      {index + 1}
+                    </span>
+                  </div>
+
+                  {/* Stage Fields */}
+                  <div className="flex-1 space-y-2">
+                    <input
+                      type="text"
+                      value={stage.name}
+                      onChange={(e) => handleUpdateStage(stage.id, 'name', e.target.value)}
+                      placeholder="Stage name"
+                      className="w-full bg-transparent text-[14px] font-medium text-[#101828] placeholder:text-[#99A1AF] focus:outline-none border-b border-transparent focus:border-blue-500 pb-1"
+                    />
+                    <input
+                      type="text"
+                      value={stage.description}
+                      onChange={(e) => handleUpdateStage(stage.id, 'description', e.target.value)}
+                      placeholder="Stage description (optional)"
+                      className="w-full bg-transparent text-[13px] text-[#6A7282] placeholder:text-[#99A1AF] focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Delete Button */}
+                  {editorStages.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteStage(stage.id)}
+                      className="p-1 text-[#9CA3AF] hover:text-red-500 transition-colors"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Add Stage Button */}
+              <button
+                type="button"
+                onClick={handleAddStage}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-[10px] border-2 border-dashed border-[#E5E7EB] text-[14px] font-medium text-[#6A7282] hover:border-blue-400 hover:text-blue-600 transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                Add Stage
+              </button>
+
+              {/* Info Box */}
+              <div className="flex items-start gap-3 p-4 rounded-[10px] bg-blue-50 border border-blue-100">
+                <svg className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="text-[14px] text-blue-700">Drag stages to reorder them.</p>
+                  <p className="text-[13px] text-blue-600">Tasks will move through these stages in sequence.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Save Button */}
+          <div className="flex justify-end gap-3 pb-8">
+            <button
+              onClick={onClose}
+              className="inline-flex items-center gap-2 rounded-[10px] border border-gray-200 bg-white h-11 px-6 text-[14px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!isValid || isSaving}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-[10px] h-11 px-6 text-[14px] font-medium text-white transition-colors",
+                isValid && !isSaving
+                  ? "bg-[#155DFC] hover:bg-blue-700"
+                  : "bg-gray-300 cursor-not-allowed"
+              )}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  </svg>
+                  {isEditing ? 'Save Changes' : 'Create Template'}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4,8 +4,10 @@ import { useState, useRef, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
+import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
-import { Settings, FileText, ListTodo, GitBranch, Shield, Users, Bell, Plug, Plus, Pencil, X, Trash2, GripVertical, Eye, EyeOff, LayoutGrid, FolderOpen, FileText as FileDoc, GitCompare, RefreshCcw, AlertTriangle, Puzzle, Save, Tag, Lock, Check, Mail, MessageSquare, Clock, Zap, Link2, Calendar, FileUp, Box, Globe, Scissors, Database, BookOpen, BarChart3, Folder, Code, Loader2, Upload, ChevronRight, CheckCircle2, UserPlus, Copy, Key, Circle } from 'lucide-react';
+import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
+import { Settings, FileText, ListTodo, GitBranch, Shield, Users, Bell, Plug, Plus, Pencil, X, Trash2, GripVertical, Eye, EyeOff, LayoutGrid, FolderOpen, FileText as FileDoc, GitCompare, RefreshCcw, AlertTriangle, Puzzle, Save, Tag, Lock, Check, Mail, MessageSquare, Clock, Zap, Link2, Calendar, FileUp, Box, Globe, Scissors, Database, BookOpen, BarChart3, Folder, Code, Loader2, Upload, ChevronRight, CheckCircle2, UserPlus, Copy, Key, Circle, Eye as EyeIcon } from 'lucide-react';
 
 // Project Templates data
 interface ProjectTemplate {
@@ -346,6 +348,14 @@ export default function SettingsTab({
   
   // Workflow state
   const [selectedWorkflow, setSelectedWorkflow] = useState('construction');
+  const [showCreateWorkflowModal, setShowCreateWorkflowModal] = useState(false);
+  const [showEditWorkflowModal, setShowEditWorkflowModal] = useState(false);
+  const [showDeleteWorkflowModal, setShowDeleteWorkflowModal] = useState(false);
+  const [editingWorkflow, setEditingWorkflow] = useState<WorkflowTemplate | null>(null);
+  const [deletingWorkflow, setDeletingWorkflow] = useState<WorkflowTemplate | null>(null);
+  const [workflowTemplates, setWorkflowTemplates] = useState<WorkflowTemplate[]>([]);
+  const [workflowTemplatesLoading, setWorkflowTemplatesLoading] = useState(false);
+  const [isSavingWorkflow, setIsSavingWorkflow] = useState(false);
   const [workflowSettings, setWorkflowSettings] = useState({
     autoAssign: false,
     notifyStatusChange: false,
@@ -438,6 +448,22 @@ export default function SettingsTab({
       .catch(() => {})
       .finally(() => setIsLoadingDisciplines(false));
   }, [projectPublicId]);
+
+  // Fetch user's workflow templates
+  useEffect(() => {
+    const fetchWorkflowTemplates = async () => {
+      setWorkflowTemplatesLoading(true);
+      try {
+        const res = await workflowTemplateService.getMyTemplates();
+        setWorkflowTemplates(res.templates);
+      } catch (error) {
+        console.error('Failed to fetch workflow templates:', error);
+      } finally {
+        setWorkflowTemplatesLoading(false);
+      }
+    };
+    fetchWorkflowTemplates();
+  }, []);
 
   const handleDeleteDiscipline = async (id: string) => {
     try {
@@ -1616,29 +1642,85 @@ export default function SettingsTab({
                   </div>
                 </div>
 
-                {/* Custom Workflow */}
-                <div 
-                  onClick={() => setSelectedWorkflow('custom')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'custom' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
+                {/* User's Workflow Templates */}
+                {workflowTemplates.length > 0 && workflowTemplates.map((template) => (
+                  <div
+                    key={template.publicId}
+                    onClick={() => setSelectedWorkflow(template.publicId)}
+                    className={cn(
+                      "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
+                      selectedWorkflow === template.publicId
+                        ? "border-[#155DFC] bg-[#F8FAFF]"
+                        : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
+                    )}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
+                          <GitBranch className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-[16px] font-medium text-[#101828]">{template.name}</h3>
+                          <p className="text-[14px] text-[#6A7282] mb-3">{template.description || 'Custom workflow'}</p>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {template.stages.slice(0, 5).map((stage, idx) => (
+                              <span key={stage.id || idx} className="flex items-center">
+                                <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage.name}</span>
+                                {idx < Math.min(template.stages.length - 1, 4) && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
+                              </span>
+                            ))}
+                            {template.stages.length > 5 && (
+                              <span className="px-2 py-1 text-[12px] text-[#6A7282]">+{template.stages.length - 5} more</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Custom Workflow</h3>
-                        <p className="text-[14px] text-[#6A7282]">Create your own workflow stages</p>
+                      <div className="flex items-center gap-2">
+                        {selectedWorkflow === template.publicId && (
+                          <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
+                        )}
+                        {/* Edit Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingWorkflow(template);
+                            setShowEditWorkflowModal(true);
+                          }}
+                          className="p-2 rounded-lg text-[#6A7282] hover:bg-gray-100 hover:text-blue-600 transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        {/* Delete Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingWorkflow(template);
+                            setShowDeleteWorkflowModal(true);
+                          }}
+                          className="p-2 rounded-lg text-[#6A7282] hover:bg-red-50 hover:text-red-600 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
-                    {selectedWorkflow === 'custom' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
+                  </div>
+                ))}
+
+                {/* Create Custom Workflow */}
+                <div
+                  onClick={() => setShowCreateWorkflowModal(true)}
+                  className={cn(
+                    "group rounded-[12px] border-2 p-5 cursor-pointer transition-all flex items-center justify-center min-h-[140px]",
+                    "border-[#E5E7EB] bg-white hover:border-[#155DFC] hover:bg-[#F8FAFF]"
+                  )}
+                >
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="h-12 w-12 rounded-full bg-[#F3F4F6] flex items-center justify-center text-[#6B7280] transition-colors group-hover:bg-[#E0E7FF] group-hover:text-[#155DFC]">
+                      <Plus className="h-6 w-6" />
+                    </div>
+                    <span className="text-[14px] font-medium text-[#374151]">Create Workflow</span>
                   </div>
                 </div>
               </div>
@@ -3138,6 +3220,581 @@ export default function SettingsTab({
         </div>
       </div>
     )}
+
+    {/* Workflow Editor Modal (Create/Edit) */}
+    {(showCreateWorkflowModal || (showEditWorkflowModal && editingWorkflow)) && (
+      <WorkflowEditorModal
+        workflow={showEditWorkflowModal ? editingWorkflow : null}
+        onClose={() => {
+          setShowCreateWorkflowModal(false);
+          setShowEditWorkflowModal(false);
+          setEditingWorkflow(null);
+        }}
+        onSuccess={(template) => {
+          if (showEditWorkflowModal) {
+            setWorkflowTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+            setShowEditWorkflowModal(false);
+            setEditingWorkflow(null);
+            toast.success('Workflow updated successfully');
+          } else {
+            setWorkflowTemplates(prev => [template, ...prev]);
+            setSelectedWorkflow(template.publicId);
+            setShowCreateWorkflowModal(false);
+            toast.success('Workflow created successfully');
+          }
+        }}
+      />
+    )}
+
+    {/* Delete Workflow Modal */}
+    {showDeleteWorkflowModal && deletingWorkflow && (
+      <DeleteWorkflowModal
+        workflow={deletingWorkflow}
+        onClose={() => {
+          setShowDeleteWorkflowModal(false);
+          setDeletingWorkflow(null);
+        }}
+        onSuccess={() => {
+          setWorkflowTemplates(prev => prev.filter(t => t.publicId !== deletingWorkflow.publicId));
+          if (selectedWorkflow === deletingWorkflow.publicId) {
+            setSelectedWorkflow('construction');
+          }
+          setShowDeleteWorkflowModal(false);
+          setDeletingWorkflow(null);
+          toast.success('Workflow deleted successfully');
+        }}
+      />
+    )}
     </>
+  );
+}
+
+// ==================== WORKFLOW MODAL COMPONENTS ====================
+
+interface WorkflowStageInput {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+}
+
+interface WorkflowEditorModalProps {
+  workflow?: WorkflowTemplate | null;
+  onClose: () => void;
+  onSuccess: (template: WorkflowTemplate) => void;
+}
+
+function WorkflowEditorModal({ workflow, onClose, onSuccess }: WorkflowEditorModalProps) {
+  const isEditing = !!workflow;
+  const [name, setName] = useState(workflow?.name || '');
+  const [description, setDescription] = useState(workflow?.description || '');
+  const [category, setCategory] = useState(workflow?.category || 'Construction');
+  const [tags, setTags] = useState<string[]>(workflow?.tags || []);
+  const [tagInput, setTagInput] = useState('');
+  const [isPrivate, setIsPrivate] = useState(workflow?.isPrivate || false);
+  const [stageView, setStageView] = useState<'list' | 'visual'>('list');
+  const [draggedStage, setDraggedStage] = useState<string | null>(null);
+  const [editorStages, setEditorStages] = useState<StageData[]>(
+    workflow?.stages.map((s, i) => ({
+      id: s.id || `stage-${i + 1}`,
+      name: s.name,
+      description: s.description || '',
+      color: s.color as any || 'gray',
+      type: 'process' as const,
+    })) || [
+      { id: '1', name: 'Backlog', description: 'Tasks waiting to be started', color: 'gray' as const, type: 'start' as const },
+      { id: '2', name: 'To Do', description: 'Ready to be worked on', color: 'blue' as const, type: 'process' as const },
+      { id: '3', name: 'In Progress', description: 'Currently being worked on', color: 'yellow' as const, type: 'process' as const },
+      { id: '4', name: 'Done', description: 'Completed', color: 'green' as const, type: 'end' as const },
+    ]
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && tagInput.trim()) {
+      e.preventDefault();
+      if (!tags.includes(tagInput.trim())) {
+        setTags([...tags, tagInput.trim()]);
+      }
+      setTagInput('');
+    }
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setTags(tags.filter(t => t !== tag));
+  };
+
+  const handleAddStage = () => {
+    const newStage: StageData = {
+      id: Date.now().toString(),
+      name: `Stage ${editorStages.length + 1}`,
+      description: '',
+      color: 'blue' as const,
+      type: 'process' as const,
+    };
+    setEditorStages([...editorStages, newStage]);
+  };
+
+  const handleUpdateStage = (id: string, field: keyof StageData, value: any) => {
+    setEditorStages(editorStages.map(stage => 
+      stage.id === id ? { ...stage, [field]: value } : stage
+    ));
+  };
+
+  const handleDeleteStage = (id: string) => {
+    if (editorStages.length > 1) {
+      setEditorStages(editorStages.filter(stage => stage.id !== id));
+    }
+  };
+
+  const handleDragStart = (stageId: string) => {
+    setDraggedStage(stageId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggedStage && draggedStage !== targetId) {
+      const draggedIndex = editorStages.findIndex(s => s.id === draggedStage);
+      const targetIndex = editorStages.findIndex(s => s.id === targetId);
+      const newStages = [...editorStages];
+      const [removed] = newStages.splice(draggedIndex, 1);
+      newStages.splice(targetIndex, 0, removed);
+      setEditorStages(newStages);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedStage(null);
+  };
+
+  const handleEditorChange = (data: { nodes: any[]; edges: any[] }) => {
+    const newStages = data.nodes.map((node) => ({
+      id: node.data.id,
+      name: node.data.name,
+      description: node.data.description,
+      color: node.data.color,
+      type: node.data.type || 'process',
+    }));
+    setEditorStages(newStages);
+  };
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return;
+
+    setIsSaving(true);
+    try {
+      const stagesData = editorStages.map((s, i) => ({
+        id: s.id || `stage-${i + 1}`,
+        name: s.name,
+        description: s.description,
+        color: s.color,
+      }));
+
+      if (isEditing && workflow) {
+        const updatedTemplate = await workflowTemplateService.updateTemplate(workflow.publicId, {
+          name: name.trim(),
+          description: description.trim(),
+          category,
+          tags,
+          stages: stagesData,
+          isPrivate,
+        });
+        onSuccess(updatedTemplate);
+      } else {
+        const newTemplate = await workflowTemplateService.createTemplate({
+          name: name.trim(),
+          description: description.trim(),
+          category,
+          tags,
+          stages: stagesData,
+          isPrivate,
+        });
+        onSuccess(newTemplate);
+      }
+    } catch (error) {
+      toast.error(isEditing ? 'Failed to update workflow' : 'Failed to create workflow');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const isValid = name.trim() && editorStages.length > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative bg-white rounded-[16px] shadow-xl w-[900px] max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col my-8">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between p-6 border-b border-[#E5E7EB]">
+          <h2 className="text-[20px] font-medium text-[#101828]">
+            {isEditing ? 'Edit Workflow' : 'Create Workflow'}
+          </h2>
+          <button onClick={onClose} className="p-1 rounded-lg text-[#6A7282] hover:bg-gray-100 transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+          {/* Workflow Name & Description Row */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[14px] font-medium text-[#364153]">
+                Workflow Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g., My Custom Workflow"
+                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[14px] font-medium text-[#364153]">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="Construction">Construction</option>
+                <option value="Software Development">Software Development</option>
+                <option value="Marketing">Marketing</option>
+                <option value="Design">Design</option>
+                <option value="Operations">Operations</option>
+                <option value="HR">HR</option>
+                <option value="Finance">Finance</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-2">
+            <label className="text-[14px] font-medium text-[#364153]">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe this workflow..."
+              rows={2}
+              className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+            />
+          </div>
+
+          {/* Tags */}
+          <div className="space-y-2">
+            <label className="text-[14px] font-medium text-[#364153]">Tags</label>
+            <div className="flex flex-wrap items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2.5 min-h-[48px] focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+              {tags.map((tag) => (
+                <span key={tag} className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-[13px] font-medium text-blue-700">
+                  {tag}
+                  <button onClick={() => handleRemoveTag(tag)} className="hover:text-blue-900 p-0.5 rounded-full hover:bg-blue-200 transition-colors">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={handleAddTag}
+                placeholder={tags.length === 0 ? "Type tag and press Enter..." : "Add more..."}
+                className="flex-1 min-w-[120px] bg-transparent text-[14px] placeholder:text-[#99A1AF] focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Visibility */}
+          <div className="space-y-2">
+            <label className="text-[14px] font-medium text-[#364153]">Visibility</label>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPrivate(false)}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 rounded-[10px] h-[40px] text-[14px] font-medium transition-colors",
+                  !isPrivate
+                    ? "bg-[#EFF6FF] border border-[#155DFC] text-[#155DFC]"
+                    : "border border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50"
+                )}
+              >
+                <Globe className="h-4 w-4" />
+                Public
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPrivate(true)}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 rounded-[10px] h-[40px] text-[14px] font-medium transition-colors",
+                  isPrivate
+                    ? "bg-[#EFF6FF] border border-[#155DFC] text-[#155DFC]"
+                    : "border border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50"
+                )}
+              >
+                <Lock className="h-4 w-4" />
+                Private
+              </button>
+            </div>
+          </div>
+
+          {/* Workflow Stages Section */}
+          <div className="space-y-3 border-t border-[#E5E7EB] pt-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-[16px] font-medium text-[#101828]">Workflow Stages</h3>
+                <p className="text-[13px] text-[#6A7282]">{editorStages.length} stages defined</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* View Toggle */}
+                <div className="flex items-center gap-1 p-1 bg-[#F3F4F6] rounded-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setStageView('list')}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors",
+                      stageView === 'list'
+                        ? "bg-white shadow-sm text-[#101828]"
+                        : "text-[#4A5565] hover:text-[#101828]"
+                    )}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    </svg>
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStageView('visual')}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors",
+                      stageView === 'visual'
+                        ? "bg-white shadow-sm text-[#101828]"
+                        : "text-[#4A5565] hover:text-[#101828]"
+                    )}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                    </svg>
+                    Visual
+                  </button>
+                </div>
+                {stageView === 'list' && (
+                  <button
+                    type="button"
+                    onClick={handleAddStage}
+                    className="inline-flex items-center gap-1.5 text-[14px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Stage
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* List View */}
+            {stageView === 'list' ? (
+              <div className="space-y-3">
+                {editorStages.map((stage, index) => (
+                  <div
+                    key={stage.id}
+                    draggable
+                    onDragStart={() => handleDragStart(stage.id)}
+                    onDragOver={(e) => handleDragOver(e, stage.id)}
+                    onDragEnd={handleDragEnd}
+                    className={cn(
+                      "flex items-start gap-3 p-4 rounded-[10px] border border-[#E5E7EB] bg-white transition-all",
+                      draggedStage === stage.id && "opacity-50"
+                    )}
+                  >
+                    {/* Drag Handle */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        className="cursor-grab text-[#9CA3AF] hover:text-[#6B7280]"
+                      >
+                        <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M8 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                        </svg>
+                      </button>
+                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-[12px] font-medium text-blue-600">
+                        {index + 1}
+                      </span>
+                    </div>
+
+                    {/* Stage Fields */}
+                    <div className="flex-1 space-y-2">
+                      <input
+                        type="text"
+                        value={stage.name}
+                        onChange={(e) => handleUpdateStage(stage.id, 'name', e.target.value)}
+                        placeholder="Stage name"
+                        className="w-full bg-transparent text-[14px] font-medium text-[#101828] placeholder:text-[#99A1AF] focus:outline-none border-b border-transparent focus:border-blue-500 pb-1"
+                      />
+                      <input
+                        type="text"
+                        value={stage.description}
+                        onChange={(e) => handleUpdateStage(stage.id, 'description', e.target.value)}
+                        placeholder="Stage description (optional)"
+                        className="w-full bg-transparent text-[13px] text-[#6A7282] placeholder:text-[#99A1AF] focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Delete Button */}
+                    {editorStages.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteStage(stage.id)}
+                        className="p-1 text-[#9CA3AF] hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {/* Info Box */}
+                <div className="flex items-start gap-3 p-4 rounded-[10px] bg-blue-50 border border-blue-100">
+                  <Zap className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-[14px] text-blue-700">Drag stages to reorder them.</p>
+                    <p className="text-[13px] text-blue-600">Tasks will move through these stages in sequence.</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Visual View - React Flow Editor */
+              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] h-[400px] relative overflow-hidden">
+                <WorkflowEditor
+                  initialStages={editorStages}
+                  onChange={handleEditorChange}
+                  onSave={(json) => console.log('Workflow JSON:', json)}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex items-center gap-3 p-6 border-t border-[#E5E7EB] bg-gray-50">
+          <button
+            onClick={onClose}
+            className="flex-1 h-11 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!isValid || isSaving}
+            className={cn(
+              "flex-1 h-11 rounded-[10px] text-[14px] font-medium transition-colors flex items-center justify-center gap-2",
+              isValid && !isSaving
+                ? "bg-[#155DFC] text-white hover:bg-blue-700"
+                : "bg-gray-300 text-gray-500 cursor-not-allowed"
+            )}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {isEditing ? 'Saving...' : 'Creating...'}
+              </>
+            ) : (
+              isEditing ? 'Save Changes' : 'Create Workflow'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface DeleteWorkflowModalProps {
+  workflow: WorkflowTemplate;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function DeleteWorkflowModal({ workflow, onClose, onSuccess }: DeleteWorkflowModalProps) {
+  const [confirmText, setConfirmText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (confirmText !== 'DELETE') return;
+
+    setIsDeleting(true);
+    try {
+      await workflowTemplateService.deleteTemplate(workflow.publicId);
+      onSuccess();
+    } catch (error) {
+      toast.error('Failed to delete workflow');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative bg-white rounded-[16px] shadow-xl w-[480px] max-w-[90vw]">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between p-6 border-b border-[#E5E7EB]">
+          <h2 className="text-[20px] font-medium text-red-600">Delete Workflow</h2>
+          <button onClick={onClose} className="p-1 rounded-lg text-[#6A7282] hover:bg-gray-100 transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-6">
+          <div className="flex items-center gap-3 p-4 rounded-[10px] bg-red-50 border border-red-200 mb-5">
+            <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0" />
+            <p className="text-[13px] text-red-700">This action cannot be undone. This will permanently delete the workflow template.</p>
+          </div>
+
+          <p className="text-[14px] text-[#6A7282] mb-3">
+            You are about to delete: <span className="font-medium text-[#101828]">{workflow.name}</span>
+          </p>
+
+          <label className="block text-[14px] font-medium text-[#374151] mb-2">
+            Type <span className="font-mono text-red-600">DELETE</span> to confirm
+          </label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder="Type DELETE to confirm"
+            className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#9CA3AF] focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+          />
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex items-center gap-3 p-6 pt-2">
+          <button
+            onClick={onClose}
+            className="flex-1 h-11 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={confirmText !== 'DELETE' || isDeleting}
+            className={cn(
+              "flex-1 h-11 rounded-[10px] text-[14px] font-medium transition-colors flex items-center justify-center gap-2",
+              confirmText === 'DELETE' && !isDeleting
+                ? "bg-red-600 text-white hover:bg-red-700"
+                : "bg-gray-200 text-gray-400 cursor-not-allowed"
+            )}
+          >
+            {isDeleting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Deleting...
+              </>
+            ) : (
+              'Delete Workflow'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
