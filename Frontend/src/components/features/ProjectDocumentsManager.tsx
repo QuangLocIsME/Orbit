@@ -6,6 +6,25 @@ import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight,
 import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
 
+// Helper function to download file from URL
+const handleDownloadFile = async (url: string, filename: string) => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Download failed');
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    toast.error('Failed to download file');
+  }
+};
+
 interface ProjectDocumentsManagerProps {
   projectId: string;
 }
@@ -497,9 +516,13 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                             </button>
                           )}
 
-                          <a href={child.s3Url || '#'} download className="rounded p-1 text-gray-600 hover:bg-gray-100" title="Download original file">
+                          <button
+                            onClick={() => handleDownloadFile(child.s3Url || '#', child.name)}
+                            className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                            title="Download original file"
+                          >
                             <Download className="h-4 w-4" />
-                          </a>
+                          </button>
                           <button
                             onClick={() => handleDelete(child).catch((e: any) => toast.error(e.message))}
                             className="rounded p-1 text-red-500 hover:bg-red-50"

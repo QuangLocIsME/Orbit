@@ -22,8 +22,7 @@ const requireUserId = (req, res) => {
 };
 
 const normalizeStatus = (value) => {
-    // Keep status as-is (workflow stages can be numeric IDs like "1", "2", etc.)
-    const normalized = normalizeString(value);
+    const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, '-');
     return normalized || 'backlog';
 };
 

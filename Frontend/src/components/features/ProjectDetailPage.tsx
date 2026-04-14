@@ -1545,11 +1545,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               <WorkflowTemplatesDropdown 
                 selectedWorkflow={selectedWorkflowId}
                 projectId={project.publicId}
-                currentStages={selectedWorkflowStages.map(s => ({ id: s.id, name: s.name }))}
-                existingTasks={tasksData.map(t => ({ id: t.id, title: t.title, priority: t.priority, status: t.status, assigneeId: t.assigneeId }))}
                 onSelect={(workflowId, stages) => {
                   setSelectedWorkflowId(workflowId);
-                  setSelectedWorkflowStages(stages.map(s => ({ id: s.id, name: s.name })));
+                  setSelectedWorkflowStages(stages);
                 }}
                 onConfigureClick={() => console.log('Configure workflow clicked')}
               />
