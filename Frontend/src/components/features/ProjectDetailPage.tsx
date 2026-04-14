@@ -17,11 +17,31 @@ import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import ChangesTab from './ChangesTab';
+import TaskBoard, { type WorkflowStage } from './TaskBoard';
+import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+  type DragStartEvent,
+  type DragEndEvent,
+  type DragOverEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 const queryClient = new QueryClient();
 
@@ -59,12 +79,15 @@ const getInitials = (name: string) => {
 
 const mockTeamMembers: TeamMemberView[] = [];
 
-const mockActivities = [
-  { id: '1', action: 'Version 3.2 approved', user: 'Minh Anh', time: '2 hours ago', icon: 'check', color: 'bg-emerald-100 text-emerald-600' },
-  { id: '2', action: 'New clash detected', user: 'System', time: '3 hours ago', icon: 'alert', color: 'bg-red-100 text-red-600' },
-  { id: '3', action: 'Document uploaded', user: 'Thu Trang', time: '5 hours ago', icon: 'upload', color: 'bg-blue-100 text-blue-600' },
-  { id: '4', action: 'Change request submitted', user: 'Tuan Kiet', time: '1 day ago', icon: 'edit', color: 'bg-purple-100 text-purple-600' },
-];
+interface Activity {
+  id: string;
+  type: string;
+  icon: 'check' | 'alert' | 'upload' | 'edit';
+  color: string;
+  action: string;
+  user: string;
+  createdAt: string;
+}
 
 const mockMilestones = [
   { id: '1', name: 'Foundation Complete', date: 'Jan 15, 2024', status: 'completed' },
@@ -109,11 +132,13 @@ interface ChangeRequest {
 }
 
 // Mock Tasks data
+type TaskStatus = string;
+
 interface Task {
   id: string;
   title: string;
   priority: 'urgent' | 'high' | 'medium' | 'low';
-  status: 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
+  status: string;
   tags: string[];
   linkedItem?: { type: 'link'; name: string };
   comments: number;
@@ -367,6 +392,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
   const [documentsCount, setDocumentsCount] = useState(0);
   const [clashCount, setClashCount] = useState(0);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [lastActivity, setLastActivity] = useState<string | null>(null);
+  const [loadingActivities, setLoadingActivities] = useState(true);
 
   // Fetch real team members + documents count + clash count from backend API
   useEffect(() => {
@@ -374,7 +402,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
     const fetchProjectOverviewData = async () => {
       try {
-        const [membersRes, documentsRes, touchRes, clashCountRes] = await Promise.all([
+        const [membersRes, documentsRes, touchRes, clashCountRes, activitiesRes] = await Promise.all([
           fetch('/api/projects/member-list', {
             method: 'POST',
             credentials: 'include',
@@ -394,6 +422,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             body: JSON.stringify({ projectId: project.publicId }),
           }),
           apiFetch(`/api/projects/${project.publicId}/navisworks/clashes/count`),
+          apiFetch(`/api/projects/${project.publicId}/activities`),
         ]);
 
         if (membersRes.ok) {
@@ -434,8 +463,18 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             setClashCount(payload?.total || 0);
           }
         }
+
+        if (activitiesRes.ok) {
+          const payload = await activitiesRes.json();
+          if (!cancelled) {
+            setActivities(Array.isArray(payload?.data) ? payload.data : []);
+            setLastActivity(payload?.lastActivity || null);
+          }
+        }
+        if (!cancelled) setLoadingActivities(false);
       } catch {
         // Keep default values on error
+        if (!cancelled) setLoadingActivities(false);
       }
     };
 
@@ -643,6 +682,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [projectTaskTags, setProjectTaskTags] = useState<string[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedWorkflowStages, setSelectedWorkflowStages] = useState<WorkflowStage[]>([]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
 
   // Get current folder based on path
   const getCurrentFolder = (): DocFolder => {
@@ -766,12 +807,12 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         id: String(t.publicId || t.id || ''),
         title: String(t.title || 'Untitled task'),
         priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as Task['priority'],
-        status: (['backlog', 'todo', 'in-progress', 'review', 'done'].includes(t.status) ? t.status : 'backlog') as Task['status'],
+        status: String(t.status || 'backlog'),
         tags: Array.isArray(t.tags) ? t.tags : [],
         linkedItem: t.linkedUrl ? { type: 'link', name: t.linkedUrl } : undefined,
         comments: Number(t.commentsCount || 0),
         attachments: Number(t.attachmentsCount || 0),
-        dueDate: t.dueDate ? formatDate(t.dueDate) : '',
+        dueDate: t.dueDate || '',
         assigneeId: String(t.assigneeId || ''),
       }));
 
@@ -788,6 +829,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     loadProjectTasks();
   }, [activeTab, loadProjectTasks]);
 
+  const handleTaskStatusChange = useCallback((taskId: string, newStatus: string) => {
+    setTasksData(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as any } : t));
+    // TODO: sync with backend API when ready
+  }, []);
+
   const filteredTasks = useMemo(
     () => tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase())),
     [tasksData, tasksSearchQuery]
@@ -796,7 +842,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   useEffect(() => {
     let cancelled = false;
 
-    const loadProjectTaskTags = async () => {
+    const loadProjectWorkflowData = async () => {
       try {
         const res = await apiFetch('/api/projects/workflow', {
           method: 'POST',
@@ -807,16 +853,35 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         if (!res.ok) return;
 
         const payload = await res.json();
-        const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
+        const data = payload?.data || {};
+        
+        // Load task tags
+        const tags = Array.isArray(data.taskTags) ? data.taskTags : [];
         if (!cancelled) {
           setProjectTaskTags(tags.map((t: any) => String(t?.name || '').toLowerCase()).filter(Boolean));
+        }
+        
+        // Load workflow stages and template ID
+        if (!cancelled) {
+          const stages = Array.isArray(data.stages) ? data.stages : [];
+          if (stages.length > 0) {
+            setSelectedWorkflowStages(stages.map((s: any) => ({
+              id: String(s.id || ''),
+              name: String(s.label || s.name || ''),
+              description: String(s.description || ''),
+            })));
+          }
+          // Set workflow template ID if available
+          if (data.workflowTemplateId) {
+            setSelectedWorkflowId(data.workflowTemplateId);
+          }
         }
       } catch {
         // keep empty => CreateTaskModal fallback handles it
       }
     };
 
-    loadProjectTaskTags();
+    loadProjectWorkflowData();
     return () => {
       cancelled = true;
     };
@@ -874,7 +939,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           <div className="relative w-full px-[300px] pb-6">
             <div className="flex items-center gap-2 text-white/80 text-sm mb-2">
               <ClockIcon className="h-4 w-4" />
-              <span>Last updated {project.lastVisited ? formatRelativeTime(project.lastVisited) : 'recently'}</span>
+              <span>Last updated {lastActivity ? formatRelativeTime(lastActivity) : project.lastVisited ? formatRelativeTime(project.lastVisited) : 'recently'}</span>
             </div>
             <h1 className="text-3xl font-bold text-white mb-2">{project.name}</h1>
             <p className="text-white/80">{project.description}</p>
@@ -1011,38 +1076,58 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               </svg>
               <h3 className="font-semibold text-foreground">Recent activity</h3>
             </div>
-            <div className="space-y-4">
-              {mockActivities.map((activity) => (
-                <div key={activity.id} className="flex items-start gap-3">
-                  <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg shrink-0", activity.color)}>
-                    {activity.icon === 'check' && (
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                    {activity.icon === 'alert' && (
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                    )}
-                    {activity.icon === 'upload' && (
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                    )}
-                    {activity.icon === 'edit' && (
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground">{activity.action}</p>
-                    <p className="text-xs text-muted-foreground">{activity.user} • {activity.time}</p>
-                  </div>
+
+            {loadingActivities ? (
+              <div className="flex items-center justify-center py-8">
+                <svg className="h-6 w-6 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+              </div>
+            ) : activities.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 mb-3">
+                  <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                  </svg>
                 </div>
-              ))}
-            </div>
+                <p className="text-sm text-muted-foreground">No activity yet</p>
+                <p className="text-xs text-muted-foreground mt-1">Upload documents or create change requests to see activity here</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {activities.map((activity) => (
+                  <div key={activity.id} className="flex items-start gap-3">
+                    <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg shrink-0", activity.color)}>
+                      {activity.icon === 'check' && (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      {activity.icon === 'alert' && (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      )}
+                      {activity.icon === 'upload' && (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                      )}
+                      {activity.icon === 'edit' && (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground">{activity.action}</p>
+                      <p className="text-xs text-muted-foreground">{activity.user} • {formatRelativeTime(activity.createdAt)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1456,12 +1541,18 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             {/* Header */}
             <div className="flex items-center justify-between pb-4 border-b border-[#E5E7EB]">
 <div className="flex items-center gap-3">
-  {/* Workflow dropdown */}
-  <WorkflowTemplatesDropdown 
-    selectedWorkflow="construction-standard"
-    onSelect={(workflowId) => console.log('Selected workflow:', workflowId)}
-    onConfigureClick={() => console.log('Configure workflow clicked')}
-  />
+              {/* Workflow dropdown */}
+              <WorkflowTemplatesDropdown 
+                selectedWorkflow={selectedWorkflowId}
+                projectId={project.publicId}
+                currentStages={selectedWorkflowStages.map(s => ({ id: s.id, name: s.name }))}
+                existingTasks={tasksData.map(t => ({ id: t.id, title: t.title, priority: t.priority, status: t.status, assigneeId: t.assigneeId }))}
+                onSelect={(workflowId, stages) => {
+                  setSelectedWorkflowId(workflowId);
+                  setSelectedWorkflowStages(stages.map(s => ({ id: s.id, name: s.name })));
+                }}
+                onConfigureClick={() => console.log('Configure workflow clicked')}
+              />
   {/* New Task button */}
   <button
   onClick={() => setIsNewTaskModalOpen(true)}
@@ -1554,152 +1645,24 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               </div>
             </div>
 
-            {/* Board View */}
+            {/* Board View - Drag & Drop */}
             {tasksViewMode === 'board' && (
-              <div className="flex-1 overflow-x-auto">
-                {isTasksLoading ? (
-                  <div className="py-12 text-center text-[14px] text-[#6A7282]">Loading tasks...</div>
-                ) : (
-                <div className="flex gap-4 min-w-max pb-4">
-                  {taskColumns.map((column) => {
-                    const columnTasks = filteredTasks.filter((t) => t.status === column.id);
-                    return (
-                      <div key={column.id} className="w-[280px] flex flex-col">
-                        {/* Column Header */}
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            {column.icon === 'circle' && (
-                              <div className="h-4 w-4 rounded-full border-2 border-[#D1D5DC]"></div>
-                            )}
-                            {column.icon === 'clock' && (
-                              <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                <circle cx="12" cy="12" r="9" />
-                                <path d="M12 6v6l4 2" />
-                              </svg>
-                            )}
-                            {column.icon === 'check' && (
-                              <svg className="h-4 w-4 text-[#009966]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                <circle cx="12" cy="12" r="9" />
-                                <path d="M9 12l2 2 4-4" />
-                              </svg>
-                            )}
-                            <span className="text-[14px] font-normal text-[#101828]">{column.label}</span>
-                            <span className="text-[12px] text-[#6A7282] bg-[#F3F4F6] px-1.5 py-0.5 rounded">{columnTasks.length}</span>
-                          </div>
-                          <button className="p-1 hover:bg-gray-100 rounded">
-                            <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                            </svg>
-                          </button>
-                        </div>
-
-                        {/* Tasks */}
-                        <div className="flex flex-col gap-2">
-                          {columnTasks.map((task) => {
-                            const assignee = teamMembers.find(m => m.id === task.assigneeId);
-                            return (
-                              <div
-                                key={task.id}
-                                onClick={() => setSelectedTaskId(task.id)}
-                                className="bg-white rounded-[10px] border border-[#E5E7EB] p-3 hover:shadow-sm transition-shadow cursor-pointer"
-                              >
-                                {/* Priority badge */}
-                                <span className={cn(
-                                  "inline-flex items-center rounded px-2 py-0.5 text-[12px] mb-2",
-                                  task.priority === 'urgent' && "bg-[#FEE2E2] text-[#DC2626]",
-                                  task.priority === 'high' && "bg-[#FEE2E2] text-[#DC2626]",
-                                  task.priority === 'medium' && "bg-[#F0F9FF] text-[#0069A8]",
-                                  task.priority === 'low' && "bg-[#F3F4F6] text-[#364153]"
-                                )}>
-                                  {task.priority}
-                                </span>
-
-                                {/* Title */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedTaskId(task.id);
-                                  }}
-                                  className="text-left text-[14px] font-normal text-[#101828] mb-2 block hover:text-[#155DFC] hover:underline"
-                                >
-                                  {task.title}
-                                </button>
-
-                                {/* Tags */}
-                                <div className="flex flex-wrap gap-1 mb-2">
-                                  {task.tags.map((tag) => (
-                                    <span key={tag} className="inline-flex items-center rounded-[6px] bg-[#F3F4F6] px-2 py-0.5 text-[12px] text-[#4A5565]">
-                                      {tag}
-                                    </span>
-                                  ))}
-                                </div>
-
-                                {/* Linked item */}
-                                {task.linkedItem && (
-                                  <div className="flex items-center gap-1 mb-3">
-                                    <svg className="h-3.5 w-3.5 text-[#155DFC]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.193-9.193a4.5 4.5 0 00-6.364 0l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-                                    </svg>
-                                    <span className="text-[12px] text-[#155DFC]">{task.linkedItem.name}</span>
-                                  </div>
-                                )}
-
-                                {/* Footer: metadata and avatar */}
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-3 text-[12px] text-[#6A7282]">
-                                    {task.comments > 0 && (
-                                      <div className="flex items-center gap-1">
-                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-                                        </svg>
-                                        {task.comments}
-                                      </div>
-                                    )}
-                                    {task.attachments > 0 && (
-                                      <div className="flex items-center gap-1">
-                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-                                        </svg>
-                                        {task.attachments}
-                                      </div>
-                                    )}
-                                    {task.dueDate && (
-                                      <div className="flex items-center gap-1">
-                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
-                                        </svg>
-                                        {task.dueDate}
-                                      </div>
-                                    )}
-                                  </div>
-                                  {assignee && (
-                                    <div className={cn("h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white", assignee.color)}>
-                                      {assignee.avatar}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-
-                          {/* Add task button */}
-                          <button
-                            onClick={() => setIsNewTaskModalOpen(true)}
-                            className="w-full py-2 rounded-[10px] border border-dashed border-[#D1D5DC] text-[14px] text-[#6A7282] hover:bg-gray-50 transition-colors"
-                          >
-                            + Add task
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                )}
+              <div className='flex-1 overflow-x-auto'>
+                <TaskBoard
+                  tasks={filteredTasks}
+                  teamMembers={teamMembers}
+                  loading={isTasksLoading}
+                  stages={selectedWorkflowStages}
+                  onTaskStatusChange={handleTaskStatusChange}
+                  onTaskClick={setSelectedTaskId}
+                  onAddTask={(stageId) => {
+                    // TODO: pass stageId to create task modal
+                    setIsNewTaskModalOpen(true);
+                  }}
+                />
               </div>
             )}
-
-            {/* List View */}
+  {/* List View */}
             {tasksViewMode === 'list' && (
               <div className="flex-1 overflow-auto">
                 <div className="rounded-[10px] border border-[#E5E7EB] bg-white overflow-hidden">
@@ -1716,7 +1679,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   {/* Table Body */}
                   {filteredTasks.map((task) => {
                       const assignee = teamMembers.find(m => m.id === task.assigneeId);
-                      const column = taskColumns.find(c => c.id === task.status);
+                      const stage = selectedWorkflowStages.find(s => s.id === task.status);
                       return (
                         <div key={task.id} className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 border-b border-[#E5E7EB] hover:bg-gray-50 items-center">
                           <div className="flex flex-col gap-1">
@@ -1737,14 +1700,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                           </div>
                           <div>
                             <span className={cn(
-                              "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
-                              task.status === 'done' && "bg-[#ECFDF5] text-[#007A55]",
-                              task.status === 'in-progress' && "bg-[#EFF6FF] text-[#155DFC]",
-                              task.status === 'review' && "bg-[#FEF3C7] text-[#B45309]",
-                              task.status === 'todo' && "bg-[#F3F4F6] text-[#364153]",
-                              task.status === 'backlog' && "bg-[#F3F4F6] text-[#6A7282]"
+                              "inline-flex items-center rounded px-2 py-0.5 text-[12px] bg-[#F3F4F6] text-[#364153]"
                             )}>
-                              {column?.label}
+                              {stage?.name || task.status}
                             </span>
                           </div>
                           <div>
@@ -1759,7 +1717,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                             </span>
                           </div>
                           <div className="text-[14px] text-[#6A7282]">
-                            {task.dueDate || '-'}
+                            {task.dueDate ? formatDate(task.dueDate) : '-'}
                           </div>
                           <div>
                             {assignee && (
@@ -1784,17 +1742,14 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               </div>
             )}
 
-            {/* Calendar View Placeholder */}
+            {/* Calendar View */}
             {tasksViewMode === 'calendar' && (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center">
-                  <svg className="h-16 w-16 text-[#D1D5DC] mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
-                    <rect x="3" y="4" width="18" height="18" rx="2" />
-                    <path d="M3 10h18M16 2v4M8 2v4" />
-                  </svg>
-                  <h3 className="text-[16px] font-medium text-[#101828] mb-1">Calendar View</h3>
-                  <p className="text-[14px] text-[#6A7282]">Calendar view coming soon</p>
-                </div>
+              <div className="flex-1 overflow-auto">
+                <TaskCalendar
+                  tasks={filteredTasks}
+                  teamMembers={teamMembers}
+                  onTaskClick={setSelectedTaskId}
+                />
               </div>
             )}
           </div>
@@ -2834,6 +2789,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           onClose={() => setIsNewTaskModalOpen(false)}
           assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
+          workflowStages={selectedWorkflowStages}
           onSubmit={async (task) => {
             try {
               const response = await apiFetch('/api/tasks/create', {

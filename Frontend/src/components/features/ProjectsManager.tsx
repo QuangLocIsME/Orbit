@@ -59,6 +59,7 @@ interface ApiProject {
   role?: string;
   status?: string;
   lastVisitedAt?: string | null;
+  isFavorite?: boolean;
 }
 
 interface ProjectsManagerProps {
@@ -164,7 +165,7 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     issues: 0,
     status: project.status === 'accepted' ? 'active' : 'planning',
     projectType: (project.industry || 'software').toLowerCase(),
-    isFavorite: false,
+    isFavorite: project.isFavorite || false,
     folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
     role: project.role as Project['role'],
   };
@@ -368,6 +369,48 @@ function FolderCard({
         <p className="text-xs text-gray-500">{folder.projectCount} projects</p>
       </div>
     </button>
+  );
+}
+
+// Trash Drop Zone Component
+function TrashDropZone() {
+  const { setNodeRef, isOver } = useDroppable({
+    id: 'trash:zone',
+    data: { type: 'trash' },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'flex w-full items-center gap-3 rounded-xl border-2 border-dashed p-4 transition-all',
+        isOver
+          ? 'border-red-400 bg-red-50 text-red-600 scale-[1.02]'
+          : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:text-gray-500'
+      )}
+    >
+      <div className={cn(
+        'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors',
+        isOver ? 'bg-red-100' : 'bg-gray-100'
+      )}>
+        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+      </div>
+      <div className="min-w-0 flex-1">
+        <h3 className={cn('text-sm font-medium transition-colors', isOver ? 'text-red-700' : 'text-gray-600')}>
+          {isOver ? 'Release to move to trash' : 'Trash'}
+        </h3>
+        <p className="text-xs text-gray-400">Drag a project here to delete</p>
+      </div>
+      <a
+        href="/trash"
+        onClick={e => e.stopPropagation()}
+        className="shrink-0 rounded-lg px-2 py-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+      >
+        View
+      </a>
+    </div>
   );
 }
 
@@ -607,6 +650,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [isTrashing, setIsTrashing] = useState(false);
   const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
   const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -639,23 +683,28 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         .filter(p => !filterStatus || p.status === filterStatus)
     : [];
 
-  // Get priority projects (when on main view) - prioritize Metro Station and Office Complex
-  const priorityProjects = projects
-    .filter(p => p.status === 'active' || p.status === 'review')
+  // Starred projects (favorites) — shown in dedicated section
+  const starredProjects = projects
+    .filter(p => p.isFavorite)
+    .filter(p => !filterStatus || p.status === filterStatus)
+    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  // All projects sorted by starred first, then recency
+  const allProjects = projects
     .filter(p => !filterStatus || p.status === filterStatus)
     .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
-      // Priority projects first
-      const priorityOrder = ['metro-station-phase-2', 'office-complex-tower-a'];
-      const aIndex = priorityOrder.indexOf(a.slug);
-      const bIndex = priorityOrder.indexOf(b.slug);
-      
-      if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-      if (aIndex !== -1) return -1;
-      if (bIndex !== -1) return 1;
-      return 0;
-    })
-;
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return new Date(b.lastVisited).getTime() - new Date(a.lastVisited).getTime();
+    });
+
+  // Get priority projects (when on main view) — non-favorited active/review projects
+  const priorityProjects = projects
+    .filter(p => !p.isFavorite)
+    .filter(p => p.status === 'active' || p.status === 'review')
+    .filter(p => !filterStatus || p.status === filterStatus)
+    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // Handle create folder
   const handleCreateFolder = async (folderData: { name: string; description: string; color: string }) => {
@@ -859,6 +908,39 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     }
   };
 
+  const handleTrashProject = async (projectId: string) => {
+    if (isTrashing) return;
+    setIsTrashing(true);
+
+    // Optimistically remove from list
+    setProjects(prev => prev.filter(p => p.id !== projectId));
+
+    try {
+      const response = await fetch('/api/projects/trash', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId }),
+      });
+
+      if (!response.ok) {
+        // Rollback on failure
+        await loadProjects(false, { force: true });
+        toast.error('Failed to move project to trash');
+        return;
+      }
+
+      toast.success('Project moved to trash', {
+        description: 'You can restore it from the Trash page within 30 days.',
+        action: { label: 'View Trash', onClick: () => { window.location.href = '/trash'; } },
+      });
+
+      await loadProjects(false, { force: true });
+    } finally {
+      setIsTrashing(false);
+    }
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
     if (!id.startsWith('project:')) return;
@@ -872,6 +954,11 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
 
     if (!activeId.startsWith('project:')) return;
     const draggedProjectId = activeId.replace('project:', '');
+
+    if (overId === 'trash:zone') {
+      await handleTrashProject(draggedProjectId);
+      return;
+    }
 
     if (overId?.startsWith('folder:')) {
       const folderId = overId.replace('folder:', '');
@@ -1109,7 +1196,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       {/* Main Content */}
       {!currentFolder ? (
         <>
-          {/* Folders Section */}
+          {/* Folders + Trash Section */}
           <section>
             <h2 className="mb-4 text-sm font-medium text-gray-900">Folders</h2>
             {filteredFolders.length > 0 ? (
@@ -1121,18 +1208,48 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                     onClick={() => setCurrentFolder(folder)}
                   />
                 ))}
+                <TrashDropZone />
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-8 text-center">
-                <FolderIcon className="mx-auto h-10 w-10 text-gray-300" />
-                <p className="mt-2 text-sm text-gray-500">No folders found</p>
+              <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+                <TrashDropZone />
               </div>
             )}
           </section>
 
-          {/* Priority Projects Section */}
+          {/* Starred / Favorited Projects Section */}
+          {starredProjects.length > 0 && (
+            <section>
+              <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-900">
+                <svg className="h-4 w-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+                Starred
+              </h2>
+              <SortableContext
+                items={starredProjects.map((project) => `project:${project.id}`)}
+                strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+              >
+                <div className={cn(
+                  viewMode === 'grid'
+                    ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
+                    : 'space-y-3'
+                )}>
+                  {starredProjects.map((project) => (
+                    viewMode === 'grid'
+                      ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                      : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                  ))}
+                </div>
+              </SortableContext>
+            </section>
+          )}
+
+          {/* All Projects Section */}
           <section>
-            <h2 className="mb-4 text-sm font-medium text-gray-900">Priority Projects</h2>
+            <h2 className="mb-4 text-sm font-medium text-gray-900">
+              {starredProjects.length > 0 ? 'All Projects' : 'Projects'}
+            </h2>
             {priorityProjects.length > 0 ? (
               <SortableContext
                 items={priorityProjects.map((project) => `project:${project.id}`)}
@@ -1150,12 +1267,29 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                 ))}
               </div>
               </SortableContext>
+            ) : allProjects.filter(p => !p.isFavorite).length > 0 ? (
+              <SortableContext
+                items={allProjects.filter(p => !p.isFavorite).map((project) => `project:${project.id}`)}
+                strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+              >
+              <div className={cn(
+                viewMode === 'grid'
+                  ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
+                  : 'space-y-3'
+              )}>
+                {allProjects.filter(p => !p.isFavorite).map((project) => (
+                  viewMode === 'grid'
+                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                ))}
+              </div>
+              </SortableContext>
             ) : (
               <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-8 text-center">
                 <svg className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
-                <p className="mt-2 text-sm text-gray-500">No projects match your filters</p>
+                <p className="mt-2 text-sm text-gray-500">No projects yet</p>
               </div>
             )}
           </section>

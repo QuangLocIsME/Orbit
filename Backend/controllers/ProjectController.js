@@ -137,7 +137,7 @@ class ProjectController {
             const memberships = await ProjectMemberRepository.getProjectsByUser(userId);
             const projectIds = memberships.map((membership) => membership.projectId);
 
-            const projects = await Project.find({ publicId: { $in: projectIds } }).select(
+            const projects = await Project.find({ publicId: { $in: projectIds }, trashedAt: null }).select(
                 '-_id -updatedAt'
             );
 
@@ -218,6 +218,8 @@ class ProjectController {
                 success: true,
                 data: members,
                 isFavorite: member.isFavorite || false,
+                currentUserId: userId,
+                currentRole: member.role || 'member',
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load project members');
@@ -600,7 +602,7 @@ class ProjectController {
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member) return forbidden(res);
 
-            const project = await Project.findOne({ publicId: normalizedProjectId }).select('publicId workflow');
+            const project = await Project.findOne({ publicId: normalizedProjectId }).select('publicId workflow workflowTemplateId');
             if (!project) return notFound(res, 'Project not found');
 
             const template = project.workflow?.template || 'construction-standard';
@@ -616,10 +618,80 @@ class ProjectController {
 
             return res.status(200).json({
                 success: true,
-                data: { template, stages, settings, taskTags },
+                data: { template, stages, settings, taskTags, workflowTemplateId: project.workflowTemplateId },
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load workflow');
+        }
+    }
+
+    async applyWorkflowTemplate(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            const { workflowTemplateId } = req.body || {};
+            
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            if (!workflowTemplateId) {
+                return badRequest(res, 'Missing workflowTemplateId');
+            }
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.role !== 'admin') return forbidden(res);
+
+            // Fetch the workflow template
+            const WorkflowTemplate = require('../models/WorkflowTemplate');
+            const template = await WorkflowTemplate.findOne({ publicId: workflowTemplateId });
+            
+            if (!template) {
+                return notFound(res, 'Workflow template not found');
+            }
+
+            // Update project with template stages
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                {
+                    workflowTemplateId: workflowTemplateId,
+                    workflow: {
+                        template: template.name,
+                        stages: template.stages.map(s => ({ id: s.id, label: s.name })),
+                        settings: {
+                            autoAssignTasks: false,
+                            notifyOnStatusChange: true,
+                            requireApprovalForCompletion: false,
+                        },
+                        taskTags: [],
+                    },
+                    updatedAt: new Date(),
+                },
+                { returnDocument: 'after' }
+            );
+
+            if (!project) return notFound(res, 'Project not found');
+
+            await invalidateUserCaches(userId);
+            socketService.broadcastProject(normalizedProjectId, 'project:workflow-updated', {
+                projectId: normalizedProjectId,
+                workflowTemplateId,
+                workflow: project.workflow,
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Workflow template applied',
+                data: {
+                    workflowTemplateId: project.workflowTemplateId,
+                    workflow: project.workflow,
+                },
+            });
+        } catch (error) {
+            console.error('Error applying workflow template:', error);
+            return handleServerError(res, 'Failed to apply workflow template');
         }
     }
 
@@ -744,6 +816,153 @@ class ProjectController {
             });
         } catch (error) {
             return handleServerError(res, 'Toggle favorite failed');
+        }
+    }
+
+    async trashProject(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            if (!normalizedProjectId) return badRequest(res, 'Missing projectId');
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const project = await Project.findOne({ publicId: normalizedProjectId });
+            if (!project) return notFound(res, 'Project not found');
+
+            // Only project owner can trash it
+            if (project.ownerId !== userId) return forbidden(res);
+
+            project.trashedAt = new Date();
+            project.trashedBy = userId;
+            project.updatedAt = new Date();
+            await project.save();
+
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:trashed', { projectId: normalizedProjectId });
+
+            return res.status(200).json({ success: true, message: 'Project moved to trash' });
+        } catch (error) {
+            return serverError(res, 'Trash project failed');
+        }
+    }
+
+    async restoreProject(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            if (!normalizedProjectId) return badRequest(res, 'Missing projectId');
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const project = await Project.findOne({ publicId: normalizedProjectId, trashedAt: { $ne: null } });
+            if (!project) return notFound(res, 'Trashed project not found');
+
+            if (project.ownerId !== userId) return forbidden(res);
+
+            project.trashedAt = null;
+            project.trashedBy = null;
+            project.updatedAt = new Date();
+            await project.save();
+
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:restored', { projectId: normalizedProjectId });
+
+            return res.status(200).json({ success: true, message: 'Project restored' });
+        } catch (error) {
+            return serverError(res, 'Restore project failed');
+        }
+    }
+
+    async deletePermanentProject(req, res) {
+        try {
+            const normalizedProjectId = getNormalizedProjectId(req);
+            if (!normalizedProjectId) return badRequest(res, 'Missing projectId');
+
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const project = await Project.findOne({ publicId: normalizedProjectId });
+            if (!project) return notFound(res, 'Project not found');
+
+            if (project.ownerId !== userId) return forbidden(res);
+
+            await Project.deleteOne({ publicId: normalizedProjectId });
+            await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
+            await ProjectInviteRepository.removeByProject(normalizedProjectId);
+
+            await invalidateUserCaches(userId);
+
+            return res.status(200).json({ success: true, message: 'Project permanently deleted' });
+        } catch (error) {
+            return serverError(res, 'Delete permanent failed');
+        }
+    }
+
+    async getTrashProjects(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - THIRTY_DAYS_MS);
+
+            // Auto-purge projects older than 30 days in trash
+            const expired = await Project.find({
+                ownerId: userId,
+                trashedAt: { $ne: null, $lte: cutoff },
+            }).select('publicId').lean();
+            if (expired.length > 0) {
+                const expiredIds = expired.map(p => p.publicId);
+                await Project.deleteMany({ publicId: { $in: expiredIds } });
+                for (const eid of expiredIds) {
+                    await ProjectMemberRepository.removeMembersByProject(eid);
+                    await ProjectInviteRepository.removeByProject(eid);
+                }
+                await invalidateUserCaches(userId);
+            }
+
+            const trashedProjects = await Project.find({
+                ownerId: userId,
+                trashedAt: { $ne: null, $gt: cutoff },
+            }).lean();
+
+            // Resolve trashedBy user names
+            const trasherIds = [...new Set(trashedProjects.map(p => p.trashedBy).filter(Boolean))];
+            let trasherMap = {};
+            if (trasherIds.length > 0) {
+                const mongoose = require('mongoose');
+                const validIds = trasherIds.filter(id => { try { return mongoose.Types.ObjectId.isValid(id); } catch { return false; } });
+                if (validIds.length > 0) {
+                    const User = require('../models/User');
+                    const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1 }).lean();
+                    trasherMap = Object.fromEntries(users.map(u => [u._id.toString(), u.fullName]));
+                }
+            }
+
+            const data = trashedProjects.map(project => {
+                const trashedAtDate = new Date(project.trashedAt);
+                const daysElapsed = Math.floor((now - trashedAtDate) / (24 * 60 * 60 * 1000));
+                const daysUntilPermanentDeletion = Math.max(0, 30 - daysElapsed);
+                const trasherName = project.trashedBy ? (trasherMap[project.trashedBy] || 'Unknown') : 'Unknown';
+                return {
+                    publicId: project.publicId,
+                    name: project.name,
+                    type: 'project',
+                    thumbnail: project.coverImageUrl || null,
+                    deletedAt: project.trashedAt,
+                    deletedBy: { fullName: trasherName },
+                    parentFolder: null,
+                    daysUntilPermanentDeletion,
+                };
+            });
+
+            return res.status(200).json({ success: true, data });
+        } catch (error) {
+            return serverError(res, 'Failed to load trash');
         }
     }
 

@@ -3,12 +3,18 @@
 import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
 
+interface WorkflowStage {
+  id: string;
+  name: string;
+}
+
 interface CreateTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit?: (task: TaskFormData) => void;
   assigneeOptions?: { id: string; name: string }[];
   tagOptions?: string[];
+  workflowStages?: WorkflowStage[];
 }
 
 interface TaskFormData {
@@ -22,12 +28,12 @@ interface TaskFormData {
   linkedItems: string;
 }
 
-const statusOptions = [
-  { id: 'backlog', label: 'Backlog' },
-  { id: 'todo', label: 'To Do' },
-  { id: 'in-progress', label: 'In Progress' },
-  { id: 'review', label: 'Review' },
-  { id: 'done', label: 'Done' },
+const defaultStages: WorkflowStage[] = [
+  { id: 'backlog', name: 'Backlog' },
+  { id: 'todo', name: 'To Do' },
+  { id: 'in-progress', name: 'In Progress' },
+  { id: 'review', name: 'Review' },
+  { id: 'done', name: 'Done' },
 ];
 
 const priorityOptions = [
@@ -37,7 +43,7 @@ const priorityOptions = [
   { id: 'urgent', label: 'Urgent' },
 ];
 
-export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions }: CreateTaskModalProps) {
+export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions, workflowStages }: CreateTaskModalProps) {
   const teamMembers = assigneeOptions && assigneeOptions.length > 0
     ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
     : [{ id: '', name: 'Unassigned' }];
@@ -45,9 +51,13 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
   const resolvedTagOptions = Array.isArray(tagOptions)
     ? tagOptions
     : [];
+
+  const stages = workflowStages && workflowStages.length > 0 ? workflowStages : defaultStages;
+  const firstStageId = stages[0]?.id || 'backlog';
+
   const [formData, setFormData] = useState<TaskFormData>({
     title: '',
-    status: 'todo',
+    status: firstStageId,
     priority: 'medium',
     description: '',
     assignee: '',
@@ -78,7 +88,7 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
     onSubmit?.(formData);
     setFormData({
       title: '',
-      status: 'todo',
+      status: firstStageId,
       priority: 'medium',
       description: '',
       assignee: '',
@@ -146,20 +156,20 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
             <label className="text-[14px] text-[#101828]">
               Status<span className="text-[#FF2056]">*</span>
             </label>
-            <div className="flex gap-2">
-              {statusOptions.map((status) => (
+            <div className="flex flex-wrap gap-2">
+              {stages.map((status) => (
                 <button
                   key={status.id}
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, status: status.id }))}
                   className={cn(
-                    "flex-1 px-3 py-2.5 rounded-[10px] text-[14px] text-center transition-all",
+                    "flex-1 min-w-[100px] px-3 py-2.5 rounded-[10px] text-[14px] text-center transition-all",
                     formData.status === status.id
                       ? "bg-[#EFF6FF] border-2 border-[#2B7FFF] text-[#1447E6]"
                       : "bg-white border border-[#E5E7EB] text-[#4A5565] hover:border-gray-300"
                   )}
                 >
-                  {status.label}
+                  {status.name}
                 </button>
               ))}
             </div>

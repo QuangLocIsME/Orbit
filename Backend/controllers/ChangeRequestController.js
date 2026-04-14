@@ -125,6 +125,7 @@ class ChangeRequestController {
                     disciplineId: changeRequest.disciplineId,
                     assignedTo: changeRequest.assignedTo,
                     reviewers: changeRequest.reviewers,
+                    attachments: Array.isArray(changeRequest.attachments) ? changeRequest.attachments : [],
                     estimatedImpact: changeRequest.estimatedImpact || null,
                     estimatedCost: changeRequest.estimatedCost ?? null,
                     estimatedDuration: changeRequest.estimatedDuration || '',
@@ -137,6 +138,68 @@ class ChangeRequestController {
             });
         } catch (error) {
             return errorResponse(res, 500, error.message || 'Failed to create change request');
+        }
+    }
+
+    async update(req, res) {
+        try {
+            const { crId, title, description, priority, affectedModels, disciplineId, assignedTo, reviewers, estimatedImpact, estimatedCost, estimatedDuration, deadline, detailedDescription } = req.body || {};
+            const normalizedCrId = normalizeString(crId);
+
+            if (!normalizedCrId) return errorResponse(res, 400, 'Missing crId');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const changeRequest = await ChangeRequestRepository.findByPublicId(normalizedCrId);
+            if (!changeRequest) return errorResponse(res, 404, 'Change request not found');
+
+            const member = await ProjectMemberRepository.findMember(changeRequest.projectId, userId);
+            if (!member || member.role === 'viewer') return errorResponse(res, 403, 'Forbidden');
+
+            const updates = {};
+            if (title !== undefined)       updates.title       = normalizeString(title);
+            if (description !== undefined) updates.description = normalizeString(description);
+            if (priority !== undefined && ['low','medium','high','urgent'].includes(priority)) updates.priority = priority;
+            if (affectedModels !== undefined) updates.affectedModels = Array.isArray(affectedModels) ? affectedModels : [];
+            if (disciplineId !== undefined) updates.disciplineId = normalizeString(disciplineId) || null;
+            if (assignedTo !== undefined)  updates.assignedTo  = Array.isArray(assignedTo)  ? assignedTo  : [];
+            if (reviewers !== undefined)   updates.reviewers   = Array.isArray(reviewers)   ? reviewers   : [];
+            if (estimatedImpact !== undefined) updates.estimatedImpact = ['low','medium','high'].includes(estimatedImpact) ? estimatedImpact : null;
+            if (estimatedCost !== undefined) updates.estimatedCost = estimatedCost != null && !isNaN(Number(estimatedCost)) ? Number(estimatedCost) : null;
+            if (estimatedDuration !== undefined) updates.estimatedDuration = normalizeString(estimatedDuration);
+            if (deadline !== undefined) updates.deadline = deadline ? new Date(deadline) : null;
+            if (detailedDescription !== undefined) updates.detailedDescription = normalizeString(detailedDescription);
+
+            const updated = await ChangeRequestRepository.update(normalizedCrId, updates);
+
+            return res.status(200).json({
+                success: true,
+                message: 'Change request updated',
+                data: {
+                    publicId: updated.publicId,
+                    crId: updated.crId,
+                    title: updated.title,
+                    description: updated.description,
+                    status: updated.status,
+                    priority: updated.priority,
+                    affectedModels: Array.isArray(updated.affectedModels) ? updated.affectedModels : [],
+                    disciplineId: updated.disciplineId || null,
+                    assignedTo: Array.isArray(updated.assignedTo) ? updated.assignedTo : [],
+                    reviewers: Array.isArray(updated.reviewers) ? updated.reviewers : [],
+                    attachments: Array.isArray(updated.attachments) ? updated.attachments : [],
+                    estimatedImpact: updated.estimatedImpact || null,
+                    estimatedCost: updated.estimatedCost ?? null,
+                    estimatedDuration: updated.estimatedDuration || '',
+                    deadline: updated.deadline || null,
+                    detailedDescription: updated.detailedDescription || '',
+                    createdBy: updated.createdBy,
+                    createdAt: updated.createdAt,
+                    updatedAt: updated.updatedAt,
+                },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to update change request');
         }
     }
 
@@ -169,6 +232,14 @@ class ChangeRequestController {
                 return errorResponse(res, 403, 'Forbidden');
             }
 
+            // Only admin, CR creator, or reviewers can change status
+            const isAdmin    = member.role === 'admin';
+            const isCreator  = changeRequest.createdBy === userId;
+            const isReviewer = Array.isArray(changeRequest.reviewers) && changeRequest.reviewers.includes(userId);
+            if (!isAdmin && !isCreator && !isReviewer) {
+                return errorResponse(res, 403, 'Only admins, the CR creator, or reviewers can update status');
+            }
+
             const updated = await ChangeRequestRepository.updateStatus(normalizedCrId, normalizedStatus);
 
             return res.status(200).json({
@@ -182,6 +253,91 @@ class ChangeRequestController {
             });
         } catch (error) {
             return errorResponse(res, 500, error.message || 'Failed to update change request status');
+        }
+    }
+
+    async listComments(req, res) {
+        try {
+            const { crId, projectId } = req.body || {};
+            if (!crId || !projectId) return errorResponse(res, 400, 'Missing crId or projectId');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            if (!member) return errorResponse(res, 403, 'Forbidden');
+
+            const CRComment = require('../models/CRComment');
+            const mongoose = require('mongoose');
+
+            const comments = await CRComment.find({ crId, projectId }).sort({ createdAt: 1 }).lean();
+
+            const authorIds = [...new Set(comments.map(c => c.authorId).filter(Boolean))];
+            let authorMap = {};
+            if (authorIds.length > 0) {
+                const validIds = authorIds.filter(id => { try { return mongoose.Types.ObjectId.isValid(id); } catch { return false; } });
+                if (validIds.length > 0) {
+                    const User = require('../models/User');
+                    const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1 }).lean();
+                    authorMap = Object.fromEntries(users.map(u => [u._id.toString(), u.fullName]));
+                }
+            }
+
+            const data = comments.map(c => ({
+                publicId: c.publicId,
+                authorId: c.authorId,
+                authorName: authorMap[c.authorId] || 'Unknown',
+                content: c.content,
+                createdAt: c.createdAt,
+            }));
+
+            return res.status(200).json({ success: true, data });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to list comments');
+        }
+    }
+
+    async createComment(req, res) {
+        try {
+            const { crId, projectId, content } = req.body || {};
+            if (!crId || !projectId) return errorResponse(res, 400, 'Missing crId or projectId');
+            if (!normalizeString(content)) return errorResponse(res, 400, 'Comment content is required');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            if (!member) return errorResponse(res, 403, 'Forbidden');
+
+            const CRComment = require('../models/CRComment');
+            const mongoose = require('mongoose');
+
+            const comment = await CRComment.create({
+                crId,
+                projectId,
+                authorId: userId,
+                content: normalizeString(content),
+            });
+
+            let authorName = 'Unknown';
+            if (mongoose.Types.ObjectId.isValid(userId)) {
+                const User = require('../models/User');
+                const user = await User.findById(userId).select('fullName').lean();
+                authorName = user?.fullName || 'Unknown';
+            }
+
+            return res.status(201).json({
+                success: true,
+                data: {
+                    publicId: comment.publicId,
+                    authorId: comment.authorId,
+                    authorName,
+                    content: comment.content,
+                    createdAt: comment.createdAt,
+                },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to create comment');
         }
     }
 

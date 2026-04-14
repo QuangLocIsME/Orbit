@@ -14,6 +14,7 @@ const ProjectSchema = new mongoose.Schema({
     industry: { type: String, default: '', trim: true },
     coverImageUrl: { type: String, default: '', trim: true },
     folderIds: { type: [String], default: [], index: true },
+    workflowTemplateId: { type: String, default: null, index: true },
     workflow: {
         template: { type: String, default: 'construction-standard' },
         stages: {
@@ -52,6 +53,8 @@ const ProjectSchema = new mongoose.Schema({
             ],
         },
     },
+    trashedAt: { type: Date, default: null },
+    trashedBy: { type: String, default: null },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });
