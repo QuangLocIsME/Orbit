@@ -11,7 +11,14 @@ async function ensureConnected() {
     if (!enabled) return null;
 
     if (!client) {
-        client = createClient({ url: redisUrl });
+        client = createClient({
+            url: redisUrl,
+            socket: {
+                // If Redis is unavailable in local dev, do not retry forever.
+                reconnectStrategy: () => false,
+                connectTimeout: 3000,
+            },
+        });
 
         client.on('error', (error) => {
             console.error('[Redis] error:', error?.message || error);
@@ -24,6 +31,7 @@ async function ensureConnected() {
         connectingPromise = client.connect().catch((error) => {
             console.error('[Redis] connect failed:', error?.message || error);
             enabled = false;
+            client = null;
             return null;
         }).finally(() => {
             connectingPromise = null;

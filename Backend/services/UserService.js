@@ -9,8 +9,11 @@ const {
 const { normalizeEmail, normalizeString, requireString } = require('../utils/sanitize');
 const { validateEmail, validateResetCode } = require('../utils/validators');
 const { logSecurityEvent } = require('../utils/securityLog');
-const bcrypt = require('bcrypt');
+const { promisify } = require('util');
+const bcrypt = require('bcryptjs');
 
+const hashPassword = promisify(bcrypt.hash);
+const comparePassword = promisify(bcrypt.compare);
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('invalid_password', 10);
 
 class UserService {
@@ -34,7 +37,7 @@ class UserService {
             throw new Error('Email already exists.');
         }
 
-        const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
+        const hashedPassword = await hashPassword(normalizedPassword, 10);
         const avatarImage = userData?.avatar || userData?.image || null;
         const newUser = {
             fullName: normalizedFullName,
@@ -55,7 +58,7 @@ class UserService {
         }
         const user = await UserRepository.findByEmail(normalizedEmail);
         const passwordHash = user?.password;
-        const isMatch = await bcrypt.compare(normalizedPassword, passwordHash || DUMMY_PASSWORD_HASH);
+        const isMatch = await comparePassword(normalizedPassword, passwordHash || DUMMY_PASSWORD_HASH);
         if (!user || !isMatch) {
             logSecurityEvent('auth.login.failed', { email: normalizedEmail });
             throw new Error('Email or password is incorrect.');
@@ -148,7 +151,7 @@ class UserService {
             throw new Error('Invalid or expired reset link. Please request a new one.');
         }
 
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        const hashedPassword = await hashPassword(newPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
         await UserRepository.clearResetPassword(user._id);
         logSecurityEvent('auth.password.reset', { userId: user._id, email: user.email });
@@ -186,7 +189,7 @@ class UserService {
             throw new Error('Invalid or expired code. Please request a new one.');
         }
 
-        const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
+        const hashedPassword = await hashPassword(normalizedPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
         await UserRepository.clearResetPassword(user._id);
         logSecurityEvent('auth.password.reset', { userId: user._id, email: user.email });

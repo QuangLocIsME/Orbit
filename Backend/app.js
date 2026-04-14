@@ -100,6 +100,8 @@ app.use((err, req, res, nextHandler) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// httpServer.requestTimeout = Number(process.env.HTTP_REQUEST_TIMEOUT_MS || 600000);
+// httpServer.headersTimeout = Number(process.env.HTTP_HEADERS_TIMEOUT_MS || 610000);
 httpServer.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
