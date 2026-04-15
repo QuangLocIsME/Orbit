@@ -5,15 +5,6 @@ import { cn } from '@/lib/utils';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
-import WorkflowMigrationModal from './WorkflowMigrationModal';
-
-interface Task {
-  id: string;
-  title: string;
-  priority: string;
-  status: string;
-  assigneeId: string;
-}
 
 interface WorkflowStageInfo {
   id: string;
@@ -23,8 +14,6 @@ interface WorkflowStageInfo {
 interface WorkflowTemplatesDropdownProps {
   selectedWorkflow?: string;
   projectId?: string;
-  currentStages?: WorkflowStageInfo[];
-  existingTasks?: Task[];
   onSelect?: (workflowId: string, stages: WorkflowStageInfo[]) => void;
   onConfigureClick?: () => void;
 }
@@ -32,8 +21,6 @@ interface WorkflowTemplatesDropdownProps {
 export default function WorkflowTemplatesDropdown({ 
   selectedWorkflow = '',
   projectId,
-  currentStages = [],
-  existingTasks = [],
   onSelect,
   onConfigureClick 
 }: WorkflowTemplatesDropdownProps) {
@@ -42,8 +29,6 @@ export default function WorkflowTemplatesDropdown({
   const [customTemplates, setCustomTemplates] = useState<WorkflowTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [showMigrationModal, setShowMigrationModal] = useState(false);
-  const [pendingWorkflow, setPendingWorkflow] = useState<{ publicId: string; stages: WorkflowStageInfo[] } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Sync selected with prop
@@ -94,22 +79,6 @@ export default function WorkflowTemplatesDropdown({
     if (projectId) {
       setIsApplying(true);
       try {
-        // If there are existing tasks and current stages are different, show migration modal
-        if (existingTasks.length > 0 && currentStages.length > 0) {
-          const hasChanges = currentStages.some(cs => {
-            return !template?.stages.some(ts => ts.id === cs.id);
-          });
-          
-          if (hasChanges) {
-            setPendingWorkflow({ publicId: workflowId, stages: template?.stages || [] });
-            setShowMigrationModal(true);
-            setIsOpen(false);
-            setIsApplying(false);
-            return;
-          }
-        }
-
-        // No existing tasks or same stages - apply directly
         const res = await apiFetch('/api/projects/workflow/apply-template', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -142,161 +111,112 @@ export default function WorkflowTemplatesDropdown({
     setIsOpen(false);
   };
 
-  const handleMigrationComplete = async (taskStatusMap: Map<string, string>) => {
-    if (!pendingWorkflow || !projectId) return;
-
-    try {
-      // Apply the workflow template
-      const res = await apiFetch('/api/projects/workflow/apply-template', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          workflowTemplateId: pendingWorkflow.publicId,
-        }),
-      });
-
-      if (!res.ok) {
-        toast.error('Failed to apply workflow template');
-        return;
-      }
-
-      toast.success('Workflow template applied with task migration');
-      setSelected(pendingWorkflow.publicId);
-      onSelect?.(pendingWorkflow.publicId, pendingWorkflow.stages);
-    } catch (error) {
-      console.error('Failed to apply workflow:', error);
-      toast.error('Failed to apply workflow template');
-    } finally {
-      setShowMigrationModal(false);
-      setPendingWorkflow(null);
-    }
-  };
-
   return (
-    <>
-      <div className="relative" ref={dropdownRef}>
-        {/* Trigger Button */}
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          disabled={allTemplates.length === 0 || isApplying}
-          className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-[14px] text-[#101828] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isApplying ? (
-            <>
-              <svg className="h-4 w-4 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <span className="text-[#6A7282]">Applying...</span>
-            </>
-          ) : selectedTemplate ? (
-            <>
-              <span className="h-2 w-2 rounded-full bg-[#155DFC]"></span>
-              <span>{selectedTemplate.name}</span>
-              <span className="text-[12px] text-[#6A7282]">({selectedTemplate.stages.length} stages)</span>
-            </>
-          ) : (
-            <span className="text-[#6A7282]">Select Workflow</span>
-          )}
-          <svg 
-            className={cn("h-4 w-4 text-[#99A1AF] transition-transform", isOpen && "rotate-180")} 
-            fill="none" 
-            stroke="currentColor" 
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        {/* Dropdown Menu */}
-        {isOpen && (
-          <div className="absolute top-full left-0 mt-2 w-[300px] bg-white rounded-[12px] shadow-[0px_10px_40px_-10px_rgba(0,0,0,0.15)] border border-[#E5E7EB] z-50 overflow-hidden">
-            {/* Header */}
-            <div className="px-4 py-3 border-b border-[#E5E7EB]">
-              <span className="text-[12px] font-medium text-[#6A7282] uppercase tracking-wider">
-                My Workflow Templates
-              </span>
-            </div>
-
-            {/* Custom Templates */}
-            {allTemplates.length > 0 ? (
-              <div className="py-1">
-                {allTemplates.map((workflow) => (
-                  <button
-                    key={workflow.publicId}
-                    onClick={() => handleSelect(workflow.publicId)}
-                    disabled={isApplying}
-                    className={cn(
-                      "w-full flex items-center justify-between px-4 py-3 text-left transition-colors",
-                      selected === workflow.publicId
-                        ? "bg-[#EFF6FF] text-[#155DFC]"
-                        : "text-[#101828] hover:bg-gray-50",
-                      isApplying && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <span className={cn(
-                      "text-[14px]",
-                      selected === workflow.publicId ? "font-medium" : "font-normal"
-                    )}>
-                      {workflow.name}
-                    </span>
-                    <span className={cn(
-                      "text-[12px]",
-                      selected === workflow.publicId ? "text-[#155DFC]" : "text-[#6A7282]"
-                    )}>
-                      {workflow.stages.length} stages
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : !isLoading && (
-              <div className="px-4 py-6 text-center text-[13px] text-[#6A7282]">
-                No workflow templates yet.
-              </div>
-            )}
-
-            {isLoading && (
-              <div className="px-4 py-3 text-[13px] text-[#6A7282]">
-                Loading...
-              </div>
-            )}
-
-            {/* Configure Link */}
-            <div className="border-t border-[#E5E7EB]">
-              <button
-                onClick={() => {
-                  onConfigureClick?.();
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-4 py-3 text-[#155DFC] hover:bg-gray-50 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span className="text-[14px]">Configure Workflow</span>
-              </button>
-            </div>
-          </div>
+    <div className="relative" ref={dropdownRef}>
+      {/* Trigger Button */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={allTemplates.length === 0 || isApplying}
+        className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-[14px] text-[#101828] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {isApplying ? (
+          <>
+            <svg className="h-4 w-4 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-[#6A7282]">Applying...</span>
+          </>
+        ) : selectedTemplate ? (
+          <>
+            <span className="h-2 w-2 rounded-full bg-[#155DFC]"></span>
+            <span>{selectedTemplate.name}</span>
+            <span className="text-[12px] text-[#6A7282]">({selectedTemplate.stages.length} stages)</span>
+          </>
+        ) : (
+          <span className="text-[#6A7282]">Select Workflow</span>
         )}
-      </div>
+        <svg 
+          className={cn("h-4 w-4 text-[#99A1AF] transition-transform", isOpen && "rotate-180")} 
+          fill="none" 
+          stroke="currentColor" 
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
 
-      {/* Workflow Migration Modal */}
-      {showMigrationModal && pendingWorkflow && (
-        <WorkflowMigrationModal
-          isOpen={showMigrationModal}
-          onClose={() => {
-            setShowMigrationModal(false);
-            setPendingWorkflow(null);
-          }}
-          tasks={existingTasks}
-          oldStages={currentStages}
-          newStages={pendingWorkflow.stages}
-          projectId={projectId || ''}
-          onComplete={handleMigrationComplete}
-        />
+      {/* Dropdown Menu */}
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-2 w-[300px] bg-white rounded-[12px] shadow-[0px_10px_40px_-10px_rgba(0,0,0,0.15)] border border-[#E5E7EB] z-50 overflow-hidden">
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-[#E5E7EB]">
+            <span className="text-[12px] font-medium text-[#6A7282] uppercase tracking-wider">
+              My Workflow Templates
+            </span>
+          </div>
+
+          {/* Custom Templates */}
+          {allTemplates.length > 0 ? (
+            <div className="py-1">
+              {allTemplates.map((workflow) => (
+                <button
+                  key={workflow.publicId}
+                  onClick={() => handleSelect(workflow.publicId)}
+                  disabled={isApplying}
+                  className={cn(
+                    "w-full flex items-center justify-between px-4 py-3 text-left transition-colors",
+                    selected === workflow.publicId
+                      ? "bg-[#EFF6FF] text-[#155DFC]"
+                      : "text-[#101828] hover:bg-gray-50",
+                    isApplying && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <span className={cn(
+                    "text-[14px]",
+                    selected === workflow.publicId ? "font-medium" : "font-normal"
+                  )}>
+                    {workflow.name}
+                  </span>
+                  <span className={cn(
+                    "text-[12px]",
+                    selected === workflow.publicId ? "text-[#155DFC]" : "text-[#6A7282]"
+                  )}>
+                    {workflow.stages.length} stages
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : !isLoading && (
+            <div className="px-4 py-6 text-center text-[13px] text-[#6A7282]">
+              No workflow templates yet.
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="px-4 py-3 text-[13px] text-[#6A7282]">
+              Loading...
+            </div>
+          )}
+
+          {/* Configure Link */}
+          <div className="border-t border-[#E5E7EB]">
+            <button
+              onClick={() => {
+                onConfigureClick?.();
+                setIsOpen(false);
+              }}
+              className="w-full flex items-center gap-2 px-4 py-3 text-[#155DFC] hover:bg-gray-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span className="text-[14px]">Configure Workflow</span>
+            </button>
+          </div>
+        </div>
       )}
-    </>
+    </div>
   );
 }

@@ -643,7 +643,10 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    if (typeof window === 'undefined') return 'grid';
+    return (localStorage.getItem('orbit-projects-view') as 'grid' | 'list') || 'grid';
+  });
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
@@ -651,6 +654,11 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isTrashing, setIsTrashing] = useState(false);
+
+  // Persist viewMode to localStorage
+  useEffect(() => {
+    localStorage.setItem('orbit-projects-view', viewMode);
+  }, [viewMode]);
   const projectsCacheRef = useRef<{ data: Project[]; expiresAt: number } | null>(null);
   const foldersCacheRef = useRef<{ data: ApiFolder[]; expiresAt: number } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);

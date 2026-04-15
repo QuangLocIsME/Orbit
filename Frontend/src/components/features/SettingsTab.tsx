@@ -7,6 +7,16 @@ import { apiFetch } from '@/lib/api-client';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Settings, FileText, ListTodo, GitBranch, Shield, Users, Bell, Plug, Plus, Pencil, X, Trash2, GripVertical, Eye, EyeOff, LayoutGrid, FolderOpen, FileText as FileDoc, GitCompare, RefreshCcw, AlertTriangle, Puzzle, Save, Tag, Lock, Check, Mail, MessageSquare, Clock, Zap, Link2, Calendar, FileUp, Box, Globe, Scissors, Database, BookOpen, BarChart3, Folder, Code, Loader2, Upload, ChevronRight, CheckCircle2, UserPlus, Copy, Key, Circle, Eye as EyeIcon } from 'lucide-react';
 
 // Project Templates data
@@ -426,6 +436,7 @@ export default function SettingsTab({
   // Delete Project Modal state
   const [showDeleteProjectModal, setShowDeleteProjectModal] = useState(false);
   const [deleteProjectConfirmText, setDeleteProjectConfirmText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!projectPublicId) return;
@@ -479,6 +490,24 @@ export default function SettingsTab({
       }
     } catch {
       toast.error('Failed to delete discipline');
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (deleteProjectConfirmText !== 'DELETE') return;
+    setIsDeleting(true);
+    try {
+      await apiFetch(`/api/projects/trash`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: projectPublicId }),
+      });
+      toast.success('Project moved to trash');
+      navigate('/projects');
+    } catch {
+      toast.error('Failed to delete project');
+    } finally {
+      setIsDeleting(false);
     }
   };
   
@@ -3157,69 +3186,41 @@ export default function SettingsTab({
     )}
     
     {/* Delete Project Modal */}
-    {showDeleteProjectModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        <div className="absolute inset-0 bg-black/30" onClick={() => { setShowDeleteProjectModal(false); setDeleteProjectConfirmText(''); }} />
-        <div className="relative bg-white rounded-[16px] shadow-xl w-[480px] max-w-[90vw]">
-          {/* Modal Header */}
-          <div className="flex items-center justify-between p-6 border-b border-[#E5E7EB]">
-            <h2 className="text-[20px] font-medium text-red-600">Delete Project</h2>
-            <button 
-              onClick={() => { setShowDeleteProjectModal(false); setDeleteProjectConfirmText(''); }}
-              className="p-1 rounded-lg text-[#6A7282] hover:bg-gray-100 transition-colors"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-
-          {/* Modal Body */}
-          <div className="p-6">
-            <div className="flex items-center gap-3 p-4 rounded-[10px] bg-red-50 border border-red-200 mb-5">
-              <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0" />
-              <p className="text-[13px] text-red-700">This action cannot be undone. This will permanently delete the project and all associated data.</p>
-            </div>
-            
-            <label className="block text-[14px] font-medium text-[#374151] mb-2">
-              Type <span className="font-mono text-red-600">DELETE</span> to confirm
-            </label>
-            <input
-              type="text"
-              value={deleteProjectConfirmText}
-              onChange={(e) => setDeleteProjectConfirmText(e.target.value)}
-              placeholder="Type DELETE to confirm"
-              className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-[14px] text-[#101828] placeholder:text-[#9CA3AF] focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
-            />
-          </div>
-
-          {/* Modal Footer */}
-          <div className="flex items-center gap-3 p-6 pt-2">
-            <button
-              onClick={() => { setShowDeleteProjectModal(false); setDeleteProjectConfirmText(''); }}
-              className="flex-1 h-11 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (deleteProjectConfirmText === 'DELETE') {
-                  // Navigate back to projects page
-                  navigate('/projects');
-                }
-              }}
-              disabled={deleteProjectConfirmText !== 'DELETE'}
-              className={cn(
-                "flex-1 h-11 rounded-[10px] text-[14px] font-medium transition-colors",
-                deleteProjectConfirmText === 'DELETE'
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
-              )}
-            >
-              Delete Project
-            </button>
-          </div>
+    <AlertDialog open={showDeleteProjectModal} onOpenChange={(open) => {
+      setShowDeleteProjectModal(open);
+      if (!open) setDeleteProjectConfirmText('');
+    }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Project</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to delete this project? This action cannot be undone and may lead to permanent loss of all project information, including documents, settings, and related data.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="mt-4">
+          <label className="text-sm text-muted-foreground">
+            Type <span className="font-semibold text-foreground">DELETE</span> to confirm
+          </label>
+          <input
+            type="text"
+            value={deleteProjectConfirmText}
+            onChange={(e) => setDeleteProjectConfirmText(e.target.value)}
+            placeholder="DELETE"
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+          />
         </div>
-      </div>
-    )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDeleteProject}
+            disabled={deleteProjectConfirmText !== 'DELETE' || isDeleting}
+            className="bg-red-600 hover:bg-red-700 text-white"
+          >
+            {isDeleting ? 'Deleting...' : 'Delete Project'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     {/* Workflow Editor Modal (Create/Edit) */}
     {(showCreateWorkflowModal || (showEditWorkflowModal && editingWorkflow)) && (
