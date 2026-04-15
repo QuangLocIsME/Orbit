@@ -91,14 +91,21 @@ async function processJob(jobId) {
         });
 
         if (isIfcFile) {
-            await publishIfcConversionJob({
-                projectId: job.projectId,
-                documentId: document.publicId,
-                versionId: document.publicId,
-                ifcS3Bucket: document.s3Bucket,
-                ifcS3Key: document.s3Key,
-                requestedBy: job.uploaderId,
-            });
+            try {
+                await publishIfcConversionJob({
+                    projectId: job.projectId,
+                    documentId: document.publicId,
+                    versionId: document.publicId,
+                    ifcS3Bucket: document.s3Bucket,
+                    ifcS3Key: document.s3Key,
+                    requestedBy: job.uploaderId,
+                });
+            } catch (queueErr) {
+                console.warn(
+                    '[packageUploadWorker] IFC conversion queue publish skipped:',
+                    queueErr?.message || queueErr
+                );
+            }
         }
 
         // Dọn temp file sau khi upload S3 thành công

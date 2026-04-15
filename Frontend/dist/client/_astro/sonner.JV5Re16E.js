@@ -1,0 +1,1 @@
+import{j as o}from"./jsx-runtime.u17CrQMm.js";import{T as r}from"./index.BLKzteYV.js";import{t as p}from"./index.BLKzteYV.js";const i=({...t})=>o.jsx(r,{theme:"light",richColors:!0,closeButton:!0,position:"bottom-right",...t});export{i as Toaster,p as toast};

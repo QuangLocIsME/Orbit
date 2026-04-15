@@ -72,9 +72,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [activePath, setActivePath] = useState(() =>
     typeof window === 'undefined' ? currentPath : window.location.pathname
   );
-  const [authUser, setAuthUser] = useState<User | null>(() =>
-    typeof window === 'undefined' ? null : getCurrentUser()
-  );
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
@@ -220,10 +218,10 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         >
           {/* Expanded state */}
           <div className={cn('flex items-center gap-3', isCollapsed && 'hidden')}>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
+            <div suppressHydrationWarning className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
               {displayInitials}
             </div>
-            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
+            <span suppressHydrationWarning className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
           </div>
           {!isCollapsed && (
             <svg
@@ -238,7 +236,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
           {/* Collapsed state */}
           {isCollapsed && (
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
+            <div suppressHydrationWarning className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
               {displayInitials}
             </div>
           )}

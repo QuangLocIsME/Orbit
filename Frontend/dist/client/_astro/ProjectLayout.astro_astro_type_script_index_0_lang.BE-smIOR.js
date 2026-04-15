@@ -1,1 +1,0 @@
-import{n as i}from"./router.BRjOBFNg.js";import{c as t,h as e,i as n}from"./appStore.COXYiT7f.js";window.addEventListener("orbit:auth-expired",()=>i("/login"));window.addEventListener("orbit:sign-out",()=>{t(),i("/login")});e();n();

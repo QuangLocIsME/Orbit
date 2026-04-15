@@ -7,7 +7,7 @@ import { WorkflowEditor, type StageData } from './workflow-editor';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 
 // Custom workflow icon SVG
 const WorkflowIcon = () => (
@@ -908,8 +908,12 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
           </button>
           
           {/* Create Workflow Button */}
-          <button 
-            onClick={handleCreateNew}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              handleCreateNew();
+            }}
             className="ml-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -964,8 +968,12 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
               : 'Try adjusting your search or filters'}
           </p>
           {activeTab === 'my' && (
-            <button 
-              onClick={handleCreateNew}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                handleCreateNew();
+              }}
               className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
             >
               Create New Template

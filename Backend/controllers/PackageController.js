@@ -727,13 +727,20 @@ class PackageController {
                         console.warn('[PackageController] Supabase IFC upload skipped:', supaErr.message);
                     }
 
-                    await publishIfcConversionJob({
-                        projectId: normalizedProjectId,
-                        documentId: document.publicId,
-                        versionId: document.publicId,
-                        ifcS3Bucket: document.s3Bucket,
-                        ifcS3Key: document.s3Key,
-                    });
+                    try {
+                        await publishIfcConversionJob({
+                            projectId: normalizedProjectId,
+                            documentId: document.publicId,
+                            versionId: document.publicId,
+                            ifcS3Bucket: document.s3Bucket,
+                            ifcS3Key: document.s3Key,
+                        });
+                    } catch (queueErr) {
+                        console.warn(
+                            '[PackageController] IFC conversion queue publish skipped:',
+                            queueErr?.message || queueErr
+                        );
+                    }
                 }
 
                 fs.unlink(file.path, () => {});
@@ -785,7 +792,9 @@ class PackageController {
                 },
             });
         } catch (error) {
-            return serverError(res, error.message || 'Upload failed');
+            const msg = error?.message || String(error) || 'Upload failed';
+            console.error('[PackageController] uploadPackageDocument:', msg);
+            return serverError(res, msg);
         }
     }
 
