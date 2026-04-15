@@ -8,3 +8,8 @@ Backend/node_modules
 Backend/node_modules/
 Frontend/node_modules/
 
+Backend/node_modules/
+Backend/node_modules/
+Backend/node_modules/
+.claude/worktrees/
+Backend/node_modules/bcrypt/test/

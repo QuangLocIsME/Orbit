@@ -334,38 +334,44 @@ export default function AuthForm({ mode }: AuthFormProps) {
   }, [formData, isRegister]);
 
   // Validate all fields
-  const validateForm = (): boolean => {
+  const validateForm = (markTouched: boolean = false): boolean => {
     const newErrors: FormErrors = {};
-    
+    const touchedFields: Record<string, boolean> = markTouched
+      ? { fullName: true, email: true, password: true, confirmPassword: true }
+      : {};
+
     if (isRegister) {
       const fullNameError = validators.fullName(formData.fullName || '');
       if (fullNameError) newErrors.fullName = fullNameError;
     }
-    
+
     const emailError = validators.email(formData.email);
     if (emailError) newErrors.email = emailError;
-    
+
     const passwordError = validators.password(formData.password, isRegister);
     if (passwordError) newErrors.password = passwordError;
-    
+
     if (isRegister) {
       const confirmError = validators.confirmPassword(formData.password, formData.confirmPassword || '');
       if (confirmError) newErrors.confirmPassword = confirmError;
-      
+
       if (!agreedToTerms) {
         newErrors.terms = 'You must agree to the terms and privacy policy';
       }
     }
-    
+
     setErrors(newErrors);
+    if (markTouched) {
+      setTouched(prev => ({ ...prev, ...touchedFields }));
+    }
     return Object.keys(newErrors).length === 0;
   };
 
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!validateForm()) return;
+
+    if (!validateForm(true)) return;
     
     setIsLoading(true);
     setErrors({});
@@ -529,20 +535,20 @@ export default function AuthForm({ mode }: AuthFormProps) {
         </div>
 
         {/* Content Container */}
-        <div className="relative z-10 flex min-h-[calc(100vh-65px)] items-center justify-center px-4 py-12">
-          {/* Auth Card Container */}
-          <div className="relative h-[772px] w-full max-w-[1152px] overflow-hidden rounded-[48px] bg-white shadow-2xl">
+        <div className="relative z-10 min-h-[calc(100vh-65px)] px-4 py-12">
+          {/* Auth Card Container - Flex layout */}
+          <div className="mx-auto flex max-w-[1152px] flex-col overflow-hidden rounded-[48px] bg-white shadow-2xl lg:flex-row">
             {/* Form Section */}
-            <div 
+            <div
               className={cn(
-                "absolute inset-y-0 z-10 flex w-1/2 flex-col justify-center bg-white px-12 transition-all duration-700 ease-in-out",
-                isRegister ? "right-0" : "left-0"
+                "flex w-full flex-col px-12 py-12 transition-all duration-700 ease-in-out lg:w-1/2 lg:flex-1",
+                isRegister ? "lg:order-2" : "lg:order-1"
               )}
             >
               <div className={cn(isTransitioning ? "opacity-0" : "opacity-100", "transition-opacity duration-300")}>
                 {/* Back button */}
-                <a 
-                  href="/" 
+                <a
+                  href="/"
                   className="mb-8 flex w-fit items-center gap-2 text-sm text-[#616874] hover:text-[#111827]"
                 >
                   <BackIcon />
@@ -803,14 +809,14 @@ export default function AuthForm({ mode }: AuthFormProps) {
             </div>
 
             {/* Hologram Panel */}
-            <div 
+            <div
               className={cn(
-                "absolute inset-y-0 w-1/2 transition-all duration-700 ease-in-out",
-                isRegister ? "left-0" : "right-0"
+                "relative w-full transition-all duration-700 ease-in-out lg:w-1/2",
+                isRegister ? "lg:order-1" : "lg:order-2"
               )}
             >
-              <div 
-                className="h-full w-full overflow-hidden"
+              <div
+                className="flex min-h-[600px] w-full items-center justify-center lg:min-h-full"
                 style={{
                   background: 'linear-gradient(135deg, #60A5FA 0%, #818CF8 30%, #A78BFA 50%, #60A5FA 70%, #3B82F6 100%)',
                   backgroundSize: '200% 200%',
@@ -837,27 +843,31 @@ export default function AuthForm({ mode }: AuthFormProps) {
                 <div className="absolute -bottom-20 -right-20 h-64 w-64 rounded-full bg-purple-400/20 blur-3xl" />
 
                 {/* Floating UI Elements */}
-                <div className="relative flex h-full flex-col items-center justify-center p-12">
-                  {/* Top decorative elements */}
-                  <div 
-                    className="absolute left-12 top-24 rounded-full bg-white/15 p-4"
-                    style={{ animation: 'float 5s ease-in-out infinite' }}
-                  >
-                    <div className="h-12 w-12 rounded-full border-2 border-white/30" />
-                  </div>
+                <div className="relative flex h-full w-full flex-col items-center justify-between p-8 pt-16 pb-20">
+                  {/* Top section */}
+                  <div className="flex w-full items-center justify-between">
+                    {/* Left decorative */}
+                    <div 
+                      className="rounded-full bg-white/15 p-4"
+                      style={{ animation: 'float 5s ease-in-out infinite' }}
+                    >
+                      <div className="h-12 w-12 rounded-full border-2 border-white/30" />
+                    </div>
 
-                  <div 
-                    className="absolute right-16 top-20 rounded-2xl bg-white/10 px-4 py-2"
-                    style={{ animation: 'float 4s ease-in-out infinite reverse' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 w-2 rounded-full bg-white/60" />
-                      <div className="h-2 w-2 rounded-full bg-white/60" />
-                      <div className="h-2 w-2 rounded-full bg-white/60" />
+                    {/* Right decorative */}
+                    <div 
+                      className="rounded-2xl bg-white/10 px-4 py-2"
+                      style={{ animation: 'float 4s ease-in-out infinite reverse' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full bg-white/60" />
+                        <div className="h-2 w-2 rounded-full bg-white/60" />
+                        <div className="h-2 w-2 rounded-full bg-white/60" />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Central card */}
+                  {/* Central section - video player card */}
                   <div 
                     className="relative rounded-2xl bg-white/15 p-6 shadow-2xl backdrop-blur-sm"
                     style={{ animation: 'float 6s ease-in-out infinite' }}
@@ -877,7 +887,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
                   {/* Checkmark badge */}
                   <div 
-                    className="absolute bottom-40 right-20 flex h-12 w-12 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm"
+                    className="absolute left-8 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm"
                     style={{ animation: 'pulse 2s ease-in-out infinite' }}
                   >
                     <svg className="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -885,12 +895,12 @@ export default function AuthForm({ mode }: AuthFormProps) {
                     </svg>
                   </div>
 
-                  {/* Decorative circles */}
-                  <div className="absolute bottom-32 left-16 h-20 w-20 rounded-full border-2 border-white/20" />
-                  <div className="absolute right-8 top-1/3 h-6 w-6 rounded-full bg-[#DDA0DD]/40" />
+                  {/* Decorative elements */}
+                  <div className="absolute right-4 top-1/3 h-6 w-6 rounded-full bg-[#DDA0DD]/40" />
+                  <div className="absolute bottom-1/3 left-4 h-12 w-12 rounded-full border-2 border-white/20" />
 
                   {/* Content text */}
-                  <div className="absolute bottom-20 left-0 right-0 text-center">
+                  <div className="text-center">
                     <h2 className="text-2xl font-normal text-white">
                       {isRegister ? 'Join the BIM Revolution' : 'Welcome Back'}
                     </h2>
@@ -901,10 +911,6 @@ export default function AuthForm({ mode }: AuthFormProps) {
                       }
                     </p>
                   </div>
-
-                  {/* Sparkle decorations */}
-                  <div className="absolute right-8 top-12 text-white/30">+</div>
-                  <div className="absolute bottom-16 left-12 text-white/20">+</div>
                 </div>
               </div>
             </div>
