@@ -63,6 +63,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [isMemberDropdownOpen, setIsMemberDropdownOpen] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [newPackage, setNewPackage] = useState({
     name: '',
     description: '',
@@ -89,7 +90,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
   const loadProjects = async () => {
     const res = await apiFetch('/api/projects/me');
-    if (!res.ok) throw new Error('Không thể tải project');
+    if (!res.ok) throw new Error('Failed to load projects');
 
     const payload = await res.json();
     const items = Array.isArray(payload?.data) ? payload.data : [];
@@ -126,7 +127,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       body: JSON.stringify({ projectId, listType: 'active' }),
     });
 
-    if (!res.ok) throw new Error('Không thể tải packages');
+    if (!res.ok) throw new Error('Failed to load packages');
 
     const payload = await res.json();
     const items = Array.isArray(payload?.data) ? payload.data : [];
@@ -193,7 +194,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
     setLoading(true);
     loadProjects()
-      .catch((err) => toast.error(err?.message || 'Không thể tải dữ liệu'))
+      .catch((err) => toast.error(err?.message || 'Failed to load data'))
       .finally(() => setLoading(false));
   }, [fixedProjectId]);
 
@@ -204,7 +205,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     }
     setLoading(true);
     refreshData(selectedProjectId)
-      .catch((err) => toast.error(err?.message || 'Không thể tải packages'))
+      .catch((err) => toast.error(err?.message || 'Failed to load packages'))
       .finally(() => setLoading(false));
   }, [selectedProjectId, fixedProjectId]);
 
@@ -215,10 +216,12 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
         ? prev.teamMemberIds.filter((id) => id !== userId)
         : [...prev.teamMemberIds, userId],
     }));
+    setErrors((prev) => { const u = { ...prev }; delete u.members; return u; });
   };
 
   const resetCreateForm = () => {
     setNewPackage({ name: '', description: '', type: 'construction', initialStatus: 'Active', dueDate: '', teamMemberIds: [] });
+    setErrors({});
   };
 
   const packageTypeOptions = [
@@ -231,12 +234,27 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
   ] as const;
 
   const handleCreatePackage = async () => {
+    const newErrors: Record<string, string> = {};
     if (!selectedProjectId) {
-      toast.error('Vui lòng chọn project');
-      return;
+      newErrors.project = 'Please select a project';
     }
     if (!newPackage.name.trim()) {
-      toast.error('Tên package là bắt buộc');
+      newErrors.name = 'Package name is required';
+    }
+    if (!newPackage.description.trim()) {
+      newErrors.description = 'Description is required';
+    }
+    if (!newPackage.type.trim()) {
+      newErrors.type = 'Please select a package type';
+    }
+    if (newPackage.teamMemberIds.length === 0) {
+      newErrors.members = 'At least one team member is required';
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      const firstField = Object.keys(newErrors)[0];
+      document.getElementById(`input-${firstField}`)?.focus();
       return;
     }
 
@@ -257,30 +275,28 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
       const payload = await res.json().catch(() => null);
       if (!res.ok || !payload?.success) {
-        throw new Error(payload?.message || 'Tạo package thất bại');
+        throw new Error(payload?.message || 'Failed to create package');
       }
 
-      if (newPackage.initialStatus && newPackage.initialStatus !== 'Draft') {
-        const createdPackageId = payload?.data?.publicId;
-        if (createdPackageId) {
-          await apiFetch('/api/projects/packages/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({
-              projectId: selectedProjectId,
-              packageId: createdPackageId,
-              status: newPackage.initialStatus,
-            }),
-          });
-        }
+      const createdPackageId = payload?.data?.publicId;
+      if (newPackage.initialStatus === 'Active' && createdPackageId) {
+        await apiFetch('/api/projects/packages/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            projectId: selectedProjectId,
+            packageId: createdPackageId,
+            status: 'Active',
+          }),
+        });
       }
 
-      toast.success('Tạo package thành công');
+      toast.success('Package created successfully');
       setShowCreateModal(false);
       resetCreateForm();
       await refreshData(selectedProjectId);
     } catch (err: any) {
-      toast.error(err?.message || 'Tạo package thất bại');
+      toast.error(err?.message || 'Failed to create package');
     } finally {
       setCreating(false);
     }
@@ -395,72 +411,93 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       )}
 
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowCreateModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowCreateModal(false)}>
           <div className="relative w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-6 pb-4">
+            <div className="flex items-start justify-between p-4 pb-3 sm:p-6 sm:pb-4">
               <div>
-                <h2 className="text-[40px] font-semibold text-[#1F2937]">Create New Package</h2>
-                <p className="mt-1 text-[16px] text-[#6B7280]">Add a new package to organize project components</p>
+                <h2 className="text-xl font-semibold text-[#1F2937] sm:text-[40px]">Create New Package</h2>
+                <p className="mt-1 text-sm text-[#6B7280] sm:text-[16px]">Add a new package to organize project components</p>
               </div>
               <button onClick={() => setShowCreateModal(false)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
             </div>
 
             <div className="border-t border-gray-100" />
 
-            <div className="space-y-5 p-6">
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-4 sm:max-h-none sm:space-y-5 sm:p-6">
               <div>
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Package Name <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Package Name <span className="text-red-500">*</span></label>
                 <input
+                  id="input-name"
                   value={newPackage.name}
-                  onChange={(e) => setNewPackage((prev) => ({ ...prev, name: e.target.value }))}
+                  onChange={(e) => {
+                    setNewPackage((prev) => ({ ...prev, name: e.target.value }));
+                    setErrors((prev) => { const u = { ...prev }; delete u.name; return u; });
+                  }}
                   placeholder="e.g., Architectural Design, MEP Systems..."
-                  className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                  className={cn(
+                    'w-full rounded-xl border px-3 py-2 text-sm sm:px-4 sm:py-3',
+                    errors.name ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
+                  )}
                 />
+                {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name}</p>}
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Description <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Description <span className="text-red-500">*</span></label>
                 <textarea
+                  id="input-description"
                   value={newPackage.description}
-                  onChange={(e) => setNewPackage((prev) => ({ ...prev, description: e.target.value }))}
+                  onChange={(e) => {
+                    setNewPackage((prev) => ({ ...prev, description: e.target.value }));
+                    setErrors((prev) => { const u = { ...prev }; delete u.description; return u; });
+                  }}
                   placeholder="Describe the package scope, deliverables, and objectives..."
-                  rows={4}
-                  className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                  rows={3}
+                  className={cn(
+                    'w-full rounded-xl border px-3 py-2 text-sm sm:px-4 sm:py-3',
+                    errors.description ? 'border-red-500 focus:border-red-500' : 'border-gray-200 focus:border-blue-500'
+                  )}
                 />
+                {errors.description && <p className="mt-1 text-xs text-red-500">{errors.description}</p>}
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-[#1F2937]">Package Type <span className="text-red-500">*</span></label>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
                   {packageTypeOptions.map((opt) => {
                     const active = newPackage.type === opt.id;
                     return (
                       <button
                         key={opt.id}
                         type="button"
-                        onClick={() => setNewPackage((prev) => ({ ...prev, type: opt.id }))}
+                        onClick={() => {
+                          setNewPackage((prev) => ({ ...prev, type: opt.id }));
+                          setErrors((prev) => { const u = { ...prev }; delete u.type; return u; });
+                        }}
                         className={cn(
-                          'flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors',
-                          active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                          'flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs sm:gap-3 sm:rounded-2xl sm:px-4 sm:py-4 sm:text-sm',
+                          active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300',
+                          errors.type && !active ? 'border-red-300' : ''
                         )}
                       >
-                        <span className={cn('inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold', opt.color)}>
+                        <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold sm:h-8 sm:w-8', opt.color)}>
                           {opt.label.charAt(0)}
                         </span>
-                        <span className="text-sm font-medium text-[#374151]">{opt.label}</span>
+                        <span className="font-medium text-[#374151]">{opt.label}</span>
                       </button>
                     );
                   })}
                 </div>
+                {errors.type && <p className="mt-1 text-xs text-red-500">{errors.type}</p>}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#1F2937]">Initial Status <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Initial Status <span className="text-red-500">*</span></label>
                   <select
                     value={newPackage.initialStatus}
                     onChange={(e) => setNewPackage((prev) => ({ ...prev, initialStatus: e.target.value }))}
-                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   >
                     <option value="Draft">Draft</option>
                     <option value="Active">Active</option>
@@ -468,31 +505,39 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#1F2937]">Due Date <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Due Date</label>
                   <input
                     type="date"
                     value={newPackage.dueDate}
                     onChange={(e) => setNewPackage((prev) => ({ ...prev, dueDate: e.target.value }))}
-                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   />
                 </div>
               </div>
 
               <div className="relative">
-                <label className="mb-2 block text-sm font-medium text-[#1F2937]">Assign Team Members <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Assign Team Members <span className="text-red-500">*</span></label>
                 <button
                   type="button"
                   onClick={() => setIsMemberDropdownOpen((v) => !v)}
-                  className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-4 py-3 text-left"
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm sm:px-4 sm:py-3',
+                    errors.members ? 'border-red-500' : 'border-gray-200'
+                  )}
                 >
-                  <span className="text-sm text-gray-700">{newPackage.teamMemberIds.length} members selected</span>
+                  <span className={newPackage.teamMemberIds.length === 0 ? 'text-gray-400' : 'text-gray-700'}>
+                    {newPackage.teamMemberIds.length > 0
+                      ? `${newPackage.teamMemberIds.length} member${newPackage.teamMemberIds.length > 1 ? 's' : ''} selected`
+                      : 'Select members...'}
+                  </span>
                   <span className="text-gray-400">⌃</span>
                 </button>
+                {errors.members && <p className="mt-1 text-xs text-red-500">{errors.members}</p>}
 
                 {isMemberDropdownOpen && (
                   <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg">
                     {projectMembers.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-gray-500">Không có member nào trong project.</p>
+                      <p className="px-4 py-3 text-sm text-gray-500">No members in this project.</p>
                     ) : (
                       projectMembers.map((member) => {
                         const checked = newPackage.teamMemberIds.includes(member.userId);
@@ -524,20 +569,20 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 p-6">
+            <div className="flex items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:p-6">
               <button
                 onClick={() => {
                   setShowCreateModal(false);
                   resetCreateForm();
                 }}
-                className="px-5 py-2.5 text-sm font-medium text-gray-700"
+                className="px-4 py-2 text-sm font-medium text-gray-700 sm:px-5 sm:py-2.5"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreatePackage}
                 disabled={creating || !newPackage.name.trim()}
-                className="rounded-xl bg-[#8FB1FF] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#7ea4fb] disabled:opacity-50"
+                className="rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8] disabled:opacity-50 sm:px-6 sm:py-2.5"
               >
                 {creating ? 'Creating...' : 'Create Package'}
               </button>

@@ -222,19 +222,34 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
       formData.append('folderPath', location.folderPath);
       formData.append('file', file);
 
+      console.log('[Upload] Starting upload:', {
+        fileName: file.name,
+        fileSize: file.size,
+        projectId,
+        packageId,
+        folderType,
+      });
+
       const res = await fetch('/api/projects/packages/upload', {
         method: 'POST',
         credentials: 'include',
         body: formData,
       });
 
+      console.log('[Upload] Response status:', res.status);
+
       const payload = await res.json().catch(() => null);
+      console.log('[Upload] Response payload:', payload);
+
       if (!res.ok || !payload?.success) {
-        throw new Error(payload?.message || 'Upload failed');
+        throw new Error(payload?.message || `Upload failed (${res.status})`);
       }
 
       toast.success(payload?.mode === 'queue' ? 'Large file queued for background processing' : 'File uploaded successfully');
       await loadDocuments();
+    } catch (error) {
+      console.error('[Upload] Error:', error);
+      toast.error(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsUploading(false);
       setPendingUploadFile(null);

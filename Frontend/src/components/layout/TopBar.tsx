@@ -18,13 +18,24 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [openProjects, setOpenProjects] = useState<OpenProject[]>([]);
 
+  // Get current userId from localStorage to scope open-projects per user
+  const userId = (() => {
+    try {
+      const u = localStorage.getItem('orbit_user');
+      if (u) return JSON.parse(u).id;
+    } catch { /* ignore */ }
+    return null;
+  })();
+
+  const storageKey = userId ? `orbit-open-projects:${userId}` : 'orbit-open-projects';
+
   // Check if we're on a project page
   const isProjectPage = currentPath.includes('/projects/');
   const currentProjectSlug = isProjectPage ? currentPath.split('/projects/')[1]?.split('/')[0] : null;
 
   // Load open projects from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem('orbit-open-projects');
+    const stored = localStorage.getItem(storageKey);
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
@@ -33,12 +44,12 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
         setOpenProjects([]);
       }
     }
-  }, []);
+  }, [storageKey]);
 
   // Update localStorage whenever openProjects changes
   useEffect(() => {
-    localStorage.setItem('orbit-open-projects', JSON.stringify(openProjects));
-  }, [openProjects]);
+    localStorage.setItem(storageKey, JSON.stringify(openProjects));
+  }, [storageKey, openProjects]);
 
   // Listen for project deleted/trashed events
   useEffect(() => {

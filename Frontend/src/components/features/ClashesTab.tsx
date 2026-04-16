@@ -1,7 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination';
 
 interface Clash {
   id: number;
@@ -184,12 +193,15 @@ export default function ClashesTab() {
   const [viewMode, setViewMode] = useState<'2d' | '3d' | 'split'>('split');
   const [expandedGroups, setExpandedGroups] = useState<string[]>(['structure-mep']);
   const [selectedClash, setSelectedClash] = useState<Clash | null>(clashGroups[0].items[0]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
 
   // Calculate stats
   const totalClashes = clashesData.length;
   const highSeverity = clashesData.filter(c => c.severity === 'critical' || c.severity === 'high').length;
   const inProgress = clashesData.filter(c => c.status === 'in-progress').length;
   const resolved = clashesData.filter(c => c.status === 'resolved').length;
+  const softClashes = clashesData.filter(c => c.type === 'Soft Clash').length;
 
   // Detection view stats
   const detectionTotal = clashGroups.reduce((acc, g) => acc + g.count, 0);
@@ -206,6 +218,32 @@ export default function ClashesTab() {
     if (filterType === 'medium') return matchesSearch && clash.severity === 'medium';
     return matchesSearch;
   });
+
+  // Sort: active clashes first, resolved last, then paginate
+  const activeClashes = filteredClashes.filter(c => c.status !== 'resolved');
+  const resolvedClashes = filteredClashes.filter(c => c.status === 'resolved');
+  const totalPages = Math.ceil((activeClashes.length + resolvedClashes.length) / ITEMS_PER_PAGE) || 1;
+
+  // Get page clashes (active first, resolved last)
+  const getPageClashes = (page: number) => {
+    const startIdx = (page - 1) * ITEMS_PER_PAGE;
+    const endIdx = startIdx + ITEMS_PER_PAGE;
+    const allClashes = [...activeClashes, ...resolvedClashes];
+    return allClashes.slice(startIdx, endIdx);
+  };
+
+  const paginatedClashes = getPageClashes(currentPage);
+
+  // Reset to page 1 when filter/search changes
+  const handleFilterChange = (filter: 'all' | 'high' | 'medium') => {
+    setFilterType(filter);
+    setCurrentPage(1);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    setCurrentPage(1);
+  };
 
   const toggleGroup = (groupId: string) => {
     setExpandedGroups(prev => 
@@ -510,14 +548,18 @@ export default function ClashesTab() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
           <span className="text-xs text-[#4A5565]">Total Clashes</span>
           <span className="text-2xl font-normal text-[#101828]">{totalClashes + 18}</span>
         </div>
         <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
-          <span className="text-xs text-[#4A5565]">High Severity</span>
-          <span className="text-2xl font-normal text-[#EC003F]">{highSeverity + 9}</span>
+          <span className="text-xs text-[#4A5565]">Hard Clashes</span>
+          <span className="text-2xl font-normal text-[#EC003F]">{totalClashes - softClashes + 18}</span>
+        </div>
+        <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
+          <span className="text-xs text-[#4A5565]">Soft Clashes</span>
+          <span className="text-2xl font-normal text-[#F59E0B]">{softClashes}</span>
         </div>
         <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
           <span className="text-xs text-[#4A5565]">In Progress</span>
@@ -540,7 +582,7 @@ export default function ClashesTab() {
             type="text"
             placeholder="Search clashes..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="w-full rounded-[10px] border border-[#E5E7EB] bg-white py-2 pl-10 pr-4 text-sm text-[#101828] placeholder:text-[#6A7282] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
@@ -548,7 +590,7 @@ export default function ClashesTab() {
         {/* Filter Buttons */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setFilterType('all')}
+            onClick={() => handleFilterChange('all')}
             className={cn(
               "rounded-[10px] px-3 py-2 text-xs font-normal transition-colors",
               filterType === 'all'
@@ -559,7 +601,7 @@ export default function ClashesTab() {
             All
           </button>
           <button
-            onClick={() => setFilterType('high')}
+            onClick={() => handleFilterChange('high')}
             className={cn(
               "rounded-[10px] px-3 py-2 text-xs font-normal transition-colors",
               filterType === 'high'
@@ -570,7 +612,7 @@ export default function ClashesTab() {
             High
           </button>
           <button
-            onClick={() => setFilterType('medium')}
+            onClick={() => handleFilterChange('medium')}
             className={cn(
               "rounded-[10px] px-3 py-2 text-xs font-normal transition-colors",
               filterType === 'medium'
@@ -585,12 +627,12 @@ export default function ClashesTab() {
 
       {/* Clashes List */}
       <div className="rounded-[10px] border border-[#E5E7EB] bg-white">
-        {filteredClashes.map((clash, index) => (
+        {paginatedClashes.map((clash, index) => (
           <div
             key={clash.id}
             className={cn(
               "flex gap-4 p-6",
-              index !== filteredClashes.length - 1 && "border-b border-[#E5E7EB]"
+              index !== paginatedClashes.length - 1 && "border-b border-[#E5E7EB]"
             )}
           >
             {/* Warning Icon */}
@@ -657,6 +699,44 @@ export default function ClashesTab() {
           </div>
         ))}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between">
+          <span className="text-sm text-[#6A7282]">
+            Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, activeClashes.length + resolvedClashes.length)} of {activeClashes.length + resolvedClashes.length} clashes
+          </span>
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  onClick={(e: React.MouseEvent) => { e.preventDefault(); if (currentPage > 1) setCurrentPage(p => p - 1); }}
+                  className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
+                />
+              </PaginationItem>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <PaginationItem key={page}>
+                  <PaginationLink
+                    href="#"
+                    isActive={page === currentPage}
+                    onClick={(e: React.MouseEvent) => { e.preventDefault(); setCurrentPage(page); }}
+                  >
+                    {page}
+                  </PaginationLink>
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  onClick={(e: React.MouseEvent) => { e.preventDefault(); if (currentPage < totalPages) setCurrentPage(p => p + 1); }}
+                  className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
+      )}
     </div>
   );
 }
