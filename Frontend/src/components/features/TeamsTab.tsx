@@ -101,10 +101,13 @@ function RoleEditModal({ isOpen, member, onClose, onConfirm, roles, canManage }:
 
   if (!isOpen || !member) return null;
 
-  // Filter roles: exclude owner, exclude admin if not canManage
+  // Owner cannot be edited, admin can only be edited by owner
+  const canEditThisMember = member.role !== 'owner' && (member.role === 'admin' ? canManage : true);
+
+  // Filter roles: exclude owner, exclude admin if can't manage
   const availableRoles = roles.filter(r => {
     if (r.roleKey === 'owner') return false;
-    if (r.roleKey === 'admin' && !canManage) return false;
+    if (r.roleKey === 'admin' && !canEditThisMember) return false;
     return true;
   });
 
@@ -225,8 +228,16 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   }, [projects, projectPublicId, initialRole]);
 
   const canManage = currentUserRole === 'admin' || currentUserRole === 'owner';
-  const canEditRole = (memberRole: MemberRole) => canManage && memberRole !== 'admin';
-  const canRemove = (memberRole: MemberRole) => canManage && memberRole !== 'admin';
+  const canEditRole = (memberRole: MemberRole) => {
+    if (memberRole === 'owner') return false;
+    if (memberRole === 'admin') return currentUserRole === 'owner';
+    return canManage;
+  };
+  const canRemove = (memberRole: MemberRole) => {
+    if (memberRole === 'owner') return false;
+    if (memberRole === 'admin') return currentUserRole === 'owner';
+    return canManage;
+  };
 
   const fetchRoles = useCallback(async () => {
     try {

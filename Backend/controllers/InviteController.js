@@ -28,10 +28,10 @@ class InviteController {
                 return errorResponse(res, 401, 'Unauthorized');
             }
 
-            // RBAC: only admin can invite members
+            // RBAC: owner and admin can invite members
             const callerMember = await ProjectMemberRepository.findMember(normalizedProjectId, callerId);
-            if (!callerMember || callerMember.role !== 'admin') {
-                return errorResponse(res, 403, 'Only admins can invite members');
+            if (!callerMember || (callerMember.role !== 'admin' && callerMember.role !== 'owner')) {
+                return errorResponse(res, 403, 'Only admins and project owners can invite members');
             }
 
             // Check for duplicate pending invite
@@ -231,8 +231,8 @@ class InviteController {
             }
 
             const callerMember = await ProjectMemberRepository.findMember(invite.projectId, callerId);
-            if (!callerMember || callerMember.role !== 'admin') {
-                return errorResponse(res, 403, 'Only admins can revoke invites');
+            if (!callerMember || (callerMember.role !== 'admin' && callerMember.role !== 'owner')) {
+                return errorResponse(res, 403, 'Only admins and project owners can revoke invites');
             }
 
             const revoked = await ProjectInviteRepository.revokeInvite(normalizedInviteId);
@@ -271,9 +271,9 @@ class InviteController {
                 return errorResponse(res, 401, 'Unauthorized');
             }
 
-            // RBAC: only admin can list pending invites
+            // RBAC: owner and admin can list pending invites
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
                 return errorResponse(res, 403, 'Forbidden');
             }
 

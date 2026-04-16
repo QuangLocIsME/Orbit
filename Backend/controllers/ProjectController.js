@@ -296,7 +296,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
                 return forbidden(res);
             }
 
@@ -357,7 +357,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
                 return forbidden(res);
             }
 
@@ -564,7 +564,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member) {
                 return forbidden(res);
             }
 
@@ -580,11 +580,18 @@ class ProjectController {
                 return notFound(res, 'Member not found');
             }
 
-            if (targetMember.role === 'admin' && role !== 'admin') {
-                const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
-                if (adminCount <= 1) {
-                    return forbidden(res);
+            // Owner cannot have their role changed by anyone
+            if (targetMember.role === 'owner') {
+                return forbidden(res, 'The project owner role cannot be changed');
+            }
+
+            // Only owner can change admin's role, admins can only change non-admin members
+            if (targetMember.role === 'admin') {
+                if (member.role !== 'owner') {
+                    return forbidden(res, 'Only the project owner can change admin roles');
                 }
+            } else if (member.role !== 'admin' && member.role !== 'owner') {
+                return forbidden(res);
             }
 
             const updatedMember = await ProjectMemberRepository.updateMemberRole(
@@ -631,7 +638,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member) {
                 return forbidden(res);
             }
 
@@ -647,11 +654,18 @@ class ProjectController {
                 return notFound(res, 'Member not found');
             }
 
+            // Owner cannot be removed by anyone
+            if (targetMember.role === 'owner') {
+                return forbidden(res, 'The project owner cannot be removed');
+            }
+
+            // Only owner can remove admin, admins can only remove non-admin members
             if (targetMember.role === 'admin') {
-                const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
-                if (adminCount <= 1) {
-                    return errorResponse(res, 403, 'Forbidden');
+                if (member.role !== 'owner') {
+                    return forbidden(res, 'Only the project owner can remove admins');
                 }
+            } else if (member.role !== 'admin' && member.role !== 'owner') {
+                return forbidden(res);
             }
 
             await ProjectMemberRepository.removeMember(normalizedProjectId, normalizedTargetUserId);
@@ -761,7 +775,7 @@ class ProjectController {
             if (!userId) return;
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') return forbidden(res);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) return forbidden(res);
 
             // Fetch the workflow template
             const WorkflowTemplate = require('../models/WorkflowTemplate');
@@ -826,7 +840,7 @@ class ProjectController {
             if (!userId) return;
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') return forbidden(res);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) return forbidden(res);
 
             const nextTemplate = normalizeString(template) || 'construction-standard';
             const normalizedStages = Array.isArray(stages)
