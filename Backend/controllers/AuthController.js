@@ -83,7 +83,7 @@ class AuthController {
                 },
             });
         } catch (error) {
-            return errorResponse(res, 400, 'Login failed');
+            return errorResponse(res, 400, error.message || 'Login failed');
         }
     }
 

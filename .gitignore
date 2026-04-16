@@ -7,3 +7,6 @@ Backend/node_modules
 /Backend/uploads
 .gitnexus
 Frontend/node_modules/
+
+.claude/worktrees/
+Backend/node_modules/bcrypt/test/
