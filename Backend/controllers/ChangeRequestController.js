@@ -1,11 +1,30 @@
 const ChangeRequestRepository = require('../repositories/ChangeRequestRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const { errorResponse } = require('../utils/response');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
+const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../config/s3');
 
 const normalizeString = (val) => {
     if (typeof val !== 'string') return '';
     return val.trim();
 };
+
+/**
+ * Đọc giá trị từ req.body, hỗ trợ cả JSON và multipart/form-data.
+ * multipart gửi key dạng "field[]" → đọc cả req.body['field[]'] lẫn req.body.field.
+ */
+function getField(body, key, arrayKey) {
+    if (body[key] !== undefined) return body[key];
+    if (arrayKey && body[arrayKey] !== undefined) return body[arrayKey];
+    return undefined;
+}
+
+function getArrayField(body, key, arrayKey) {
+    const val = getField(body, key, arrayKey);
+    if (Array.isArray(val)) return val;
+    if (val !== undefined) return [val];
+    return undefined;
+}
 
 class ChangeRequestController {
     async listByProject(req, res) {
@@ -59,13 +78,28 @@ class ChangeRequestController {
     async create(req, res) {
         try {
             const projectId = req.params?.projectSlug || req.body?.projectId;
-            const { title, description, priority, affectedModels, disciplineId, assignedTo, reviewers, estimatedImpact, estimatedCost, estimatedDuration, deadline, detailedDescription } = req.body || {};
+            const isMultipart = req.is('multipart/form-data');
+            const body = req.body || {};
+
+            // Đọc fields từ body (JSON hoặc multipart được multer parse)
+            const rawTitle       = getField(body, 'title', null);
+            const rawDesc        = getField(body, 'description', null);
+            const rawPriority    = getField(body, 'priority', null);
+            const rawAffected    = getArrayField(body, 'affectedModels', 'affectedModels[]');
+            const rawDiscipline  = getField(body, 'discipline', 'disciplineId'); // hỗ trợ cả "discipline" và "disciplineId"
+            const rawAssigned    = getArrayField(body, 'assignedTo', 'assignedTo[]');
+            const rawReviewers   = getArrayField(body, 'reviewers', 'reviewers[]');
+            const rawImpact      = getField(body, 'estimatedImpact', null);
+            const rawCost        = getField(body, 'estimatedCost', null);
+            const rawDuration    = getField(body, 'estimatedDuration', null);
+            const rawDeadline    = getField(body, 'deadline', null);
+            const rawDetailed    = getField(body, 'detailedDescription', null);
 
             if (!projectId) {
                 return errorResponse(res, 400, 'Missing projectId');
             }
 
-            if (!normalizeString(title)) {
+            if (!normalizeString(rawTitle)) {
                 return errorResponse(res, 400, 'Title is required');
             }
 
@@ -79,19 +113,53 @@ class ChangeRequestController {
                 return errorResponse(res, 403, 'Forbidden');
             }
 
-            const normalizedTitle = normalizeString(title);
-            const normalizedDescription = normalizeString(description);
-            const normalizedPriority = ['low', 'medium', 'high', 'urgent'].includes(priority) ? priority : 'medium';
-            const normalizedAffectedModels = Array.isArray(affectedModels) ? affectedModels : [];
-            const normalizedDisciplineId = normalizeString(disciplineId) || null;
+            const normalizedTitle       = normalizeString(rawTitle);
+            const normalizedDescription = normalizeString(rawDesc);
+            const normalizedPriority    = ['low', 'medium', 'high', 'urgent'].includes(rawPriority) ? rawPriority : 'medium';
+            const normalizedAffectedModels = Array.isArray(rawAffected) ? rawAffected : [];
+            const normalizedDisciplineId = normalizeString(rawDiscipline) || null;
 
-            const normalizedAssignedTo = Array.isArray(assignedTo) ? assignedTo : [];
-            const normalizedReviewers = Array.isArray(reviewers) ? reviewers : [];
-            const normalizedEstimatedImpact = ['low', 'medium', 'high'].includes(estimatedImpact) ? estimatedImpact : null;
-            const normalizedEstimatedCost = estimatedCost != null && !isNaN(Number(estimatedCost)) ? Number(estimatedCost) : null;
-            const normalizedEstimatedDuration = normalizeString(estimatedDuration);
-            const normalizedDeadline = deadline ? new Date(deadline) : null;
-            const normalizedDetailedDescription = normalizeString(detailedDescription);
+            const normalizedAssignedTo  = Array.isArray(rawAssigned) ? rawAssigned : [];
+            const normalizedReviewers    = Array.isArray(rawReviewers) ? rawReviewers : [];
+            const normalizedEstimatedImpact = ['low', 'medium', 'high'].includes(rawImpact) ? rawImpact : null;
+            const normalizedEstimatedCost = rawCost != null && !isNaN(Number(rawCost)) ? Number(rawCost) : null;
+            const normalizedEstimatedDuration = normalizeString(rawDuration);
+            const normalizedDeadline = rawDeadline ? new Date(rawDeadline) : null;
+            const normalizedDetailedDescription = normalizeString(rawDetailed);
+
+            // Xử lý attachments từ multer (dùng S3 SDK để upload lên bucket orbit-files)
+            const uploadedFiles = req.files || [];
+            const attachments = [];
+
+            if (uploadedFiles.length > 0) {
+                assertS3Configured();
+
+                for (const file of uploadedFiles) {
+                    try {
+                        const safeName = (file.originalname || 'file')
+                            .replace(/[^a-zA-Z0-9_\-. ]/g, '-')
+                            .replace(/\s+/g, '-')
+                            .substring(0, 200);
+                        const s3Key = `projects/${projectId}/attachments/${Date.now()}-${safeName}`;
+
+                        await s3Client.send(new PutObjectCommand({
+                            Bucket: S3_BUCKET,
+                            Key: s3Key,
+                            Body: file.buffer,
+                            ContentType: file.mimetype || 'application/octet-stream',
+                        }));
+
+                        attachments.push({
+                            name: file.originalname,
+                            size: file.size,
+                            url: buildS3Url(s3Key),
+                            mimeType: file.mimetype || '',
+                        });
+                    } catch (uploadErr) {
+                        console.warn(`[ChangeRequestController] Attachment upload failed for "${file.originalname}":`, uploadErr.message);
+                    }
+                }
+            }
 
             const changeRequest = await ChangeRequestRepository.create({
                 projectId,
@@ -107,6 +175,7 @@ class ChangeRequestController {
                 estimatedDuration: normalizedEstimatedDuration,
                 deadline: normalizedDeadline,
                 detailedDescription: normalizedDetailedDescription,
+                attachments,
                 createdBy: userId,
                 status: 'pending',
             });
