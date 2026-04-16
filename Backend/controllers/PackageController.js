@@ -379,7 +379,7 @@ class PackageController {
      */
     async updatePackage(req, res) {
         try {
-            const { projectId, packageId, name, description, type, dueDate, teamMemberIds } = req.body || {};
+            const { projectId, packageId, name, description, type, dueDate, teamMemberIds, status } = req.body || {};
             const normalizedProjectId = normalizeString(projectId);
             const normalizedPackageId = normalizeString(packageId);
 
@@ -423,6 +423,20 @@ class PackageController {
             if (type !== undefined) updateFields.packageType = normalizeString(type) || '';
             if (dueDate !== undefined) updateFields.dueDate = parseDueDate(dueDate);
             if (Array.isArray(teamMemberIds)) updateFields.teamMemberIds = teamMemberIds;
+
+            if (status !== undefined) {
+                const validStatuses = ['Draft', 'Active', 'Archived'];
+                if (!validStatuses.includes(status)) {
+                    return badRequest(res, `Invalid status. Allowed values: ${validStatuses.join(', ')}`);
+                }
+                if (status !== pkg.status) {
+                    updateFields.status = status;
+                }
+            }
+
+            if (Object.keys(updateFields).length === 0) {
+                return res.status(200).json({ success: true, message: 'No changes to apply', data: pkg });
+            }
 
             const updated = await PackageRepository.updateByPublicIdInProject(
                 normalizedPackageId,
