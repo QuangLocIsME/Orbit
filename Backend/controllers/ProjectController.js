@@ -12,7 +12,7 @@ const getNormalizedProjectId = (req) => normalizeString(req.body?.projectId);
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
-const forbidden = (res) => errorResponse(res, 403, 'Forbidden');
+const forbidden = (res, message) => errorResponse(res, 403, message || "You don't have permission to delete this project. Only the project owner can perform this action.");
 const notFound = (res, message) => errorResponse(res, 404, message);
 const serverError = (res, message) => errorResponse(res, 500, message);
 const handleBadRequest = (res, message) => badRequest(res, message);

@@ -497,11 +497,18 @@ export default function SettingsTab({
     if (deleteProjectConfirmText !== 'DELETE') return;
     setIsDeleting(true);
     try {
-      await apiFetch(`/api/projects/trash`, {
+      const response = await apiFetch(`/api/projects/trash`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: projectPublicId }),
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData?.message || 'Failed to delete project');
+        return;
+      }
+      
       toast.success('Project moved to trash');
       navigate('/projects');
     } catch {

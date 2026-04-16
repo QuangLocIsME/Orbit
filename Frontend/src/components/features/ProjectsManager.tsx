@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
 import type { CreatedProjectPayload } from './CreateProjectModal';
+import { loadCustomIndustriesRaw } from './CreateProjectModal';
 import { ProjectsSkeleton } from '@/components/ui/skeletons';
 import { useAppStore } from '@/stores/appStore';
 
@@ -43,6 +44,11 @@ interface Project {
   issues?: number;
   status?: string;
   projectType?: string;
+  industryName?: string;
+  customIndustry?: {
+    icon: string;
+    color: string;
+  };
   isFavorite?: boolean;
   folderIds?: string[];
   role?: 'admin' | 'member' | 'viewer';
@@ -88,31 +94,154 @@ const FOLDER_COLORS = [
   { id: 'gray', bg: 'bg-gray-100', icon: 'text-gray-500', border: 'border-gray-200' },
 ];
 
-// Project type configuration
-const TYPE_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
+// Project type configuration - matches CreateProjectModal industries
+const TYPE_CONFIG: Record<string, { color: string; bg: string; bgSolid: string; icon: React.ReactNode; label: string }> = {
   construction: {
     color: 'text-blue-600',
     bg: 'bg-blue-50',
+    bgSolid: 'bg-blue-500',
     label: 'Construction',
     icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-  },
-  design: {
-    color: 'text-purple-600',
-    bg: 'bg-purple-50',
-    label: 'Design',
-    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
   },
   software: {
     color: 'text-cyan-600',
     bg: 'bg-cyan-50',
+    bgSolid: 'bg-cyan-500',
     label: 'Software',
     icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+  },
+  marketing: {
+    color: 'text-red-600',
+    bg: 'bg-red-50',
+    bgSolid: 'bg-red-500',
+    label: 'Marketing',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>
+  },
+  design: {
+    color: 'text-purple-600',
+    bg: 'bg-purple-50',
+    bgSolid: 'bg-purple-500',
+    label: 'Design',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
   },
   research: {
     color: 'text-teal-600',
     bg: 'bg-teal-50',
+    bgSolid: 'bg-teal-500',
     label: 'Research',
     icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+  },
+  finance: {
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50',
+    bgSolid: 'bg-emerald-500',
+    label: 'Finance',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>
+  },
+  education: {
+    color: 'text-cyan-600',
+    bg: 'bg-cyan-50',
+    bgSolid: 'bg-cyan-500',
+    label: 'Education',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /></svg>
+  },
+  healthcare: {
+    color: 'text-rose-600',
+    bg: 'bg-rose-50',
+    bgSolid: 'bg-rose-500',
+    label: 'Healthcare',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
+  },
+  legal: {
+    color: 'text-emerald-700',
+    bg: 'bg-emerald-50',
+    bgSolid: 'bg-emerald-600',
+    label: 'Legal',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>
+  },
+  travel: {
+    color: 'text-blue-600',
+    bg: 'bg-blue-50',
+    bgSolid: 'bg-blue-500',
+    label: 'Travel',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+  },
+  retail: {
+    color: 'text-pink-600',
+    bg: 'bg-pink-50',
+    bgSolid: 'bg-pink-500',
+    label: 'Retail',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+  },
+  technology: {
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50',
+    bgSolid: 'bg-emerald-500',
+    label: 'Technology',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+  },
+  energy: {
+    color: 'text-amber-600',
+    bg: 'bg-amber-50',
+    bgSolid: 'bg-amber-500',
+    label: 'Energy',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+  },
+  'food-beverage': {
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50',
+    bgSolid: 'bg-emerald-500',
+    label: 'Food & Beverage',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+  },
+  entertainment: {
+    color: 'text-pink-600',
+    bg: 'bg-pink-50',
+    bgSolid: 'bg-pink-500',
+    label: 'Entertainment',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" /></svg>
+  },
+  media: {
+    color: 'text-blue-600',
+    bg: 'bg-blue-50',
+    bgSolid: 'bg-blue-500',
+    label: 'Media',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+  },
+  gaming: {
+    color: 'text-purple-600',
+    bg: 'bg-purple-50',
+    bgSolid: 'bg-purple-500',
+    label: 'Gaming',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+  },
+  publishing: {
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50',
+    bgSolid: 'bg-emerald-500',
+    label: 'Publishing',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+  },
+  startup: {
+    color: 'text-rose-600',
+    bg: 'bg-rose-50',
+    bgSolid: 'bg-rose-500',
+    label: 'Startup',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+  },
+  other: {
+    color: 'text-gray-600',
+    bg: 'bg-gray-50',
+    bgSolid: 'bg-gray-500',
+    label: 'Other',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+  },
+  default: {
+    color: 'text-gray-600',
+    bg: 'bg-gray-50',
+    bgSolid: 'bg-gray-500',
+    label: 'Project',
+    icon: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
   },
 };
 
@@ -152,6 +281,19 @@ function toSlug(value: string): string {
 }
 
 function mapApiProjectToUiProject(project: ApiProject): Project {
+  // Try to find custom industry data from localStorage
+  let customIndustry: { icon: string; color: string } | undefined;
+  if (project.industry) {
+    const storedCustoms = loadCustomIndustriesRaw();
+    const stored = storedCustoms.find((c) => c.name && project.industry && toSlug(c.name) === toSlug(project.industry));
+    if (stored) {
+      customIndustry = {
+        icon: stored.iconId,
+        color: stored.colorId,
+      };
+    }
+  }
+  
   return {
     id: project.publicId,
     name: project.name,
@@ -164,10 +306,12 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     teamMembers: 0,
     issues: 0,
     status: project.status === 'accepted' ? 'active' : 'planning',
-    projectType: (project.industry || 'software').toLowerCase(),
+    projectType: project.industry ? toSlug(project.industry) : 'software',
+    industryName: project.industry || '',
     isFavorite: project.isFavorite || false,
     folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
     role: project.role as Project['role'],
+    customIndustry,
   };
 }
 
@@ -182,7 +326,7 @@ function mapApiFolderToUiFolder(folder: ApiFolder, projects: Project[]): Folder 
 }
 
 function mapCreatedProjectToUiProject(project: CreatedProjectPayload): Project {
-  return mapApiProjectToUiProject({
+  const baseProject = mapApiProjectToUiProject({
     publicId: project.publicId,
     name: project.name,
     description: project.description,
@@ -191,6 +335,11 @@ function mapCreatedProjectToUiProject(project: CreatedProjectPayload): Project {
     role: project.role,
     status: project.status,
   });
+  
+  return {
+    ...baseProject,
+    customIndustry: project.customIndustry,
+  };
 }
 
 // Folder Icon Component
@@ -414,13 +563,60 @@ function TrashDropZone() {
   );
 }
 
+// Helper to get type config - handles both predefined and custom industries
+function getProjectTypeConfig(
+  projectType: string | undefined, 
+  industryName: string | undefined,
+  customIndustry?: { icon: string; color: string }
+) {
+  if (!projectType && !industryName) return TYPE_CONFIG.software;
+  
+  const typeKey = projectType?.toLowerCase();
+  if (typeKey && TYPE_CONFIG[typeKey]) {
+    return TYPE_CONFIG[typeKey];
+  }
+  
+  // Handle custom industries with user-selected icon and color
+  if (industryName) {
+    const colorClass = customIndustry?.color || 'gray';
+    return {
+      color: `text-${colorClass}-600`,
+      bg: `bg-${colorClass}-50`,
+      bgSolid: `bg-${colorClass}-500`,
+      label: industryName,
+      icon: getCustomIconById(customIndustry?.icon || 'building'),
+    };
+  }
+  
+  return TYPE_CONFIG.software;
+}
+
+// Get custom icon SVG by icon ID
+function getCustomIconById(iconId: string): React.ReactNode {
+  const icons: Record<string, React.ReactNode> = {
+    building: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>,
+    code: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
+    megaphone: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>,
+    scale: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>,
+    palette: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>,
+    chart: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
+    bank: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>,
+    music: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" /></svg>,
+    cloud: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>,
+    heart: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>,
+    scissors: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>,
+    book: <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>,
+  };
+  return icons[iconId] || icons.building;
+}
+
 // Project List Item Component (for list view)
 function ProjectListItem({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
   });
-  const type = TYPE_CONFIG[project.projectType || 'software'] || TYPE_CONFIG.software;
+  const type = getProjectTypeConfig(project.projectType, project.industryName, project.customIndustry);
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
@@ -506,7 +702,7 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
   });
-  const type = TYPE_CONFIG[project.projectType || 'software'] || TYPE_CONFIG.software;
+  const type = getProjectTypeConfig(project.projectType, project.industryName, project.customIndustry);
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
@@ -541,31 +737,17 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
             }}
           />
         ) : null}
-        {/* Fallback gradient with icon */}
+        {/* Fallback gradient with icon - use type config */}
         <div className={cn(
           "absolute inset-0 flex items-center justify-center",
-          project.thumbnail ? "hidden" : "",
-          project.projectType === 'software' && "bg-gradient-to-br from-cyan-50 to-cyan-100",
-          project.projectType === 'design' && "bg-gradient-to-br from-purple-50 to-purple-100",
-          project.projectType === 'construction' && "bg-gradient-to-br from-blue-50 to-blue-100",
-          project.projectType === 'research' && "bg-gradient-to-br from-teal-50 to-teal-100",
-          !project.projectType && "bg-gradient-to-br from-gray-50 to-gray-100"
+          project.thumbnail ? "hidden" : ""
         )}>
           <div className={cn(
             "flex h-14 w-14 items-center justify-center rounded-xl",
-            project.projectType === 'software' && "bg-cyan-500 text-white",
-            project.projectType === 'design' && "bg-purple-500 text-white",
-            project.projectType === 'construction' && "bg-blue-500 text-white",
-            project.projectType === 'research' && "bg-teal-500 text-white",
-            !project.projectType && "bg-gray-500 text-white"
+            type.bg,
+            type.color
           )}>
-            <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              {project.projectType === 'software' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />}
-              {project.projectType === 'design' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />}
-              {project.projectType === 'construction' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />}
-              {project.projectType === 'research' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />}
-              {!project.projectType && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />}
-            </svg>
+            {type.icon}
           </div>
         </div>
         {/* Favorite Star */}
@@ -739,8 +921,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
 
     await toast.promise(requestPromise, {
       loading: 'Creating folder...',
-      success: (data) => `${data.name} đã được tạo thành công`,
-      error: (err) => err?.message || 'Không thể tạo folder',
+      success: (data) => `${data.name} has been created successfully`,
+      error: (err) => err?.message || 'Failed to create folder',
     });
   };
 
@@ -934,9 +1116,21 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       if (!response.ok) {
         // Rollback on failure
         await loadProjects(false, { force: true });
-        toast.error('Failed to move project to trash');
+        let errorMessage = 'Failed to move project to trash';
+        try {
+          const errorData = await response.json();
+          if (errorData?.message) {
+            errorMessage = errorData.message;
+          }
+        } catch {}
+        toast.error(errorMessage);
         return;
       }
+
+      // Dispatch event to remove from TopBar tabs
+      window.dispatchEvent(new CustomEvent('orbit:project-removed', { 
+        detail: { projectId } 
+      }));
 
       toast.success('Project moved to trash', {
         description: 'You can restore it from the Trash page within 30 days.',

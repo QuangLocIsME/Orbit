@@ -9,6 +9,10 @@ interface IndustryOption {
   name: string;
   icon: React.ReactNode;
   color: string;
+  iconId?: string;
+  colorId?: string;
+  bgColor?: string;
+  bgSolid?: string;
 }
 
 // Base 6 industries (always visible)
@@ -266,6 +270,88 @@ export interface CreatedProjectPayload {
   coverImageUrl?: string;
   role?: string;
   status?: string;
+  customIndustry?: {
+    icon: string;
+    color: string;
+  };
+}
+
+// Custom industries storage key
+const CUSTOM_INDUSTRIES_KEY = 'orbit:custom-industries';
+
+// Load custom industries from localStorage
+export function loadCustomIndustries(): IndustryOption[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(CUSTOM_INDUSTRIES_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed.map((item: { id: string; name: string; iconId: string; colorId: string }) => ({
+        id: item.id,
+        name: item.name,
+        icon: getIconById(item.iconId),
+        color: `text-${item.colorId}-500`,
+        bgColor: `bg-${item.colorId}-50`,
+        bgSolid: `bg-${item.colorId}-500`,
+      }));
+    }
+  } catch (e) {
+    console.error('Failed to load custom industries:', e);
+  }
+  return [];
+}
+
+// Save custom industry to localStorage
+export function saveCustomIndustry(industry: IndustryOption) {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = loadCustomIndustriesRaw();
+    const newIndustry = {
+      id: industry.id,
+      name: industry.name,
+      iconId: industry.iconId || 'building',
+      colorId: industry.colorId || 'blue',
+    };
+    localStorage.setItem(CUSTOM_INDUSTRIES_KEY, JSON.stringify([...existing, newIndustry]));
+  } catch (e) {
+    console.error('Failed to save custom industry:', e);
+  }
+}
+
+interface CustomIndustryRaw {
+  id: string;
+  name: string;
+  iconId: string;
+  colorId: string;
+}
+
+export function loadCustomIndustriesRaw(): CustomIndustryRaw[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(CUSTOM_INDUSTRIES_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Get icon SVG by icon ID
+function getIconById(iconId: string): React.ReactNode {
+  const icons: Record<string, React.ReactNode> = {
+    building: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>,
+    code: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
+    megaphone: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>,
+    scale: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>,
+    palette: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>,
+    chart: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
+    bank: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>,
+    music: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" /></svg>,
+    cloud: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>,
+    heart: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>,
+    scissors: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>,
+    book: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>,
+  };
+  return icons[iconId] || icons.building;
 }
 
 export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }: CreateProjectModalProps) {
@@ -274,13 +360,16 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
   const [coverImageUrl, setCoverImageUrl] = useState('');
   const [showMoreIndustries, setShowMoreIndustries] = useState(false);
   const [showCustomIndustry, setShowCustomIndustry] = useState(false);
-  const [customIndustries, setCustomIndustries] = useState<IndustryOption[]>([]);
+  const [customIndustries, setCustomIndustries] = useState<IndustryOption[]>(() => {
+    // Load custom industries from localStorage on initial mount
+    return loadCustomIndustries();
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Custom industry form state
   const [customName, setCustomName] = useState('');
   const [customIcon, setCustomIcon] = useState('building');
-  const [customColor, setCustomColor] = useState('blue');
+  const [customColor, setCustomColor] = useState('pink'); // Default to pink for better visibility
 
   if (!isOpen) return null;
 
@@ -316,7 +405,33 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
           throw new Error(payload?.message || 'Create project failed');
         }
 
-        const createdProject = payload.data as CreatedProjectPayload;
+        // Get custom industry data if this is a custom industry
+        // First check in state, then in localStorage
+        let customIndustryData: { icon: string; color: string } | undefined;
+        
+        const selectedCustomIndustry = customIndustries.find((i) => i.id === selectedIndustry);
+        if (selectedCustomIndustry) {
+          customIndustryData = {
+            icon: selectedCustomIndustry.iconId || 'building',
+            color: selectedCustomIndustry.colorId || 'blue',
+          };
+        } else if (selectedIndustry?.startsWith('custom-')) {
+          // Try to find in localStorage if not in state (e.g., page refresh)
+          const storedCustoms = loadCustomIndustriesRaw();
+          const stored = storedCustoms.find((c) => c.id === selectedIndustry);
+          if (stored) {
+            customIndustryData = {
+              icon: stored.iconId,
+              color: stored.colorId,
+            };
+          }
+        }
+
+        const createdProject: CreatedProjectPayload = {
+          ...payload.data,
+          customIndustry: customIndustryData,
+        };
+        
         onProjectCreated?.(createdProject);
 
         onClose();
@@ -332,8 +447,8 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
 
     await toast.promise(requestPromise, {
       loading: 'Creating project...',
-      success: (data) => `${data.name} đã được tạo thành công`,
-      error: (error) => error?.message || 'Không thể tạo project',
+      success: (data) => `${data.name} has been created successfully`,
+      error: (error) => error?.message || 'Failed to create project',
     });
   };
 
@@ -354,7 +469,14 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
       name: customName,
       icon: selectedIcon?.icon || iconOptions[0].icon,
       color: selectedColorOption?.text || 'text-blue-500',
+      iconId: customIcon,
+      colorId: customColor,
+      bgColor: `bg-${customColor}-50`,
+      bgSolid: `bg-${customColor}-500`,
     };
+    
+    // Save to localStorage for persistence
+    saveCustomIndustry(newIndustry);
     
     setCustomIndustries([...customIndustries, newIndustry]);
     setSelectedIndustry(newIndustry.id);

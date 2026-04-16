@@ -22,27 +22,59 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
   const isProjectPage = currentPath.includes('/projects/');
   const currentProjectSlug = isProjectPage ? currentPath.split('/projects/')[1]?.split('/')[0] : null;
 
+  // Load open projects from localStorage on mount
   useEffect(() => {
-    // Load open projects from localStorage
     const stored = localStorage.getItem('orbit-open-projects');
     if (stored) {
-      setOpenProjects(JSON.parse(stored));
+      try {
+        const parsed = JSON.parse(stored);
+        setOpenProjects(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        setOpenProjects([]);
+      }
     }
+  }, []);
 
-    // If on a project page, add it to open projects
+  // Update localStorage whenever openProjects changes
+  useEffect(() => {
+    localStorage.setItem('orbit-open-projects', JSON.stringify(openProjects));
+  }, [openProjects]);
+
+  // Listen for project deleted/trashed events
+  useEffect(() => {
+    const handleProjectRemoved = (e: CustomEvent<{ projectId: string }>) => {
+      const { projectId } = e.detail;
+      setOpenProjects(prev => {
+        const filtered = prev.filter(p => p.id !== projectId);
+        return filtered;
+      });
+    };
+
+    window.addEventListener('orbit:project-removed' as any, handleProjectRemoved);
+    return () => {
+      window.removeEventListener('orbit:project-removed' as any, handleProjectRemoved);
+    };
+  }, []);
+
+  // If on a project page, add it to open projects
+  useEffect(() => {
     if (isProjectPage && currentProjectSlug) {
       setOpenProjects(prev => {
         const exists = prev.some(p => p.id === currentProjectSlug);
         if (!exists) {
-          const newProjects = [...prev, {
+          return [...prev, {
             id: currentProjectSlug,
             title: currentPage,
             path: currentPath
           }];
-          localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
-          return newProjects;
+        } else {
+          // Update title if project name changed
+          return prev.map(p => 
+            p.id === currentProjectSlug 
+              ? { ...p, title: currentPage, path: currentPath }
+              : p
+          );
         }
-        return prev;
       });
     }
   }, [isProjectPage, currentProjectSlug, currentPage, currentPath]);
@@ -56,9 +88,9 @@ export default function TopBar({ currentPage, currentPath }: TopBarProps) {
   const closeProject = (projectId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const newProjects = openProjects.filter(p => p.id !== projectId);
-    setOpenProjects(newProjects);
-    localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
+    setOpenProjects(prev => {
+      return prev.filter(p => p.id !== projectId);
+    });
     
     // If closing current project, navigate to home
     if (projectId === currentProjectSlug) {
