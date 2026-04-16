@@ -324,6 +324,10 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectId: id }),
           });
+          // Dispatch event to remove from TopBar tabs
+          window.dispatchEvent(new CustomEvent('orbit:project-removed', { 
+            detail: { projectId: id } 
+          }));
           showToast(`"${item?.name}" permanently deleted`);
         } catch {
           showToast('Delete failed', 'info');
@@ -353,6 +357,12 @@ export function TrashManager({ initialItems }: TrashManagerProps) {
               body: JSON.stringify({ projectId: id }),
             })
           ));
+          // Dispatch event for each deleted project
+          ids.forEach(id => {
+            window.dispatchEvent(new CustomEvent('orbit:project-removed', { 
+              detail: { projectId: id } 
+            }));
+          });
           showToast(`${count} item${count > 1 ? 's' : ''} permanently deleted`);
         } catch {
           showToast('Some items could not be deleted', 'info');
