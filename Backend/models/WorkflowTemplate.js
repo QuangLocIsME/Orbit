@@ -37,6 +37,8 @@ const WorkflowTemplateSchema = new mongoose.Schema({
     isPrivate: { type: Boolean, default: false },
     downloads: { type: Number, default: 0 },
     rating: { type: Number, default: 0, min: 0, max: 5 },
+    // Track if this template is a copy from another template
+    sourcePublicId: { type: String, default: null },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });

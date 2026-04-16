@@ -36,13 +36,28 @@ export default function WorkflowTemplatesDropdown({
     setSelected(selectedWorkflow);
   }, [selectedWorkflow]);
 
-  // Fetch custom templates from API
+  // Fetch custom templates (own + downloaded) from API
   useEffect(() => {
     const fetchTemplates = async () => {
       setIsLoading(true);
       try {
-        const res = await workflowTemplateService.getMyTemplates({ limit: 50 });
-        setCustomTemplates(res.templates);
+        // Fetch user's own templates AND downloaded templates
+        const [myRes, downloadedRes] = await Promise.all([
+          workflowTemplateService.getMyTemplates({ limit: 50 }),
+          workflowTemplateService.getDownloadedTemplates({ limit: 50 }),
+        ]);
+        // Merge both, remove duplicates by publicId
+        const allTemplates = [...myRes.templates];
+        downloadedRes.templates.forEach(t => {
+          if (!allTemplates.find(existing => existing.publicId === t.publicId)) {
+            // Add isDownloadedCopy flag for downloaded templates
+            allTemplates.push({
+              ...t,
+              isDownloadedCopy: true,
+            });
+          }
+        });
+        setCustomTemplates(allTemplates);
       } catch (error) {
         console.error('Failed to fetch templates:', error);
       } finally {
@@ -50,6 +65,14 @@ export default function WorkflowTemplatesDropdown({
       }
     };
     fetchTemplates();
+
+    // Listen for workflow changes
+    const handleWorkflowCreated = () => fetchTemplates();
+    window.addEventListener('workflow-created', handleWorkflowCreated);
+
+    return () => {
+      window.removeEventListener('workflow-created', handleWorkflowCreated);
+    };
   }, []);
 
   // Build all templates from API response
@@ -97,6 +120,9 @@ export default function WorkflowTemplatesDropdown({
 
         const payload = await res.json();
         toast.success(payload.message || 'Workflow template applied');
+        
+        // Notify SettingsTab to refresh
+        window.dispatchEvent(new CustomEvent('workflow-applied', { detail: { projectId, workflowId } }));
       } catch (error) {
         console.error('Failed to apply workflow template:', error);
         toast.error('Failed to apply workflow template');

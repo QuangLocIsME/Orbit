@@ -162,14 +162,9 @@ class ProjectController {
             if (!userId) return;
 
             const cacheKey = getProjectsCacheKey(userId);
-            const cachedData = await getJson(cacheKey);
-            if (cachedData) {
-                return res.status(200).json({
-                    success: true,
-                    data: cachedData,
-                    cached: true,
-                });
-            }
+
+            // Clear cache to ensure fresh data
+            await delKeys(cacheKey);
 
             const memberships = await ProjectMemberRepository.getProjectsByUser(userId);
             const projectIds = memberships.map((membership) => membership.projectId);

@@ -473,8 +473,9 @@ export default function SettingsTab({
     const fetchWorkflowTemplates = async () => {
       setWorkflowTemplatesLoading(true);
       try {
-        const res = await workflowTemplateService.getMyTemplates();
-        setWorkflowTemplates(res.templates);
+        // getMyTemplates đã trả về tất cả templates (own + downloaded copies)
+        const myRes = await workflowTemplateService.getMyTemplates({ limit: 100 });
+        setWorkflowTemplates(myRes.templates);
       } catch (error) {
         console.error('Failed to fetch workflow templates:', error);
       } finally {
@@ -482,6 +483,16 @@ export default function SettingsTab({
       }
     };
     fetchWorkflowTemplates();
+
+    // Listen for workflow changes (including copied templates)
+    const handleWorkflowCreated = () => fetchWorkflowTemplates();
+    window.addEventListener('workflow-created', handleWorkflowCreated);
+    window.addEventListener('workflow-updated', handleWorkflowCreated);
+
+    return () => {
+      window.removeEventListener('workflow-created', handleWorkflowCreated);
+      window.removeEventListener('workflow-updated', handleWorkflowCreated);
+    };
   }, []);
 
   const handleDeleteDiscipline = async (id: string) => {
@@ -765,7 +776,7 @@ export default function SettingsTab({
   useEffect(() => {
     let cancelled = false;
 
-    const loadTaskTags = async () => {
+    const loadWorkflowData = async () => {
       if (!projectPublicId) return;
 
       setIsLoadingTaskTags(true);
@@ -779,6 +790,13 @@ export default function SettingsTab({
         if (!response.ok) return;
 
         const payload = await response.json();
+
+        // Set workflowTemplateId from project
+        const workflowTemplateId = payload?.data?.workflowTemplateId;
+        if (!cancelled && workflowTemplateId) {
+          setSelectedWorkflow(workflowTemplateId);
+        }
+
         const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
         if (!cancelled && tags.length > 0) {
           setTaskTags(
@@ -797,9 +815,15 @@ export default function SettingsTab({
       }
     };
 
-    loadTaskTags();
+    loadWorkflowData();
+
+    // Listen for workflow applied to project
+    const handleWorkflowApplied = () => loadWorkflowData();
+    window.addEventListener('workflow-applied', handleWorkflowApplied);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('workflow-applied', handleWorkflowApplied);
     };
   }, [projectPublicId]);
 

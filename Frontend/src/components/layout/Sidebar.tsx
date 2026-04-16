@@ -114,13 +114,18 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     fetchProjects();
   }, []);
 
-  // Listen for project removed event to refresh sidebar
+  // Listen for project events to refresh sidebar
   useEffect(() => {
-    const handleProjectRemoved = () => {
-      fetchProjects();
-    };
+    const handleProjectRemoved = () => fetchProjects();
+    const handleProjectCreated = () => fetchProjects();
+
     window.addEventListener('orbit:project-removed', handleProjectRemoved);
-    return () => window.removeEventListener('orbit:project-removed', handleProjectRemoved);
+    window.addEventListener('orbit:project-created', handleProjectCreated);
+
+    return () => {
+      window.removeEventListener('orbit:project-removed', handleProjectRemoved);
+      window.removeEventListener('orbit:project-created', handleProjectCreated);
+    };
   }, []);
 
   // Show cached user immediately (module + localStorage), then refresh from backend
@@ -207,10 +212,10 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
   // FAVORITES shows only projects with isFavorite: true
   const favorites = projects.filter(p => p.isFavorite === true);
-  // MY PROJECTS: role === 'admin' (user created/owns)
-  const myProjects = projects.filter(p => p.role === 'admin' && !p.isFavorite);
-  // SHARED: role !== 'admin' (invited to project)
-  const shared = projects.filter(p => p.role !== 'admin' && !p.isFavorite);
+  // MY PROJECTS: role === 'owner' (user created/owns)
+  const myProjects = projects.filter(p => p.role === 'owner' && !p.isFavorite);
+  // SHARED: role !== 'owner' (invited to project or assigned other roles)
+  const shared = projects.filter(p => p.role !== 'owner' && !p.isFavorite);
 
   return (
     <aside

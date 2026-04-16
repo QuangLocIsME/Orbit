@@ -1,4 +1,5 @@
 const WorkflowTemplate = require('../models/WorkflowTemplate');
+const UserDownloadedTemplate = require('../models/UserDownloadedTemplate');
 
 class WorkflowTemplateRepository {
     // Create new workflow template
@@ -104,21 +105,78 @@ class WorkflowTemplateRepository {
         };
     }
 
-    // Find user's templates (including private)
+    // Get original template's downloads (for copied templates)
+    async getOriginalDownloads(sourcePublicId) {
+        const sourceTemplate = await WorkflowTemplate.findOne({ publicId: sourcePublicId }).lean();
+        return sourceTemplate ? sourceTemplate.downloads : 0;
+    }
+
+    // Find user's templates (created by user, excluding copies)
     async findUserTemplates(authorId, { page = 1, limit = 20 } = {}) {
         const skip = (page - 1) * limit;
 
+        // Only return templates that user CREATED (no sourcePublicId means it's original)
+        // Templates that user copied should only appear in findDownloadedTemplates
+        const query = {
+            authorId,
+            sourcePublicId: { $exists: false } // Exclude copied templates
+        };
+
         const [templates, total] = await Promise.all([
-            WorkflowTemplate.find({ authorId })
+            WorkflowTemplate.find(query)
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(limit)
                 .lean(),
-            WorkflowTemplate.countDocuments({ authorId }),
+            WorkflowTemplate.countDocuments(query),
         ]);
 
         return {
             templates,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+    // Find templates that user has downloaded (copied from others)
+    async findDownloadedTemplates(userId, { page = 1, limit = 20 } = {}) {
+        const skip = (page - 1) * limit;
+
+        // Get all downloaded template publicIds
+        const downloadedRecords = await UserDownloadedTemplate.find({ userId }).lean();
+        const downloadedIds = downloadedRecords.map(r => r.publicId);
+
+        if (downloadedIds.length === 0) {
+            return {
+                templates: [],
+                pagination: { page, limit, total: 0, totalPages: 0 },
+            };
+        }
+
+        // Include user's private copies that are downloaded from others
+        // These are marked as isDownloadedCopy: true
+        const [templates, total] = await Promise.all([
+            WorkflowTemplate.find({ publicId: { $in: downloadedIds } })
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            WorkflowTemplate.countDocuments({ publicId: { $in: downloadedIds } }),
+        ]);
+
+        // Mark all as downloaded copies
+        const templatesWithFlag = templates.map(t => ({
+            ...t,
+            isOwn: false,
+            isDownloadedCopy: true,
+        }));
+
+        return {
+            templates: templatesWithFlag,
             pagination: {
                 page,
                 limit,
@@ -163,6 +221,38 @@ class WorkflowTemplateRepository {
             { $inc: { downloads: 1 } },
             { new: true }
         );
+    }
+
+    // Check if user has downloaded a template
+    async hasUserDownloaded(userId, publicId) {
+        const record = await UserDownloadedTemplate.findOne({ userId, publicId });
+        return !!record;
+    }
+
+    // Get all template publicIds that a user has downloaded
+    async getDownloadedTemplateIds(userId) {
+        const records = await UserDownloadedTemplate.find({ userId }).lean();
+        return records.map(r => r.publicId);
+    }
+
+    // Mark template as downloaded by user
+    async markAsDownloaded(userId, publicId, templateId) {
+        try {
+            const record = new UserDownloadedTemplate({
+                userId,
+                publicId,
+                templateId,
+                downloadedAt: new Date(),
+            });
+            await record.save();
+            return true;
+        } catch (err) {
+            // Already downloaded - unique constraint violation
+            if (err.code === 11000) {
+                return false;
+            }
+            throw err;
+        }
     }
 
     // Update rating
