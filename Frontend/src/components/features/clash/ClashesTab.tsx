@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { apiUrl } from '@/config/api';
@@ -66,8 +66,10 @@ function ClashOverview({
   projectPublicId: string;
   onRunDetection: () => void;
 }) {
+  const PAGE_SIZE = 10;
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'hard' | 'soft'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
 
   const { data, isLoading, isError, refetch } = useQuery<{ clashes: ClashResult[]; summary: ClashSummary }>({
     queryKey: ['clashes-overview', projectPublicId],
@@ -92,6 +94,16 @@ function ClashOverview({
     return matchesSearch;
   });
 
+  const sorted = useMemo(() => {
+    const unresolved = filtered.filter(c => c.status !== 'resolved');
+    const resolved = filtered.filter(c => c.status === 'resolved');
+    return [...unresolved, ...resolved];
+  }, [filtered]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginated = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       {/* Header */}
@@ -109,7 +121,7 @@ function ClashOverview({
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
           <span className="text-xs text-[#4A5565]">Total Clashes</span>
           <span className="text-2xl font-normal text-[#101828]">
@@ -120,6 +132,12 @@ function ClashOverview({
           <span className="text-xs text-[#4A5565]">Hard Clashes</span>
           <span className="text-2xl font-normal text-[#EC003F]">
             {isLoading ? '—' : summary?.hard ?? 0}
+          </span>
+        </div>
+        <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
+          <span className="text-xs text-[#4A5565]">Soft Clashes</span>
+          <span className="text-2xl font-normal text-[#F59E0B]">
+            {isLoading ? '—' : summary?.soft ?? 0}
           </span>
         </div>
         <div className="flex flex-col gap-1 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
@@ -154,7 +172,7 @@ function ClashOverview({
           {(['all', 'hard', 'soft'] as const).map(f => (
             <button
               key={f}
-              onClick={() => setFilterType(f)}
+              onClick={() => { setFilterType(f); setCurrentPage(1); }}
               className={cn(
                 'rounded-[10px] px-3 py-2 text-xs font-normal transition-colors capitalize',
                 filterType === f
@@ -213,15 +231,16 @@ function ClashOverview({
           </div>
         )}
 
-        {!isLoading && !isError && filtered.map((clash, index) => {
+        {!isLoading && !isError && paginated.map((clash, index) => {
           const st = statusConfig[clash.status] ?? statusConfig.new;
           const tc = typeConfig[clash.type] ?? typeConfig.HARD;
           const ic = iconColors[clash.status] ?? iconColors.new;
+          const isLast = index === paginated.length - 1;
 
           return (
             <div
               key={clash.clashId}
-              className={cn('flex gap-4 p-6', index !== filtered.length - 1 && 'border-b border-[#E5E7EB]')}
+              className={cn('flex gap-4 p-6', !isLast && 'border-b border-[#E5E7EB]')}
             >
               <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px]', ic)}>
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -270,6 +289,63 @@ function ClashOverview({
             </div>
           );
         })}
+
+        {/* Pagination */}
+        {!isLoading && !isError && sorted.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between border-t border-[#E5E7EB] px-6 py-4">
+            <span className="text-xs text-[#6A7282]">
+              Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, sorted.length)} of {sorted.length} clashes
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-[10px] px-3 py-1.5 text-xs transition-colors',
+                  safePage <= 1
+                    ? 'cursor-not-allowed text-[#D1D5DC]'
+                    : 'border border-[#E5E7EB] bg-white text-[#364153] hover:bg-gray-50'
+                )}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                </svg>
+                Prev
+              </button>
+
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                <button
+                  key={page}
+                  onClick={() => setCurrentPage(page)}
+                  className={cn(
+                    'h-8 w-8 rounded-[10px] text-xs transition-colors',
+                    page === safePage
+                      ? 'bg-[#155DFC] text-white'
+                      : 'border border-[#E5E7EB] bg-white text-[#364153] hover:bg-gray-50'
+                  )}
+                >
+                  {page}
+                </button>
+              ))}
+
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-[10px] px-3 py-1.5 text-xs transition-colors',
+                  safePage >= totalPages
+                    ? 'cursor-not-allowed text-[#D1D5DC]'
+                    : 'border border-[#E5E7EB] bg-white text-[#364153] hover:bg-gray-50'
+                )}
+              >
+                Next
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

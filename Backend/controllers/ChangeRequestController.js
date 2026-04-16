@@ -127,8 +127,11 @@ class ChangeRequestController {
             }
 
             const member = await ProjectMemberRepository.findMember(projectId, userId);
-            if (!member || member.role === 'viewer') {
-                return errorResponse(res, 403, 'Forbidden');
+            if (!member) {
+                return errorResponse(res, 403, 'You are not a member of this project');
+            }
+            if (member.role === 'viewer') {
+                return errorResponse(res, 403, 'You do not have permission to create change requests. Viewers can only view.');
             }
 
             const normalizedTitle       = normalizeString(rawTitle);
@@ -326,12 +329,11 @@ class ChangeRequestController {
                 return errorResponse(res, 403, 'Forbidden');
             }
 
-            // Only admin, CR creator, or reviewers can change status
-            const isAdmin    = member.role === 'admin';
-            const isCreator  = changeRequest.createdBy === userId;
-            const isReviewer = Array.isArray(changeRequest.reviewers) && changeRequest.reviewers.includes(userId);
-            if (!isAdmin && !isCreator && !isReviewer) {
-                return errorResponse(res, 403, 'Only admins, the CR creator, or reviewers can update status');
+            // Only admin or CR creator can change status
+            const isAdmin   = member.role === 'admin';
+            const isCreator = changeRequest.createdBy === userId;
+            if (!isAdmin && !isCreator) {
+                return errorResponse(res, 403, 'Only admins and the CR creator can update status');
             }
 
             const updated = await ChangeRequestRepository.updateStatus(normalizedCrId, normalizedStatus);
