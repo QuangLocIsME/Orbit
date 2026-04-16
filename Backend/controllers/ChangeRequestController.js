@@ -4,6 +4,24 @@ const { errorResponse } = require('../utils/response');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../config/s3');
 
+const MAX_ATTACH_SIZE_MB = Number(process.env.CR_ATTACHMENT_MAX_SIZE_MB) || 50;
+const MAX_ATTACH_SIZE_BYTES = MAX_ATTACH_SIZE_MB * 1024 * 1024;
+
+// Validate attachment size - reject if any file exceeds limit
+function validateAttachmentSize(files) {
+    if (!Array.isArray(files) || files.length === 0) return null;
+    for (const file of files) {
+        if (file.size > MAX_ATTACH_SIZE_BYTES) {
+            return {
+                error: `"${file.originalname}" exceeds ${MAX_ATTACH_SIZE_MB} MB limit`,
+                size: file.size,
+                maxSize: MAX_ATTACH_SIZE_BYTES,
+            };
+        }
+    }
+    return null;
+}
+
 const normalizeString = (val) => {
     if (typeof val !== 'string') return '';
     return val.trim();
@@ -129,6 +147,13 @@ class ChangeRequestController {
 
             // Xử lý attachments từ multer (dùng S3 SDK để upload lên bucket orbit-files)
             const uploadedFiles = req.files || [];
+
+            // Validate file sizes
+            const sizeError = validateAttachmentSize(uploadedFiles);
+            if (sizeError) {
+                return errorResponse(res, 400, sizeError.error);
+            }
+
             const attachments = [];
 
             if (uploadedFiles.length > 0) {
