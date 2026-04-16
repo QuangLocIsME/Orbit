@@ -87,6 +87,7 @@ class ActivityController {
 
             // Sort merged list newest first, take top 8
             activities.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            const topActivities = activities.slice(0, 8);
 
             // Get project updatedAt for real-time project updates (query before using)
             const Project = require('../models/Project');
@@ -105,19 +106,19 @@ class ActivityController {
 
             // Insert project update at the beginning if it exists and is newer
             const projectUpdateTime = project?.updatedAt ? new Date(project.updatedAt).getTime() : 0;
-            const latestActivityTime = top[0]?.createdAt ? new Date(top[0].createdAt).getTime() : 0;
+            const latestActivityTime = topActivities[0]?.createdAt ? new Date(topActivities[0].createdAt).getTime() : 0;
 
-            if (projectUpdateTime > latestActivityTime && top.length > 0) {
+            if (projectUpdateTime > latestActivityTime && topActivities.length > 0) {
                 // Insert after first activity, at position 1
-                top.splice(1, 0, projectUpdateActivity);
+                topActivities.splice(1, 0, projectUpdateActivity);
             } else if (projectUpdateTime > latestActivityTime) {
                 // No other activities, add at beginning
-                top.unshift(projectUpdateActivity);
+                topActivities.unshift(projectUpdateActivity);
             }
 
             return res.status(200).json({
                 success: true,
-                data: top,
+                data: topActivities,
             });
         } catch (error) {
             return errorResponse(res, 500, error.message || 'Failed to fetch activities');

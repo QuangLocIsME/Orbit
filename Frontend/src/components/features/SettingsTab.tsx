@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
-import { apiFetch, uploadProjectThumbnail, updateProject } from '@/lib/api-client';
+import { apiFetch, uploadProjectThumbnail, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole } from '@/lib/api-client';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
@@ -340,6 +340,7 @@ export default function SettingsTab({
   // Discipline validation error
   const [disciplineNameError, setDisciplineNameError] = useState(false);
   const [isLoadingDisciplines, setIsLoadingDisciplines] = useState(false);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   
   // Edit Discipline Modal state
   const [showEditDisciplineModal, setShowEditDisciplineModal] = useState(false);
@@ -802,6 +803,32 @@ export default function SettingsTab({
     };
   }, [projectPublicId]);
 
+  // Load roles from API
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRoles = async () => {
+      if (!projectPublicId) return;
+
+      setIsLoadingRoles(true);
+      try {
+        const data = await fetchProjectRoles(projectPublicId);
+        if (!cancelled && Array.isArray(data) && data.length > 0) {
+          setRoles(data);
+        }
+      } catch {
+        // keep default roles on error
+      } finally {
+        if (!cancelled) setIsLoadingRoles(false);
+      }
+    };
+
+    loadRoles();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPublicId]);
+
   const handleDeleteTag = async (id: string) => {
     const previous = taskTags;
     const next = taskTags.filter((t) => t.id !== id);
@@ -819,8 +846,22 @@ export default function SettingsTab({
     }
   };
 
-  const handleDeleteRole = (id: string) => {
-    setRoles(roles.filter(r => r.id !== id));
+  const handleDeleteRole = async (id: string) => {
+    const previous = roles;
+    const next = roles.filter(r => r.id !== id);
+    setRoles(next);
+
+    if (!projectPublicId) {
+      setRoles(previous);
+      return;
+    }
+
+    try {
+      await deleteProjectRole(id);
+    } catch {
+      setRoles(previous);
+      toast.error('Failed to delete role');
+    }
   };
 
   const handleToggleNotification = (id: string, channel: 'email' | 'inApp' | 'push') => {
@@ -3188,7 +3229,7 @@ export default function SettingsTab({
               Cancel
             </button>
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (newRoleName.trim()) {
                   const selectedPerms: string[] = [];
                   Object.entries(newRoleContentPerms).forEach(([key, val]) => {
@@ -3201,25 +3242,27 @@ export default function SettingsTab({
                     if (val) selectedPerms.push(key.replace(/([A-Z])/g, ' $1').trim());
                   });
                   
-                  const newRole: Role = {
-                    id: Date.now().toString(),
-                    name: newRoleName.trim(),
-                    accessLevel: newRolePermissionLevel as 'full' | 'high' | 'medium' | 'minimal',
-                    isSystem: false,
-                    memberCount: 0,
-                    description: newRoleDescription.trim() || 'Custom role',
-                    permissions: selectedPerms.length > 0 ? selectedPerms : ['View All'],
-                    color: newRoleColor
-                  };
-                  setRoles([...roles, newRole]);
-                  setShowCreateRoleModal(false);
-                  setNewRoleName('');
-                  setNewRoleDescription('');
-                  setNewRoleColor('#6366f1');
-                  setNewRolePermissionLevel('medium');
-                  setNewRoleContentPerms({viewAll: false, editOwn: false, editAll: false, createContent: false, deleteContent: false, approveChanges: false, submitChanges: false});
-                  setNewRoleTeamPerms({viewTeam: false, manageTeam: false, assignTasks: false, manageRoles: false});
-                  setNewRoleSettingsPerms({viewSettings: false, manageSettings: false, manageWorkflow: false, manageIntegrations: false});
+                  try {
+                    const newRole = await createProjectRole(projectPublicId, {
+                      name: newRoleName.trim(),
+                      description: newRoleDescription.trim() || 'Custom role',
+                      color: newRoleColor,
+                      accessLevel: newRolePermissionLevel,
+                      permissions: selectedPerms.length > 0 ? selectedPerms : ['View All'],
+                    });
+                    setRoles([...roles, newRole]);
+                    setShowCreateRoleModal(false);
+                    setNewRoleName('');
+                    setNewRoleDescription('');
+                    setNewRoleColor('#6366f1');
+                    setNewRolePermissionLevel('medium');
+                    setNewRoleContentPerms({viewAll: false, editOwn: false, editAll: false, createContent: false, deleteContent: false, approveChanges: false, submitChanges: false});
+                    setNewRoleTeamPerms({viewTeam: false, manageTeam: false, assignTasks: false, manageRoles: false});
+                    setNewRoleSettingsPerms({viewSettings: false, manageSettings: false, manageWorkflow: false, manageIntegrations: false});
+                    toast.success('Role created');
+                  } catch {
+                    toast.error('Failed to create role');
+                  }
                 }
               }}
               className="flex-1 h-11 rounded-[10px] bg-[#818CF8] text-[14px] font-medium text-white hover:bg-[#6366F1] transition-colors"

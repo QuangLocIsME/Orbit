@@ -7,11 +7,26 @@ class ProjectMemberRepository {
     }
 
     async findMember(projectId, userId) {
-        return await ProjectMember.findOne({ projectId, userId });
+        // Try both userId formats (ObjectId or publicId)
+        const query = { projectId };
+        if (/^[a-f\d]{24}$/i.test(userId)) {
+            const { Types } = require('mongoose');
+            query.userId = new Types.ObjectId(userId);
+        } else {
+            query.userId = userId;
+        }
+        return await ProjectMember.findOne(query);
     }
 
     async getProjectsByUser(userId) {
-        return await ProjectMember.find({ userId, status: 'accepted' }).select(
+        const { Types } = require('mongoose');
+        let query = {};
+        if (/^[a-f\d]{24}$/i.test(userId)) {
+            query = { userId: new Types.ObjectId(userId), status: 'accepted' };
+        } else {
+            query = { userId, status: 'accepted' };
+        }
+        return await ProjectMember.find(query).select(
             'projectId role status lastVisitedAt isFavorite'
         );
     }
@@ -31,15 +46,29 @@ class ProjectMemberRepository {
     }
 
     async updateMemberRole(projectId, userId, role) {
+        const { Types } = require('mongoose');
+        let query = { projectId };
+        if (/^[a-f\d]{24}$/i.test(userId)) {
+            query.userId = new Types.ObjectId(userId);
+        } else {
+            query.userId = userId;
+        }
         return await ProjectMember.findOneAndUpdate(
-            { projectId, userId },
+            query,
             { role },
             { returnDocument: 'after' }
         );
     }
 
     async removeMember(projectId, userId) {
-        return await ProjectMember.deleteOne({ projectId, userId });
+        const { Types } = require('mongoose');
+        let query = { projectId };
+        if (/^[a-f\d]{24}$/i.test(userId)) {
+            query.userId = new Types.ObjectId(userId);
+        } else {
+            query.userId = userId;
+        }
+        return await ProjectMember.deleteOne(query);
     }
 
     async countAdmins(projectId) {
@@ -50,18 +79,25 @@ class ProjectMemberRepository {
         return await ProjectMember.deleteMany({ projectId });
     }
 
-    async getMemberWithUser(projectId, userId) {
-        return await ProjectMember.findOne({ projectId, userId });
-    }
-
     async getMembersWithUsers(projectId) {
         return await ProjectMember.find({ projectId }).select(
             '-_id projectId userId role status invitedBy createdAt isFavorite'
         ).lean();
     }
 
+    async getMemberWithUser(projectId, userId) {
+        const { Types } = require('mongoose');
+        let query = { projectId };
+        if (/^[a-f\d]{24}$/i.test(userId)) {
+            query.userId = new Types.ObjectId(userId);
+        } else {
+            query.userId = userId;
+        }
+        return await ProjectMember.findOne(query);
+    }
+
     async toggleFavorite(projectId, userId) {
-        const member = await ProjectMember.findOne({ projectId, userId });
+        const member = await this.findMember(projectId, userId);
         if (!member) return null;
         member.isFavorite = !member.isFavorite;
         await member.save();
@@ -69,7 +105,14 @@ class ProjectMemberRepository {
     }
 
     async getFavoriteProjects(userId) {
-        return await ProjectMember.find({ userId, isFavorite: true }).select(
+        const { Types } = require('mongoose');
+        let query = {};
+        if (/^[a-f\d]{24}$/i.test(userId)) {
+            query = { userId: new Types.ObjectId(userId), isFavorite: true };
+        } else {
+            query = { userId, isFavorite: true };
+        }
+        return await ProjectMember.find(query).select(
             'projectId role status lastVisitedAt isFavorite'
         );
     }

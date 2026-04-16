@@ -87,30 +87,40 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [projects, setProjects] = useState<Project[]>([]);
 
   // Fetch projects from API
-  useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        const res = await apiFetch('/api/projects/me');
-        if (res.ok) {
-          const data = await res.json();
-          const mappedProjects: Project[] = (data.data || []).map((p: ApiProject) => ({
-            id: p.publicId,
-            slug: p.publicId,
-            name: p.name,
-            description: p.description,
-            category: 'shared' as const,
-            isFavorite: p.isFavorite === true,
-            coverImageUrl: p.coverImageUrl,
-            role: p.role as Project['role'],
-          }));
-          setProjects(mappedProjects);
-        }
-      } catch (error) {
-        console.error('Failed to fetch projects:', error);
+  const fetchProjects = async () => {
+    try {
+      const res = await apiFetch('/api/projects/me');
+      if (res.ok) {
+        const data = await res.json();
+        const mappedProjects: Project[] = (data.data || []).map((p: ApiProject) => ({
+          id: p.publicId,
+          slug: p.publicId,
+          name: p.name,
+          description: p.description,
+          category: 'shared' as const,
+          isFavorite: p.isFavorite === true,
+          coverImageUrl: p.coverImageUrl,
+          role: p.role as Project['role'],
+        }));
+        setProjects(mappedProjects);
       }
-    };
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+    }
+  };
 
+  // Fetch projects from API
+  useEffect(() => {
     fetchProjects();
+  }, []);
+
+  // Listen for project removed event to refresh sidebar
+  useEffect(() => {
+    const handleProjectRemoved = () => {
+      fetchProjects();
+    };
+    window.addEventListener('orbit:project-removed', handleProjectRemoved);
+    return () => window.removeEventListener('orbit:project-removed', handleProjectRemoved);
   }, []);
 
   // Show cached user immediately (module + localStorage), then refresh from backend

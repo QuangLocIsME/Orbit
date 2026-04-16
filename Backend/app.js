@@ -29,6 +29,7 @@ const disciplineRoutes = require('./routes/discipline.routes');
 const activityRoutes = require('./routes/activity.routes');
 const trashRoutes = require('./routes/trash.routes');
 const workflowTemplateRoutes = require('./routes/workflowTemplate.routes');
+const roleRoutes = require('./routes/roleRoutes');
 const connectDB = require('./config/database');
 const { attachSocket } = require('./services/socketService');
 
@@ -91,6 +92,7 @@ app.use('/api', disciplineRoutes);
 app.use('/api', activityRoutes);
 app.use('/api/trash', trashRoutes);
 app.use('/api/workflow-templates', workflowTemplateRoutes);
+app.use('/api/roles', roleRoutes);
 
 app.use((err, req, res, nextHandler) => {
     if (err instanceof SyntaxError) {
