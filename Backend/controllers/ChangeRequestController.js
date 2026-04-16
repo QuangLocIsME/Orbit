@@ -254,6 +254,12 @@ class ChangeRequestController {
             const member = await ProjectMemberRepository.findMember(changeRequest.projectId, userId);
             if (!member || member.role === 'viewer') return errorResponse(res, 403, 'Forbidden');
 
+            const isAdmin   = member.role === 'admin';
+            const isCreator = changeRequest.createdBy === userId;
+            if (!isAdmin && !isCreator) {
+                return errorResponse(res, 403, 'Only admins and the CR creator can edit this change request');
+            }
+
             const updates = {};
             if (title !== undefined)       updates.title       = normalizeString(title);
             if (description !== undefined) updates.description = normalizeString(description);

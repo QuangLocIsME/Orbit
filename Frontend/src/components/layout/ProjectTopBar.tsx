@@ -29,13 +29,24 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
   const [isFavorite, setIsFavorite] = useState(initialFavorite);
   const [isTogglingFavorite, setIsTogglingFavorite] = useState(false);
 
+  // Get current userId from localStorage to scope open-projects per user
+  const userId = (() => {
+    try {
+      const u = localStorage.getItem('orbit_user');
+      if (u) return JSON.parse(u).id;
+    } catch { /* ignore */ }
+    return null;
+  })();
+
+  const storageKey = userId ? `orbit-open-projects:${userId}` : 'orbit-open-projects';
+
   useEffect(() => {
     setIsFavorite(initialFavorite);
   }, [initialFavorite]);
 
   useEffect(() => {
     // Load open projects from localStorage
-    const stored = localStorage.getItem('orbit-open-projects');
+    const stored = localStorage.getItem(storageKey);
     if (stored) {
       setOpenProjects(JSON.parse(stored));
     }
@@ -49,19 +60,19 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
           title: projectName,
           path: `/projects/${projectSlug}`
         }];
-        localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
+        localStorage.setItem(storageKey, JSON.stringify(newProjects));
         return newProjects;
       }
       return prev;
     });
-  }, [projectSlug, projectName]);
+  }, [storageKey, projectSlug, projectName]);
 
   const closeProject = (projectId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const newProjects = openProjects.filter(p => p.id !== projectId);
     setOpenProjects(newProjects);
-    localStorage.setItem('orbit-open-projects', JSON.stringify(newProjects));
+    localStorage.setItem(storageKey, JSON.stringify(newProjects));
     
     // Navigate to home when closing current project
     if (projectId === projectSlug) {
