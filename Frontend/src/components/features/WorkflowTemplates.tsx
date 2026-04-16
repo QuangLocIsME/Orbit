@@ -7,7 +7,7 @@ import { WorkflowEditor, type StageData } from './workflow-editor';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 
 // Custom workflow icon SVG
 const WorkflowIcon = () => (
@@ -768,6 +768,21 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
   useEffect(() => {
     fetchData();
     setIsHydrated(true);
+
+    // Listen for workflow changes from other tabs/pages
+    const handleWorkflowChange = () => {
+      fetchData();
+    };
+
+    window.addEventListener('workflow-updated', handleWorkflowChange);
+    window.addEventListener('workflow-created', handleWorkflowChange);
+    window.addEventListener('workflow-deleted', handleWorkflowChange);
+
+    return () => {
+      window.removeEventListener('workflow-updated', handleWorkflowChange);
+      window.removeEventListener('workflow-created', handleWorkflowChange);
+      window.removeEventListener('workflow-deleted', handleWorkflowChange);
+    };
   }, [fetchData]);
 
   const handleSearch = useCallback((query: string, tags: string[]) => {
@@ -837,7 +852,9 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
     if (!deletingTemplate) return;
     try {
       await workflowTemplateService.deleteTemplate(deletingTemplate.publicId);
+      const deletedId = deletingTemplate.publicId;
       setMyTemplates(prev => prev.filter(t => t.publicId !== deletingTemplate.publicId));
+      window.dispatchEvent(new CustomEvent('workflow-deleted', { detail: { publicId: deletedId } }));
       setShowDeleteModal(false);
       setDeletingTemplate(null);
       toast.success('Template deleted successfully');
@@ -849,8 +866,10 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
   const handleEditorSave = async (template: WorkflowTemplate) => {
     if (editingTemplate) {
       setMyTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+      window.dispatchEvent(new CustomEvent('workflow-updated', { detail: template }));
     } else {
       setMyTemplates(prev => [template, ...prev]);
+      window.dispatchEvent(new CustomEvent('workflow-created', { detail: template }));
     }
     setShowEditor(false);
     setEditingTemplate(null);

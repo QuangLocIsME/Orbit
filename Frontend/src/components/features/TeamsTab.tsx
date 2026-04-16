@@ -235,7 +235,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   };
   const canRemove = (memberRole: MemberRole) => {
     if (memberRole === 'owner') return false;
-    if (memberRole === 'admin') return currentUserRole === 'owner';
+    if (memberRole === 'admin') return false; // Admin cannot remove admin
     return canManage;
   };
 

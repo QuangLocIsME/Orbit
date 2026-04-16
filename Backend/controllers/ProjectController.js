@@ -659,6 +659,11 @@ class ProjectController {
                 return forbidden(res, 'The project owner cannot be removed');
             }
 
+            // Admins cannot remove each other (only owner can remove admin)
+            if (targetMember.role === 'admin' && member.role === 'admin') {
+                return forbidden(res, 'Admins cannot remove each other');
+            }
+
             // Only owner can remove admin, admins can only remove non-admin members
             if (targetMember.role === 'admin') {
                 if (member.role !== 'owner') {

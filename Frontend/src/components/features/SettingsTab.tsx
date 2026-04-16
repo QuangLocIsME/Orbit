@@ -365,7 +365,7 @@ export default function SettingsTab({
   const [editTagColor, setEditTagColor] = useState('#6366F1');
   
   // Workflow state
-  const [selectedWorkflow, setSelectedWorkflow] = useState('construction');
+  const [selectedWorkflow, setSelectedWorkflow] = useState('');
   const [showCreateWorkflowModal, setShowCreateWorkflowModal] = useState(false);
   const [showEditWorkflowModal, setShowEditWorkflowModal] = useState(false);
   const [showDeleteWorkflowModal, setShowDeleteWorkflowModal] = useState(false);
@@ -1711,108 +1711,6 @@ export default function SettingsTab({
               <p className="text-[14px] text-[#6A7282] mb-4">Select Workflow Template</p>
               
               <div className="space-y-4">
-                {/* Construction Standard - Selected */}
-                <div 
-                  onClick={() => setSelectedWorkflow('construction')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'construction' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Construction Standard</h3>
-                        <p className="text-[14px] text-[#6A7282] mb-3">Traditional construction workflow with 5 stages</p>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {['Backlog', 'To Do', 'In Progress', 'Review', 'Done'].map((stage, idx) => (
-                            <span key={stage} className="flex items-center">
-                              <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage}</span>
-                              {idx < 4 && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {selectedWorkflow === 'construction' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Agile Scrum */}
-                <div 
-                  onClick={() => setSelectedWorkflow('agile')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'agile' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Agile Scrum</h3>
-                        <p className="text-[14px] text-[#6A7282] mb-3">Scrum-based workflow with sprint planning</p>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {['Product Backlog', 'Sprint Backlog', 'In Progress', 'Testing', 'Review', 'Done'].map((stage, idx) => (
-                            <span key={stage} className="flex items-center">
-                              <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage}</span>
-                              {idx < 5 && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {selectedWorkflow === 'agile' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Design Review */}
-                <div 
-                  onClick={() => setSelectedWorkflow('design')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'design' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Design Review</h3>
-                        <p className="text-[14px] text-[#6A7282] mb-3">Streamlined design approval process</p>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {['Draft', 'Review', 'Revision', 'Approved'].map((stage, idx) => (
-                            <span key={stage} className="flex items-center">
-                              <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage}</span>
-                              {idx < 3 && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {selectedWorkflow === 'design' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
-                  </div>
-                </div>
-
                 {/* User's Workflow Templates */}
                 {workflowTemplates.length > 0 && workflowTemplates.map((template) => (
                   <div
@@ -3378,12 +3276,14 @@ export default function SettingsTab({
         onSuccess={(template) => {
           if (showEditWorkflowModal) {
             setWorkflowTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+            window.dispatchEvent(new CustomEvent('workflow-updated', { detail: template }));
             setShowEditWorkflowModal(false);
             setEditingWorkflow(null);
             toast.success('Workflow updated successfully');
           } else {
             setWorkflowTemplates(prev => [template, ...prev]);
             setSelectedWorkflow(template.publicId);
+            window.dispatchEvent(new CustomEvent('workflow-created', { detail: template }));
             setShowCreateWorkflowModal(false);
             toast.success('Workflow created successfully');
           }
@@ -3401,9 +3301,12 @@ export default function SettingsTab({
           setDeletingWorkflow(null);
         }}
         onSuccess={() => {
+          const deletedId = deletingWorkflow.publicId;
           setWorkflowTemplates(prev => prev.filter(t => t.publicId !== deletingWorkflow.publicId));
+          window.dispatchEvent(new CustomEvent('workflow-deleted', { detail: { publicId: deletedId } }));
           if (selectedWorkflow === deletingWorkflow.publicId) {
-            setSelectedWorkflow('construction');
+            const remainingTemplates = workflowTemplates.filter(t => t.publicId !== deletingWorkflow.publicId);
+            setSelectedWorkflow(remainingTemplates.length > 0 ? remainingTemplates[0].publicId : '');
           }
           setShowDeleteWorkflowModal(false);
           setDeletingWorkflow(null);
