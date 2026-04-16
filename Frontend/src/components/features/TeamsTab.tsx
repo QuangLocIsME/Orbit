@@ -303,7 +303,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
       const res = await apiFetch('/api/projects/members/update-role', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: projectPublicId, userId, role: newRole }),
+        body: JSON.stringify({ projectId: projectPublicId, targetUserId: userId, role: newRole }),
       });
       const data = await res.json();
       if (!res.ok) {
