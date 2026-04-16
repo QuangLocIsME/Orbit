@@ -39,7 +39,10 @@ interface ChangeRequest {
 interface Discipline { id: string; name: string; color: string; description: string; }
 interface ModelFile  { id: string; name: string; size?: number; folderPath?: string; }
 interface TeamMember { publicId: string; userId: string; role: string; status: string; user: { fullName: string; email: string; avatar?: string } | null; }
-interface ChangesTabProps { projectPublicId: string; }
+interface ChangesTabProps { 
+  projectPublicId: string; 
+  onActivityAdded?: () => void; // Callback to refresh activities
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -926,6 +929,8 @@ interface CRComment {
   authorName: string;
   content: string;
   createdAt: string;
+  updatedAt?: string;
+  isEdited?: boolean;
 }
 
 function fmtCommentTime(d: string) {
@@ -968,6 +973,8 @@ function DetailModal({
   const [commentInput, setCommentInput] = useState('');
   const [posting, setPosting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
 
   const disc = disciplines.find(d => d.id === cr.disciplineId);
   const sc = STATUS_CFG[cr.status];
@@ -1034,6 +1041,53 @@ function DetailModal({
       }
     } catch { toast.error('Failed to post comment'); }
     finally { setPosting(false); }
+  };
+
+  const startEdit = (comment: CRComment) => {
+    setEditingCommentId(comment.publicId);
+    setEditingContent(comment.content);
+  };
+
+  const cancelEdit = () => {
+    setEditingCommentId(null);
+    setEditingContent('');
+  };
+
+  const saveEdit = async (commentId: string) => {
+    if (!editingContent.trim()) return;
+    try {
+      const res = await apiFetch('/api/change-requests/comments', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commentId, content: editingContent.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => prev.map(c => 
+          c.publicId === commentId ? { ...c, content: data.data.content, isEdited: true, updatedAt: data.data.updatedAt } : c
+        ));
+        cancelEdit();
+      } else {
+        toast.error(data.message || 'Failed to update comment');
+      }
+    } catch { toast.error('Failed to update comment'); }
+  };
+
+  const deleteComment = async (commentId: string) => {
+    if (!confirm('Delete this comment?')) return;
+    try {
+      const res = await apiFetch('/api/change-requests/comments', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commentId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => prev.filter(c => c.publicId !== commentId));
+      } else {
+        toast.error(data.message || 'Failed to delete comment');
+      }
+    } catch { toast.error('Failed to delete comment'); }
   };
 
   const autoResize = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1185,52 +1239,42 @@ function DetailModal({
 
           {/* ── Comments Section ──────────────────────────────────────────── */}
           <div className="border-t border-[#E5E7EB] pt-5">
-            <div className="flex items-center gap-2 mb-4">
-              <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
-              </svg>
-              <p className="text-[13px] font-semibold text-[#101828]">
-                Comments
-                {comments.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-[#F3F4F6] px-2 py-0.5 text-[11px] font-medium text-[#6A7282]">{comments.length}</span>
-                )}
-              </p>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
+                </svg>
+                <span className="text-sm font-semibold text-foreground">Comments</span>
+              </div>
+              {comments.length > 0 && (
+                <span className="ml-auto inline-flex h-5 items-center rounded-full bg-muted px-2 text-[10px] font-medium text-muted-foreground">{comments.length}</span>
+              )}
             </div>
 
             {/* Comment input */}
-            <div className="flex gap-3 mb-5">
-              <div className="shrink-0 mt-0.5">
-                <div className="h-8 w-8 rounded-full flex items-center justify-center text-[12px] font-semibold text-white bg-[#6366F1]">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
-                  </svg>
-                </div>
-              </div>
-              <div className="flex-1 flex flex-col gap-2">
-                <textarea
-                  ref={textareaRef}
-                  value={commentInput}
-                  onChange={autoResize}
-                  onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment(); }}
-                  placeholder="Write a comment… (Ctrl+Enter to post)"
-                  rows={2}
-                  className="w-full resize-none rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[13px] text-[#101828] placeholder:text-[#99A1AF] focus:border-[#155DFC] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#155DFC] transition-colors overflow-hidden"
-                />
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] text-[#99A1AF]">Ctrl + Enter to post</p>
-                  <button
-                    onClick={submitComment}
-                    disabled={!commentInput.trim() || posting}
-                    className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#155DFC] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {posting ? (
-                      <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    ) : (
-                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
-                    )}
-                    {posting ? 'Posting…' : 'Post'}
-                  </button>
-                </div>
+            <div className="rounded-xl border border-border bg-background shadow-sm">
+              <textarea
+                ref={textareaRef}
+                placeholder="Write a comment…"
+                value={commentInput}
+                onChange={autoResize}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment(); }}
+                className="w-full resize-none rounded-t-xl bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none min-h-[72px]"
+              />
+              <div className="flex items-center justify-between border-t border-border px-3 py-2">
+                <span className="text-[11px] text-muted-foreground/60">Ctrl + Enter to post</span>
+                <button
+                  onClick={submitComment}
+                  disabled={!commentInput.trim() || posting}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity disabled:opacity-40 hover:opacity-80"
+                >
+                  {posting ? (
+                    <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  ) : (
+                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
+                  )}
+                  {posting ? 'Posting…' : 'Post'}
+                </button>
               </div>
             </div>
 
@@ -1240,30 +1284,74 @@ function DetailModal({
                 <svg className="h-5 w-5 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
               </div>
             ) : comments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 rounded-[10px] bg-[#F9FAFB] border border-dashed border-[#E5E7EB]">
-                <svg className="h-8 w-8 text-[#D1D5DC] mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
-                </svg>
-                <p className="text-[13px] text-[#99A1AF]">No comments yet. Be the first to comment.</p>
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted/60">
+                  <svg className="h-4 w-4 text-muted-foreground/50" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
+                  </svg>
+                </div>
+                <p className="mt-2 text-[13px] text-muted-foreground">No comments yet.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-1 pt-1">
                 {comments.map(c => (
-                  <div key={c.publicId} className="flex gap-3">
+                  <div key={c.publicId} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30 group">
                     <div
-                      className="h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-[12px] font-bold text-white mt-0.5"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
                       style={{ backgroundColor: nameToColor(c.authorName) }}
                     >
                       {c.authorName.charAt(0).toUpperCase()}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="inline-block max-w-full rounded-[10px] rounded-tl-[4px] bg-[#F3F4F6] px-4 py-3">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[13px] font-semibold text-[#101828]">{c.authorName}</span>
-                          <span className="text-[11px] text-[#99A1AF]">{fmtCommentTime(c.createdAt)}</span>
-                        </div>
-                        <p className="text-[13px] text-[#364153] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-semibold text-foreground">{c.authorName}</span>
+                        <span className="text-[11px] text-muted-foreground/60">{fmtCommentTime(c.createdAt)}</span>
+                        {c.isEdited && <span className="text-[11px] text-muted-foreground/60 italic">(Edited)</span>}
                       </div>
+                      {editingCommentId === c.publicId ? (
+                        <div className="space-y-2">
+                          <textarea
+                            value={editingContent}
+                            onChange={(e) => setEditingContent(e.target.value)}
+                            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-[#155DFC] focus:outline-none"
+                            rows={2}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => saveEdit(c.publicId)}
+                              className="px-3 py-1 text-xs font-medium bg-[#155DFC] text-white rounded-lg hover:bg-blue-700"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[13px] leading-relaxed text-foreground/80 whitespace-pre-wrap">{c.content}</p>
+                      )}
+                      {(currentUserId === c.authorId || currentRole === 'admin') && !editingCommentId && (
+                        <div className="flex gap-3 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {currentUserId === c.authorId && (
+                            <button
+                              onClick={() => startEdit(c)}
+                              className="text-[11px] text-muted-foreground hover:text-[#155DFC]"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          <button
+                            onClick={() => deleteComment(c.publicId)}
+                            className="text-[11px] text-muted-foreground hover:text-red-500"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1282,7 +1370,7 @@ function DetailModal({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
+export default function ChangesTab({ projectPublicId, onActivityAdded }: ChangesTabProps) {
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
   const [loadingCR, setLoadingCR]           = useState(true);
   const [disciplines, setDisciplines]       = useState<Discipline[]>([]);
@@ -1400,6 +1488,8 @@ export default function ChangesTab({ projectPublicId }: ChangesTabProps) {
       detailedDescription: cr.detailedDescription ?? '',
     };
     setChangeRequests(p => [safe, ...p]);
+    // Notify parent to refresh activities
+    if (typeof onActivityAdded === 'function') onActivityAdded();
   };
   const handleStatusChange = (id: string, status: ChangeRequest['status']) => {
     setChangeRequests(p => p.map(c => c.publicId === id ? { ...c, status } : c));

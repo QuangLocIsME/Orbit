@@ -7,6 +7,7 @@ const socketService = require('../services/socketService');
 const { invalidateUserCache } = socketService;
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
+const { buildSupabaseThumbnailPath, uploadProjectThumbnailBuffer } = require('../services/supabaseStorageService');
 
 const getNormalizedProjectId = (req) => normalizeString(req.body?.projectId);
 
@@ -283,6 +284,69 @@ class ProjectController {
             });
         } catch (error) {
             return badRequest(res, 'Update project failed');
+        }
+    }
+
+    async uploadThumbnail(req, res) {
+        try {
+            const { projectId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return unauthorized(res);
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.role !== 'admin') {
+                return forbidden(res);
+            }
+
+            const file = req.file;
+            if (!file) {
+                return badRequest(res, 'No file uploaded');
+            }
+
+            const fileName = file.originalname || 'thumbnail.jpg';
+            const storagePath = buildSupabaseThumbnailPath({
+                projectId: normalizedProjectId,
+                fileName: fileName,
+            });
+
+            const { publicUrl } = await uploadProjectThumbnailBuffer(file.buffer, storagePath);
+
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                { coverImageUrl: publicUrl, updatedAt: new Date() },
+                { returnDocument: 'after' }
+            );
+
+            if (!project) {
+                return notFound(res, 'Project not found');
+            }
+
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { coverImageUrl: project.coverImageUrl },
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Thumbnail uploaded',
+                data: {
+                    publicId: project.publicId,
+                    coverImageUrl: project.coverImageUrl,
+                },
+            });
+        } catch (error) {
+            console.error('Upload thumbnail error:', error);
+            return badRequest(res, 'Upload thumbnail failed');
         }
     }
 

@@ -24,8 +24,11 @@ interface TaskDetailData {
 interface CommentItem {
   id: string;
   author: string;
+  authorId?: string;
   content: string;
   createdAt: string;
+  updatedAt?: string;
+  isEdited?: boolean;
   avatar?: string;
 }
 
@@ -89,6 +92,22 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
   const [projectRole, setProjectRole] = useState<ProjectRole>('member');
   const [workflowStages, setWorkflowStages] = useState<WorkflowStage[]>(fallbackStages);
   const [updatingStage, setUpdatingStage] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
+  const [currentUserId, setCurrentUserId] = useState('');
+
+  // Get current userId from localStorage
+  const getCurrentUserId = () => {
+    try {
+      const u = localStorage.getItem('orbit_user');
+      if (u) return JSON.parse(u).id;
+    } catch { /* ignore */ }
+    return '';
+  };
+
+  useEffect(() => {
+    setCurrentUserId(getCurrentUserId());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,9 +164,12 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
             setComments(
               list.map((c: any) => ({
                 id: String(c.publicId || c.id || Math.random()),
+                authorId: String(c.authorId || c.author?._id || ''),
                 author: String(c.authorName || c.author?.fullName || 'Unknown'),
                 content: String(c.content || ''),
                 createdAt: String(c.createdAt || ''),
+                updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
+                isEdited: Boolean(c.isEdited),
                 avatar: c.author?.avatar || '',
               }))
             );
@@ -233,6 +255,57 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
       setCommentInput('');
     } catch {
       toast.error('Failed to post comment');
+    }
+  };
+
+  const startEdit = (comment: CommentItem) => {
+    setEditingCommentId(comment.id);
+    setEditingContent(comment.content);
+  };
+
+  const cancelEdit = () => {
+    setEditingCommentId(null);
+    setEditingContent('');
+  };
+
+  const saveEdit = async (commentId: string) => {
+    if (!editingContent.trim()) return;
+    try {
+      const res = await apiFetch('/api/tasks/comments', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ commentId, content: editingContent.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => prev.map(c => 
+          c.id === commentId ? { ...c, content: data.data.content, isEdited: true, updatedAt: data.data.updatedAt } : c
+        ));
+        cancelEdit();
+      } else {
+        toast.error(data.message || 'Failed to update comment');
+      }
+    } catch {
+      toast.error('Failed to update comment');
+    }
+  };
+
+  const deleteComment = async (commentId: string) => {
+    if (!confirm('Delete this comment?')) return;
+    try {
+      const res = await apiFetch('/api/tasks/comments', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ commentId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => prev.filter(c => c.id !== commentId));
+      } else {
+        toast.error(data.message || 'Failed to delete comment');
+      }
+    } catch {
+      toast.error('Failed to delete comment');
     }
   };
 
@@ -422,7 +495,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
         ) : (
           <div className="space-y-1 pt-1">
             {comments.map((comment) => (
-              <div key={comment.id} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30">
+              <div key={comment.id} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30 group">
                 <div
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
                   style={{ backgroundColor: (() => {
@@ -449,8 +522,52 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
                         return d < 7 ? `${d}d ago` : new Date(comment.createdAt).toLocaleDateString();
                       })()}
                     </span>
+                    {comment.isEdited && <span className="text-[11px] text-muted-foreground/60 italic">(Edited)</span>}
                   </div>
-                  <p className="text-[13px] leading-relaxed text-foreground/80 whitespace-pre-wrap">{comment.content}</p>
+                  {editingCommentId === comment.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editingContent}
+                        onChange={(e) => setEditingContent(e.target.value)}
+                        className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-[#155DFC] focus:outline-none"
+                        rows={2}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => saveEdit(comment.id)}
+                          className="px-3 py-1 text-xs font-medium bg-[#155DFC] text-white rounded-lg hover:bg-blue-700"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={cancelEdit}
+                          className="px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[13px] leading-relaxed text-foreground/80 whitespace-pre-wrap">{comment.content}</p>
+                  )}
+                  {(currentUserId === comment.authorId || projectRole === 'admin') && !editingCommentId && (
+                    <div className="flex gap-3 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {currentUserId === comment.authorId && (
+                        <button
+                          onClick={() => startEdit(comment)}
+                          className="text-[11px] text-muted-foreground hover:text-[#155DFC]"
+                        >
+                          Edit
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteComment(comment.id)}
+                        className="text-[11px] text-muted-foreground hover:text-red-500"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

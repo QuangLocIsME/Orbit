@@ -1,8 +1,10 @@
 const express = require('express');
+const multer = require('multer');
 const ProjectController = require('../controllers/ProjectController');
 const { authenticate } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 router.get('/me', authenticate, (req, res) => ProjectController.getMyProjects(req, res));
 router.post('/create', authenticate, (req, res) => ProjectController.createProject(req, res));
@@ -22,5 +24,6 @@ router.get('/favorites', authenticate, (req, res) => ProjectController.getFavori
 router.post('/trash', authenticate, (req, res) => ProjectController.trashProject(req, res));
 router.post('/restore', authenticate, (req, res) => ProjectController.restoreProject(req, res));
 router.post('/delete-permanent', authenticate, (req, res) => ProjectController.deletePermanentProject(req, res));
+router.post('/upload-thumbnail', authenticate, upload.single('thumbnail'), (req, res) => ProjectController.uploadThumbnail(req, res));
 
 module.exports = router;

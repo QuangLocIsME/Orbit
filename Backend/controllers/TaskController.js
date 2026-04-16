@@ -242,6 +242,74 @@ class TaskController {
             return serverError(res, 'Create comment failed');
         }
     }
+
+    async updateComment(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const commentId = normalizeString(req.body?.commentId);
+            const content = normalizeString(req.body?.content);
+            if (!commentId || !content) return badRequest(res, 'Missing commentId or content');
+
+            const comment = await TaskComment.findOne({ publicId: commentId });
+            if (!comment) return notFound(res, 'Comment not found');
+
+            // Only author can edit their own comment
+            if (comment.authorId !== userId) return forbidden(res);
+
+            comment.content = content;
+            comment.isEdited = true;
+            comment.updatedAt = new Date();
+            await comment.save();
+
+            const author = await User.findById(userId).select('_id fullName email').lean();
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    ...comment.toObject(),
+                    authorName: author?.fullName || author?.email || 'You',
+                },
+            });
+        } catch {
+            return serverError(res, 'Update comment failed');
+        }
+    }
+
+    async deleteComment(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const commentId = normalizeString(req.body?.commentId);
+            if (!commentId) return badRequest(res, 'Missing commentId');
+
+            const comment = await TaskComment.findOne({ publicId: commentId });
+            if (!comment) return notFound(res, 'Comment not found');
+
+            const member = await ProjectMemberRepository.findMember(comment.projectId, userId);
+            const isAdmin = member && member.role === 'admin';
+            const isAuthor = comment.authorId === userId;
+
+            // Only author or admin can delete
+            if (!isAuthor && !isAdmin) return forbidden(res);
+
+            await TaskComment.deleteOne({ publicId: commentId });
+
+            await Task.updateOne(
+                { publicId: comment.taskId, projectId: comment.projectId },
+                { $inc: { commentsCount: -1 }, $set: { updatedAt: new Date() } }
+            );
+
+            return res.status(200).json({
+                success: true,
+                message: 'Comment deleted',
+            });
+        } catch {
+            return serverError(res, 'Delete comment failed');
+        }
+    }
 }
 
 module.exports = new TaskController();

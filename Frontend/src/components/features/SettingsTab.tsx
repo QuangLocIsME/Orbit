@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, uploadProjectThumbnail, updateProject } from '@/lib/api-client';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
@@ -261,6 +261,9 @@ interface SettingsTabProps {
   projectCode?: string;
   projectDescription?: string;
   projectPublicId?: string;
+  projectType?: 'construction' | 'design' | 'software' | 'research';
+  onSettingsUpdated?: () => void;
+  onActivityAdded?: () => void; // Trigger refresh activities
 }
 
 const settingsMenuItems = [
@@ -286,7 +289,10 @@ export default function SettingsTab({
   projectName = 'Metro Station - Phase 2',
   projectCode = 'MS-P2-2025',
   projectDescription = '',
-  projectPublicId = ''
+  projectPublicId = '',
+  projectType = 'construction',
+  onSettingsUpdated,
+  onActivityAdded
 }: SettingsTabProps) {
   const [activeMenu, setActiveMenu] = useState('general');
   const [name, setName] = useState(projectName);
@@ -340,7 +346,8 @@ export default function SettingsTab({
   const [editingDiscipline, setEditingDiscipline] = useState<Discipline | null>(null);
   
   // Project thumbnail
-  const [projectThumbnail, setProjectThumbnail] = useState('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=200&h=120&fit=crop');
+  const [projectThumbnail, setProjectThumbnail] = useState<string | null>('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=200&h=120&fit=crop');
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Template apply success
@@ -520,10 +527,56 @@ export default function SettingsTab({
   
   // Handle General Settings Save
   const handleSaveGeneralSettings = async () => {
+    if (!name.trim()) {
+      toast.error('Project name is required');
+      return;
+    }
+
     setGeneralSaveState('saving');
-    // Simulate save operation
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setGeneralSaveState('success');
+    try {
+      const updates: { name: string; description: string; coverImageUrl?: string } = {
+        name: name.trim(),
+        description: description.trim(),
+      };
+
+      if (coverImageUrl) {
+        updates.coverImageUrl = coverImageUrl;
+      }
+
+      await updateProject(projectPublicId, updates);
+      setGeneralSaveState('success');
+      toast.success('Settings saved successfully');
+      setCoverImageUrl(null);
+      onSettingsUpdated?.();
+      onActivityAdded?.(); // Trigger activities refresh
+
+      // Update project name in localStorage for TopBar
+      try {
+        const userId = (() => {
+          try {
+            const u = localStorage.getItem('orbit_user');
+            if (u) return JSON.parse(u).id;
+          } catch { /* ignore */ }
+          return null;
+        })();
+        const storageKey = userId ? `orbit-open-projects:${userId}` : 'orbit-open-projects';
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          const projects = JSON.parse(stored);
+          const updatedProjects = projects.map((p: { id: string; title: string; path: string }) =>
+            p.id === projectPublicId ? { ...p, title: name.trim() } : p
+          );
+          localStorage.setItem(storageKey, JSON.stringify(updatedProjects));
+          // Dispatch custom event for TopBar to update immediately
+          window.dispatchEvent(new CustomEvent('orbit:project-updated', {
+            detail: { projectId: projectPublicId, title: name.trim() }
+          }));
+        }
+      } catch { /* ignore localStorage errors */ }
+    } catch {
+      setGeneralSaveState('error');
+      toast.error('Failed to save settings');
+    }
     setTimeout(() => setGeneralSaveState('idle'), 3000);
   };
   
@@ -532,14 +585,25 @@ export default function SettingsTab({
     fileInputRef.current?.click();
   };
   
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProjectThumbnail(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProjectThumbnail(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    if (projectPublicId) {
+      try {
+        const publicUrl = await uploadProjectThumbnail(projectPublicId, file);
+        setCoverImageUrl(publicUrl);
+        setProjectThumbnail(publicUrl);
+        toast.success('Image uploaded successfully');
+      } catch {
+        toast.error('Failed to upload image');
+      }
     }
   };
   
@@ -577,6 +641,7 @@ export default function SettingsTab({
             : d
         ));
         toast.success('Discipline updated');
+        onActivityAdded?.(); // Trigger activities refresh
       } else {
         const data = await res.json();
         toast.error(data.message || 'Failed to update discipline');
@@ -834,6 +899,7 @@ export default function SettingsTab({
         const data = await res.json();
         setDisciplines(prev => [...prev, data.data]);
         toast.success('Discipline added');
+        onActivityAdded?.(); // Trigger activities refresh
       } else {
         const data = await res.json();
         toast.error(data.message || 'Failed to add discipline');
@@ -1221,12 +1287,40 @@ export default function SettingsTab({
             <div className="mb-6">
               <label className="block text-[14px] font-normal text-[#101828] mb-2">Project Thumbnail</label>
               <div className="flex items-center gap-4">
-                <div className="h-20 w-32 rounded-[10px] border border-[#E5E7EB] bg-gray-100 overflow-hidden">
-                  <img 
-                    src={projectThumbnail} 
-                    alt="Project thumbnail" 
-                    className="h-full w-full object-cover"
-                  />
+                <div className="h-20 w-32 rounded-[10px] border border-[#E5E7EB] bg-gray-100 overflow-hidden flex items-center justify-center relative">
+                  {projectThumbnail ? (
+                    <img 
+                      src={projectThumbnail} 
+                      alt="Project thumbnail" 
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className={cn(
+                      "h-full w-full flex items-center justify-center",
+                      projectType === 'software' && "bg-gradient-to-br from-cyan-50 to-cyan-100",
+                      projectType === 'design' && "bg-gradient-to-br from-purple-50 to-purple-100",
+                      projectType === 'construction' && "bg-gradient-to-br from-blue-50 to-blue-100",
+                      projectType === 'research' && "bg-gradient-to-br from-teal-50 to-teal-100",
+                      !projectType && "bg-gradient-to-br from-gray-50 to-gray-100"
+                    )}>
+                      <div className={cn(
+                        "flex h-10 w-10 items-center justify-center rounded-lg",
+                        projectType === 'software' && "bg-cyan-500 text-white",
+                        projectType === 'design' && "bg-purple-500 text-white",
+                        projectType === 'construction' && "bg-blue-500 text-white",
+                        projectType === 'research' && "bg-teal-500 text-white",
+                        !projectType && "bg-gray-500 text-white"
+                      )}>
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {projectType === 'software' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />}
+                          {projectType === 'design' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />}
+                          {projectType === 'construction' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />}
+                          {projectType === 'research' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />}
+                          {!projectType && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <input
                   type="file"
@@ -3250,6 +3344,7 @@ export default function SettingsTab({
             setShowCreateWorkflowModal(false);
             toast.success('Workflow created successfully');
           }
+          onActivityAdded?.(); // Trigger activities refresh
         }}
       />
     )}

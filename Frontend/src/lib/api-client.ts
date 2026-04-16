@@ -71,3 +71,54 @@ export async function apiFetch(
 
   return response;
 }
+
+/**
+ * Upload project thumbnail lên Supabase Storage.
+ * @param projectId - Public ID của project
+ * @param file - File ảnh (File object từ input[type=file])
+ * @returns Promise với public URL của ảnh đã upload
+ */
+export async function uploadProjectThumbnail(projectId: string, file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append('thumbnail', file);
+  formData.append('projectId', projectId);
+
+  const response = await apiFetch('/api/projects/upload-thumbnail', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+    throw new Error(error.message || 'Failed to upload thumbnail');
+  }
+
+  const data = await response.json();
+  return data.data.coverImageUrl;
+}
+
+/**
+ * Update project settings (name, description, industry, coverImageUrl).
+ * @param projectId - Public ID của project
+ * @param updates - Object chứa các fields cần update
+ */
+export async function updateProject(
+  projectId: string,
+  updates: {
+    name?: string;
+    description?: string;
+    industry?: string;
+    coverImageUrl?: string;
+  }
+): Promise<void> {
+  const response = await apiFetch('/api/projects/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId, ...updates }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Update failed' }));
+    throw new Error(error.message || 'Failed to update project');
+  }
+}

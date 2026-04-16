@@ -20,14 +20,16 @@ interface ProjectTopBarProps {
   isFavorite?: boolean;
   onTabChange?: (tabId: string) => void;
   onFavoriteChange?: (isFavorite: boolean) => void;
+  projectRole?: 'owner' | 'admin' | 'member' | 'viewer';
 }
 
-export default function ProjectTopBar({ projectName, projectSlug, packageName, activeTab = 'overview', isFavorite: initialFavorite = false, onTabChange, onFavoriteChange }: ProjectTopBarProps) {
+export default function ProjectTopBar({ projectName, projectSlug, packageName, activeTab = 'overview', isFavorite: initialFavorite = false, onTabChange, onFavoriteChange, projectRole }: ProjectTopBarProps) {
   // State for managing open project tabs
   const [openProjects, setOpenProjects] = useState<OpenProject[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isFavorite, setIsFavorite] = useState(initialFavorite);
   const [isTogglingFavorite, setIsTogglingFavorite] = useState(false);
+  const [displayProjectName, setDisplayProjectName] = useState(projectName);
 
   // Get current userId from localStorage to scope open-projects per user
   const userId = (() => {
@@ -66,6 +68,26 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
       return prev;
     });
   }, [storageKey, projectSlug, projectName]);
+
+  // Listen for localStorage changes (from other tabs/components)
+  useEffect(() => {
+    const handleProjectUpdate = (e: CustomEvent<{ projectId: string; title: string }>) => {
+      if (e.detail.projectId === projectSlug) {
+        setDisplayProjectName(e.detail.title);
+        setOpenProjects(prev => prev.map(p => 
+          p.id === projectSlug ? { ...p, title: e.detail.title } : p
+        ));
+      }
+    };
+
+    window.addEventListener('orbit:project-updated', handleProjectUpdate as EventListener);
+    return () => window.removeEventListener('orbit:project-updated', handleProjectUpdate as EventListener);
+  }, [projectSlug]);
+
+  // Sync displayProjectName with projectName prop
+  useEffect(() => {
+    setDisplayProjectName(projectName);
+  }, [projectName]);
 
   const closeProject = (projectId: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -294,14 +316,14 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
             </svg>
             {packageName ? (
               <>
-                <a href={`/projects/${projectSlug}`} className="text-gray-500 hover:text-gray-700 transition-colors">{projectName}</a>
+                <a href={`/projects/${projectSlug}`} className="text-gray-500 hover:text-gray-700 transition-colors">{displayProjectName}</a>
                 <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
                 <span className="font-medium text-gray-900">{packageName}</span>
               </>
             ) : (
-              <span className="font-medium text-gray-900">{projectName}</span>
+              <span className="font-medium text-gray-900">{displayProjectName}</span>
             )}
           </div>
         </div>
@@ -377,7 +399,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
             { id: 'clashes', label: 'Clashes' },
             { id: 'teams', label: 'Teams' },
             { id: 'extensions', label: 'Extensions' },
-            { id: 'settings', label: 'Settings' },
+            ...(projectRole === 'admin' || projectRole === 'owner' ? [{ id: 'settings', label: 'Settings' }] : []),
           ].map((tab) => {
             const isActive = packageName ? tab.id === 'packages' : activeTab === tab.id;
             

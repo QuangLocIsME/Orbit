@@ -443,6 +443,82 @@ class ChangeRequestController {
         }
     }
 
+    async updateComment(req, res) {
+        try {
+            const { commentId, content } = req.body || {};
+            if (!commentId) return errorResponse(res, 400, 'Missing commentId');
+            if (!normalizeString(content)) return errorResponse(res, 400, 'Comment content is required');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const CRComment = require('../models/CRComment');
+            const comment = await CRComment.findOne({ publicId: commentId });
+            if (!comment) return errorResponse(res, 404, 'Comment not found');
+
+            // Only author can edit their own comment
+            if (comment.authorId !== userId) return errorResponse(res, 403, 'Forbidden');
+
+            comment.content = normalizeString(content);
+            comment.isEdited = true;
+            comment.updatedAt = new Date();
+            await comment.save();
+
+            let authorName = 'Unknown';
+            const mongoose = require('mongoose');
+            if (mongoose.Types.ObjectId.isValid(userId)) {
+                const User = require('../models/User');
+                const user = await User.findById(userId).select('fullName').lean();
+                authorName = user?.fullName || 'Unknown';
+            }
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    publicId: comment.publicId,
+                    authorId: comment.authorId,
+                    authorName,
+                    content: comment.content,
+                    createdAt: comment.createdAt,
+                    updatedAt: comment.updatedAt,
+                    isEdited: comment.isEdited,
+                },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to update comment');
+        }
+    }
+
+    async deleteComment(req, res) {
+        try {
+            const { commentId } = req.body || {};
+            if (!commentId) return errorResponse(res, 400, 'Missing commentId');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const CRComment = require('../models/CRComment');
+            const comment = await CRComment.findOne({ publicId: commentId });
+            if (!comment) return errorResponse(res, 404, 'Comment not found');
+
+            const member = await ProjectMemberRepository.findMember(comment.projectId, userId);
+            const isAdmin = member && member.role === 'admin';
+            const isAuthor = comment.authorId === userId;
+
+            // Only author or admin can delete
+            if (!isAuthor && !isAdmin) return errorResponse(res, 403, 'Forbidden');
+
+            await CRComment.deleteOne({ publicId: commentId });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Comment deleted',
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to delete comment');
+        }
+    }
+
     async delete(req, res) {
         try {
             const { crId } = req.body || {};
