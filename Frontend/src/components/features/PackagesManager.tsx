@@ -372,7 +372,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           {filteredPackages.map((item) => (
             <button
               key={item.publicId}
-              onClick={() => navigate(`/packages/${item.publicId}`)}
+              onClick={() => navigate(`/${selectedProjectId}/${item.publicId}`)}
               className="w-full rounded-xl border border-gray-200 bg-white p-5 text-left transition-all hover:border-gray-300 hover:shadow-lg"
             >
               <div className="flex items-center justify-between gap-3">
@@ -394,7 +394,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           {filteredPackages.map((item) => (
             <button
               key={item.publicId}
-              onClick={() => navigate(`/packages/${item.publicId}`)}
+              onClick={() => navigate(`/${selectedProjectId}/${item.publicId}`)}
               className="group flex w-full items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white p-4 text-left transition-all hover:border-gray-300 hover:shadow-md"
             >
               <div className="min-w-0">

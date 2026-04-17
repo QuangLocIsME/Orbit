@@ -5,6 +5,16 @@ import { toast } from 'sonner';
 import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight, Eye, Download, Trash2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // Helper function to download file from URL
 const handleDownloadFile = async (url: string, filename: string) => {
@@ -112,7 +122,9 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   const [hoveredId, setHoveredId] = useState<string>('');
   const [renamingNodeId, setRenamingNodeId] = useState<string>('');
   const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState<string>('');
   const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
+  const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const registerProjectCallback = useAppStore((s) => s.registerProjectCallback);
@@ -285,11 +297,13 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   const startRename = (node: TreeNode) => {
     setRenamingNodeId(node.id);
     setRenameValue(node.name);
+    setRenameError('');
   };
 
   const submitRename = async (node: TreeNode) => {
     if (!renameValue.trim()) {
       setRenamingNodeId('');
+      setRenameError('');
       return;
     }
 
@@ -301,21 +315,44 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
       ? { projectId, folderId: node.id, newName: renameValue.trim() }
       : { projectId, fileId: node.id, newName: renameValue.trim() };
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
-    });
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body),
+      });
 
-    const payload = await res.json().catch(() => null);
-    if (!res.ok || !payload?.success) {
-      throw new Error(payload?.message || 'Rename failed');
+      const payload = await res.json().catch(() => null);
+
+      if (!res.ok || !payload?.success) {
+        let msg = payload?.message || 'Rename failed';
+
+        if (res.status === 400) {
+          msg = payload?.message || 'Invalid folder name';
+        } else if (res.status === 403) {
+          msg = payload?.message || 'You do not have permission to rename this folder';
+        } else if (res.status === 404) {
+          msg = payload?.message || 'Folder not found';
+        } else if (res.status === 409) {
+          msg = payload?.message || 'A folder with this name already exists';
+        }
+
+        setRenameError(msg);
+        toast.error(msg);
+        return;
+      }
+
+      setRenamingNodeId('');
+      setRenameValue('');
+      setRenameError('');
+      toast.success('Folder renamed successfully');
+      await loadDocuments();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Rename failed';
+      setRenameError(msg);
+      toast.error(msg);
     }
-
-    setRenamingNodeId('');
-    setRenameValue('');
-    await loadDocuments();
   };
 
   const openIfcViewer = (node: TreeNode) => {
@@ -429,28 +466,32 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                       onMouseLeave={() => setHoveredId('')}
                     >
                       <div className="flex items-center gap-4 px-4 py-4 hover:bg-gray-50">
-                        <button onClick={() => setCurrentFolderId(child.id)} className="flex items-center gap-4 text-left">
+                        <button onClick={(e) => { e.stopPropagation(); setCurrentFolderId(child.id); }} className="flex items-center gap-4 text-left">
                           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
                             <Folder className="h-5 w-5 text-gray-500" />
                           </span>
                         </button>
 
                         {renamingNodeId === child.id ? (
-                          <input
-                            value={renameValue}
-                            onChange={(e) => setRenameValue(e.target.value)}
-                            onBlur={() => submitRename(child).catch((e: any) => toast.error(e.message))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') submitRename(child).catch((err: any) => toast.error(err.message));
-                              if (e.key === 'Escape') setRenamingNodeId('');
-                            }}
-                            className="flex-1 rounded border border-gray-200 px-2 py-1 text-sm"
-                            autoFocus
-                          />
+                          <div className="flex flex-col flex-1">
+                            <input
+                              value={renameValue}
+                              onChange={(e) => { setRenameValue(e.target.value); setRenameError(''); }}
+                              onBlur={() => submitRename(child)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') submitRename(child);
+                                if (e.key === 'Escape') { setRenamingNodeId(''); setRenameError(''); }
+                              }}
+                              className={`flex-1 rounded border px-2 py-1 text-sm ${renameError ? 'border-red-500' : 'border-gray-200'}`}
+                              autoFocus
+                            />
+                            {renameError && (
+                              <span className="mt-1 text-xs text-red-500">{renameError}</span>
+                            )}
+                          </div>
                         ) : (
                           <button
-                            onDoubleClick={() => startRename(child)}
-                            onClick={() => setCurrentFolderId(child.id)}
+                            onClick={() => startRename(child)}
                             className="flex-1 text-left text-sm font-medium text-[#101828]"
                           >
                             {child.name}
@@ -460,7 +501,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                         {hoveredId === child.id && (
                           <div className="flex items-center gap-1">
                             <button
-                              onClick={() => handleDelete(child).catch((e: any) => toast.error(e.message))}
+                              onClick={() => setDeleteTarget(child)}
                               className="rounded p-1 text-red-500 hover:bg-red-50"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -486,19 +527,27 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                       </span>
 
                       {renamingNodeId === child.id ? (
-                        <input
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onBlur={() => submitRename(child).catch((e: any) => toast.error(e.message))}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') submitRename(child).catch((err: any) => toast.error(err.message));
-                            if (e.key === 'Escape') setRenamingNodeId('');
-                          }}
-                          className="flex-1 rounded border border-gray-200 px-2 py-1 text-sm"
-                          autoFocus
-                        />
+                        <div className="flex flex-col flex-1">
+                          <input
+                            value={renameValue}
+                            onChange={(e) => { setRenameValue(e.target.value); setRenameError(''); }}
+                            onBlur={() => submitRename(child)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') submitRename(child);
+                              if (e.key === 'Escape') { setRenamingNodeId(''); setRenameError(''); }
+                            }}
+                            className={`flex-1 rounded border px-2 py-1 text-sm ${renameError ? 'border-red-500' : 'border-gray-200'}`}
+                            autoFocus
+                          />
+                          {renameError && (
+                            <span className="mt-1 text-xs text-red-500">{renameError}</span>
+                          )}
+                        </div>
                       ) : (
-                        <button onDoubleClick={() => startRename(child)} className="flex-1 text-left text-sm font-medium text-[#101828]">
+                        <button
+                          onClick={() => startRename(child)}
+                          className="flex-1 text-left text-sm font-medium text-[#101828]"
+                        >
                           {child.name}
                         </button>
                       )}
@@ -539,7 +588,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                             <Download className="h-4 w-4" />
                           </button>
                           <button
-                            onClick={() => handleDelete(child).catch((e: any) => toast.error(e.message))}
+                            onClick={() => setDeleteTarget(child)}
                             className="rounded p-1 text-red-500 hover:bg-red-50"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -588,6 +637,30 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
           </div>
         </div>
       )}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the {deleteTarget?.type === 'folder' ? 'folder' : 'file'} "{deleteTarget?.name}"? {deleteTarget?.type === 'folder' && 'All contents inside will be deleted.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) {
+                  handleDelete(deleteTarget).catch((e: any) => toast.error(e.message));
+                }
+              }}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

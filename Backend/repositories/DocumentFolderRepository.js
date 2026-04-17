@@ -25,6 +25,18 @@ class DocumentFolderRepository {
         });
     }
 
+    async findSiblings({ projectId, packageId = null, parentPath = '' }) {
+        return await DocumentFolder.find({
+            projectId,
+            packageId: { $in: [packageId, packageId === null ? '' : null] },
+            folderPath: new RegExp(`^${parentPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^/]+$`),
+        });
+    }
+
+    async findByIdAndProject(folderId, projectId) {
+        return await DocumentFolder.findOne({ publicId: folderId, projectId });
+    }
+
     async deleteByPublicId(publicId) {
         return await DocumentFolder.findOneAndDelete({ publicId });
     }
