@@ -85,30 +85,45 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [projects, setProjects] = useState<Project[]>([]);
 
   // Fetch projects from API
-  useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        const res = await apiFetch('/api/projects/me');
-        if (res.ok) {
-          const data = await res.json();
-          const mappedProjects: Project[] = (data.data || []).map((p: ApiProject) => ({
-            id: p.publicId,
-            slug: p.publicId,
-            name: p.name,
-            description: p.description,
-            category: 'shared' as const,
-            isFavorite: p.isFavorite === true,
-            coverImageUrl: p.coverImageUrl,
-            role: p.role as Project['role'],
-          }));
-          setProjects(mappedProjects);
-        }
-      } catch (error) {
-        console.error('Failed to fetch projects:', error);
+  const fetchProjects = async () => {
+    try {
+      const res = await apiFetch('/api/projects/me');
+      if (res.ok) {
+        const data = await res.json();
+        const mappedProjects: Project[] = (data.data || []).map((p: ApiProject) => ({
+          id: p.publicId,
+          slug: p.publicId,
+          name: p.name,
+          description: p.description,
+          category: 'shared' as const,
+          isFavorite: p.isFavorite === true,
+          coverImageUrl: p.coverImageUrl,
+          role: p.role as Project['role'],
+        }));
+        setProjects(mappedProjects);
       }
-    };
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+    }
+  };
 
+  // Fetch projects from API
+  useEffect(() => {
     fetchProjects();
+  }, []);
+
+  // Listen for project events to refresh sidebar
+  useEffect(() => {
+    const handleProjectRemoved = () => fetchProjects();
+    const handleProjectCreated = () => fetchProjects();
+
+    window.addEventListener('orbit:project-removed', handleProjectRemoved);
+    window.addEventListener('orbit:project-created', handleProjectCreated);
+
+    return () => {
+      window.removeEventListener('orbit:project-removed', handleProjectRemoved);
+      window.removeEventListener('orbit:project-created', handleProjectCreated);
+    };
   }, []);
 
   // Show cached user immediately (module + localStorage), then refresh from backend
@@ -195,10 +210,10 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
   // FAVORITES shows only projects with isFavorite: true
   const favorites = projects.filter(p => p.isFavorite === true);
-  // MY PROJECTS: role === 'admin' (user created/owns)
-  const myProjects = projects.filter(p => p.role === 'admin' && !p.isFavorite);
-  // SHARED: role !== 'admin' (invited to project)
-  const shared = projects.filter(p => p.role !== 'admin' && !p.isFavorite);
+  // MY PROJECTS: role === 'owner' (user created/owns)
+  const myProjects = projects.filter(p => p.role === 'owner' && !p.isFavorite);
+  // SHARED: role !== 'owner' (invited to project or assigned other roles)
+  const shared = projects.filter(p => p.role !== 'owner' && !p.isFavorite);
 
   return (
     <aside

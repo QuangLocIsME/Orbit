@@ -1,12 +1,24 @@
 const Project = require('../models/Project');
 const Folder = require('../models/Folder');
+const User = require('../models/User');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
+const ProjectRoleRepository = require('../repositories/ProjectRoleRepository');
 const { getJson, setJson, delKeys } = require('../services/cacheService');
 const socketService = require('../services/socketService');
 const { invalidateUserCache } = socketService;
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
+const { buildSupabaseThumbnailPath, uploadProjectThumbnailBuffer } = require('../services/supabaseStorageService');
+
+// System roles to initialize for new projects
+const systemRoles = [
+    { name: 'Project Owner', accessLevel: 'full', isSystem: true, roleKey: 'owner', description: 'Full control over the project and all settings', color: '#8B5CF6', permissions: ['All Permissions'] },
+    { name: 'Admin', accessLevel: 'high', isSystem: true, roleKey: 'admin', description: 'Can manage project, members, and approve changes', color: '#EF4444', permissions: ['View All', 'Edit All', 'Delete Content', 'Manage Team', 'Approve Changes'] },
+    { name: 'Manager', accessLevel: 'high', isSystem: true, roleKey: 'manager', description: 'Can manage tasks, approve changes, and assign work', color: '#F59E0B', permissions: ['View All', 'Edit All', 'Approve Changes', 'Assign Tasks', 'Manage Workflow'] },
+    { name: 'Member', accessLevel: 'medium', isSystem: true, roleKey: 'member', description: 'Can create and edit content, submit changes', color: '#10B981', permissions: ['View All', 'Edit Own', 'Create Content', 'Submit Changes'] },
+    { name: 'Viewer', accessLevel: 'minimal', isSystem: true, roleKey: 'viewer', description: 'View-only access to project content', color: '#6B7280', permissions: ['View All'] },
+];
 
 const getNormalizedProjectId = (req) => normalizeString(req.body?.projectId);
 
@@ -17,6 +29,19 @@ const notFound = (res, message) => errorResponse(res, 404, message);
 const serverError = (res, message) => errorResponse(res, 500, message);
 const handleBadRequest = (res, message) => badRequest(res, message);
 const handleServerError = (res, message) => serverError(res, message);
+
+// Helper: Check if userId is owner of project (handles both ObjectId and publicId)
+const isProjectOwner = async (project, userId) => {
+    if (project.ownerId === userId) return true;
+    
+    if (/^[0-9a-fA-F]{24}$/.test(project.ownerId)) {
+        const ownerUser = await User.findById(project.ownerId).select('publicId').lean();
+        return ownerUser?.publicId === userId;
+    } else {
+        const currentUser = await User.findById(userId).select('publicId').lean();
+        return project.ownerId === currentUser?.publicId;
+    }
+};
 
 const requireUserId = (req, res) => {
     const userId = req.user?.id;
@@ -76,8 +101,12 @@ class ProjectController {
             const userId = requireUserId(req, res);
             if (!userId) return;
 
+            // Get user's publicId for ownerId field
+            const user = await User.findById(userId).select('publicId').lean();
+            if (!user) return unauthorized(res);
+
             const project = await Project.create({
-                ownerId: userId,
+                ownerId: user.publicId, // Lưu user's publicId thay vì MongoDB _id
                 name: normalizedName,
                 description: normalizedDescription,
                 industry: normalizedIndustry,
@@ -89,10 +118,18 @@ class ProjectController {
             await ProjectMemberRepository.addMember({
                 projectId: project.publicId,
                 userId,
-                role: 'admin',
+                role: 'owner',
                 status: 'accepted',
                 invitedBy: null,
             });
+
+            // Initialize system roles for new project
+            for (const role of systemRoles) {
+                await ProjectRoleRepository.createRole({
+                    projectId: project.publicId,
+                    ...role,
+                });
+            }
 
             await invalidateUserCaches(userId);
 
@@ -125,14 +162,9 @@ class ProjectController {
             if (!userId) return;
 
             const cacheKey = getProjectsCacheKey(userId);
-            const cachedData = await getJson(cacheKey);
-            if (cachedData) {
-                return res.status(200).json({
-                    success: true,
-                    data: cachedData,
-                    cached: true,
-                });
-            }
+
+            // Clear cache to ensure fresh data
+            await delKeys(cacheKey);
 
             const memberships = await ProjectMemberRepository.getProjectsByUser(userId);
             const projectIds = memberships.map((membership) => membership.projectId);
@@ -191,14 +223,31 @@ class ProjectController {
 
             const rawMembers = await ProjectMemberRepository.getMembersWithUsers(normalizedProjectId);
 
-            // Collect unique userIds to batch-fetch user profiles (userId = MongoDB _id ObjectId)
+            // Collect user info - handle both ObjectId and publicId userIds
             const userIds = [...new Set(rawMembers.map((m) => m.userId).filter(Boolean))];
             const { Types } = require('mongoose');
             const validObjectIds = userIds.filter((id) => /^[a-f\d]{24}$/i.test(id));
-            const userDocs = validObjectIds.length
-                ? await require('../models/User').find({ _id: { $in: validObjectIds.map((id) => new Types.ObjectId(id)) } }).select('_id fullName email avatar').lean()
+            const publicIds = userIds.filter((id) => !/^[a-f\d]{24}$/i.test(id));
+
+            // Fetch by _id (for ObjectId userIds)
+            const userDocsById = validObjectIds.length
+                ? await require('../models/User').find({ _id: { $in: validObjectIds.map((id) => new Types.ObjectId(id)) } }).select('_id publicId fullName email avatar').lean()
                 : [];
-            const userMap = new Map(userDocs.map((u) => [String(u._id), u]));
+            // Fetch by publicId (for publicId userIds)
+            const userDocsByPublicId = publicIds.length
+                ? await require('../models/User').find({ publicId: { $in: publicIds } }).select('_id publicId fullName email avatar').lean()
+                : [];
+
+            // Build userMap with both _id and publicId as keys
+            const userMap = new Map();
+            userDocsById.forEach((u) => {
+                userMap.set(String(u._id), u);
+                userMap.set(u.publicId, u); // also map by publicId
+            });
+            userDocsByPublicId.forEach((u) => {
+                userMap.set(u.publicId, u);
+                userMap.set(String(u._id), u); // also map by _id
+            });
 
             const members = rawMembers.map((m) => ({
                 publicId: String(m._id),
@@ -209,6 +258,7 @@ class ProjectController {
                 createdAt: m.createdAt,
                 isFavorite: m.isFavorite || false,
                 user: m.userId ? (() => {
+                    // Try both userId (could be ObjectId or publicId) and lookup in map
                     const u = userMap.get(m.userId);
                     return u ? { fullName: u.fullName, email: u.email, avatar: u.avatar } : null;
                 })() : null,
@@ -222,6 +272,7 @@ class ProjectController {
                 currentRole: member.role || 'member',
             });
         } catch (error) {
+            console.error('getProjectMembers error:', error);
             return handleServerError(res, 'Failed to load project members');
         }
     }
@@ -240,7 +291,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
                 return forbidden(res);
             }
 
@@ -283,6 +334,69 @@ class ProjectController {
             });
         } catch (error) {
             return badRequest(res, 'Update project failed');
+        }
+    }
+
+    async uploadThumbnail(req, res) {
+        try {
+            const { projectId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return unauthorized(res);
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
+                return forbidden(res);
+            }
+
+            const file = req.file;
+            if (!file) {
+                return badRequest(res, 'No file uploaded');
+            }
+
+            const fileName = file.originalname || 'thumbnail.jpg';
+            const storagePath = buildSupabaseThumbnailPath({
+                projectId: normalizedProjectId,
+                fileName: fileName,
+            });
+
+            const { publicUrl } = await uploadProjectThumbnailBuffer(file.buffer, storagePath);
+
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                { coverImageUrl: publicUrl, updatedAt: new Date() },
+                { returnDocument: 'after' }
+            );
+
+            if (!project) {
+                return notFound(res, 'Project not found');
+            }
+
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { coverImageUrl: project.coverImageUrl },
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Thumbnail uploaded',
+                data: {
+                    publicId: project.publicId,
+                    coverImageUrl: project.coverImageUrl,
+                },
+            });
+        } catch (error) {
+            console.error('Upload thumbnail error:', error);
+            return badRequest(res, 'Upload thumbnail failed');
         }
     }
 
@@ -445,7 +559,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member) {
                 return forbidden(res);
             }
 
@@ -461,11 +575,18 @@ class ProjectController {
                 return notFound(res, 'Member not found');
             }
 
-            if (targetMember.role === 'admin' && role !== 'admin') {
-                const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
-                if (adminCount <= 1) {
-                    return forbidden(res);
+            // Owner cannot have their role changed by anyone
+            if (targetMember.role === 'owner') {
+                return forbidden(res, 'The project owner role cannot be changed');
+            }
+
+            // Only owner can change admin's role, admins can only change non-admin members
+            if (targetMember.role === 'admin') {
+                if (member.role !== 'owner') {
+                    return forbidden(res, 'Only the project owner can change admin roles');
                 }
+            } else if (member.role !== 'admin' && member.role !== 'owner') {
+                return forbidden(res);
             }
 
             const updatedMember = await ProjectMemberRepository.updateMemberRole(
@@ -512,7 +633,7 @@ class ProjectController {
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member) {
                 return forbidden(res);
             }
 
@@ -528,11 +649,23 @@ class ProjectController {
                 return notFound(res, 'Member not found');
             }
 
+            // Owner cannot be removed by anyone
+            if (targetMember.role === 'owner') {
+                return forbidden(res, 'The project owner cannot be removed');
+            }
+
+            // Admins cannot remove each other (only owner can remove admin)
+            if (targetMember.role === 'admin' && member.role === 'admin') {
+                return forbidden(res, 'Admins cannot remove each other');
+            }
+
+            // Only owner can remove admin, admins can only remove non-admin members
             if (targetMember.role === 'admin') {
-                const adminCount = await ProjectMemberRepository.countAdmins(normalizedProjectId);
-                if (adminCount <= 1) {
-                    return errorResponse(res, 403, 'Forbidden');
+                if (member.role !== 'owner') {
+                    return forbidden(res, 'Only the project owner can remove admins');
                 }
+            } else if (member.role !== 'admin' && member.role !== 'owner') {
+                return forbidden(res);
             }
 
             await ProjectMemberRepository.removeMember(normalizedProjectId, normalizedTargetUserId);
@@ -642,7 +775,7 @@ class ProjectController {
             if (!userId) return;
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') return forbidden(res);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) return forbidden(res);
 
             // Fetch the workflow template
             const WorkflowTemplate = require('../models/WorkflowTemplate');
@@ -707,7 +840,7 @@ class ProjectController {
             if (!userId) return;
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
-            if (!member || member.role !== 'admin') return forbidden(res);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) return forbidden(res);
 
             const nextTemplate = normalizeString(template) || 'construction-standard';
             const normalizedStages = Array.isArray(stages)
@@ -830,8 +963,7 @@ class ProjectController {
             const project = await Project.findOne({ publicId: normalizedProjectId });
             if (!project) return notFound(res, 'Project not found');
 
-            // Only project owner can trash it
-            if (project.ownerId !== userId) return forbidden(res);
+            if (!(await isProjectOwner(project, userId))) return forbidden(res);
 
             project.trashedAt = new Date();
             project.trashedBy = userId;
@@ -859,7 +991,7 @@ class ProjectController {
             const project = await Project.findOne({ publicId: normalizedProjectId, trashedAt: { $ne: null } });
             if (!project) return notFound(res, 'Trashed project not found');
 
-            if (project.ownerId !== userId) return forbidden(res);
+            if (!(await isProjectOwner(project, userId))) return forbidden(res);
 
             project.trashedAt = null;
             project.trashedBy = null;
@@ -887,7 +1019,7 @@ class ProjectController {
             const project = await Project.findOne({ publicId: normalizedProjectId });
             if (!project) return notFound(res, 'Project not found');
 
-            if (project.ownerId !== userId) return forbidden(res);
+            if (!(await isProjectOwner(project, userId))) return forbidden(res);
 
             await Project.deleteOne({ publicId: normalizedProjectId });
             await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
@@ -906,13 +1038,17 @@ class ProjectController {
             const userId = requireUserId(req, res);
             if (!userId) return;
 
+            const user = await User.findById(userId).select('publicId').lean();
+            if (!user) return unauthorized(res);
+            const ownerPublicId = user.publicId;
+
             const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
             const now = new Date();
             const cutoff = new Date(now.getTime() - THIRTY_DAYS_MS);
 
             // Auto-purge projects older than 30 days in trash
             const expired = await Project.find({
-                ownerId: userId,
+                ownerId: ownerPublicId,
                 trashedAt: { $ne: null, $lte: cutoff },
             }).select('publicId').lean();
             if (expired.length > 0) {
@@ -926,7 +1062,7 @@ class ProjectController {
             }
 
             const trashedProjects = await Project.find({
-                ownerId: userId,
+                ownerId: ownerPublicId,
                 trashedAt: { $ne: null, $gt: cutoff },
             }).lean();
 

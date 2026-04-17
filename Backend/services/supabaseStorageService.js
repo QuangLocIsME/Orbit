@@ -5,6 +5,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_XKT_BUCKET = process.env.SUPABASE_XKT_BUCKET || 'xkt-models';
 const SUPABASE_IFC_BUCKET = process.env.SUPABASE_IFC_BUCKET || 'ifc-files';
 const SUPABASE_ATTACHMENT_BUCKET = process.env.SUPABASE_ATTACHMENT_BUCKET || 'cr-attachments';
+const SUPABASE_THUMBNAIL_BUCKET = process.env.SUPABASE_THUMBNAIL_BUCKET || 'project-thumbnails';
 
 function assertSupabaseConfigured() {
     if (!SUPABASE_URL) {
@@ -206,17 +207,63 @@ async function createSignedAttachmentUrl(storagePath, expiresIn = 3600) {
     return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1${signedPath}`;
 }
 
+/**
+ * Build path cho project thumbnail trong Supabase.
+ * Format: projects/{projectId}/thumbnails/{timestamp}-{safeFileName}
+ */
+function buildSupabaseThumbnailPath({ projectId, fileName }) {
+    const safeName = (fileName || 'thumbnail')
+        .replace(/[^a-zA-Z0-9_\-. ]/g, '-')
+        .replace(/\s+/g, '-')
+        .substring(0, 200);
+    const timestamp = Date.now();
+    return `projects/${projectId}/thumbnails/${timestamp}-${safeName}`;
+}
+
+/**
+ * Upload thumbnail buffer lên Supabase Storage (bucket: project-thumbnails).
+ * @param {Buffer} buffer - nội dung file ảnh
+ * @param {string} storagePath - path trả về từ buildSupabaseThumbnailPath
+ * @returns {Promise<{bucket: string, key: string, publicUrl: string}>}
+ */
+async function uploadProjectThumbnailBuffer(buffer, storagePath) {
+    assertSupabaseConfigured();
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_THUMBNAIL_BUCKET}/${storagePath}`;
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            'Content-Type': 'application/octet-stream',
+            'x-upsert': 'true',
+        },
+        body: buffer,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase thumbnail upload failed: ${res.status} ${text}`);
+    }
+    return {
+        bucket: SUPABASE_THUMBNAIL_BUCKET,
+        key: storagePath,
+        publicUrl: `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_THUMBNAIL_BUCKET}/${storagePath}`,
+    };
+}
+
 module.exports = {
     SUPABASE_XKT_BUCKET,
     SUPABASE_IFC_BUCKET,
     SUPABASE_ATTACHMENT_BUCKET,
+    SUPABASE_THUMBNAIL_BUCKET,
     buildSupabaseStoragePath,
     buildSupabaseIfcPath,
     buildSupabaseAttachmentPath,
+    buildSupabaseThumbnailPath,
     uploadXktFile,
     uploadIfcBuffer,
     downloadIfcBuffer,
     uploadAttachmentBuffer,
+    uploadProjectThumbnailBuffer,
     createSignedXktUrl,
     createSignedAttachmentUrl,
     assertSupabaseConfigured,

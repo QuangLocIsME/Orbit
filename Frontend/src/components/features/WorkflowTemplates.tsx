@@ -24,12 +24,20 @@ interface Template {
   name: string;
   description: string;
   author: string;
+  authorId: string;
   isPrivate: boolean;
   tags: string[];
   stages: string[];
   downloads: number;
   rating: number;
   category?: string;
+  isDownloaded?: boolean;
+  // Flag to indicate if this is a downloaded copy (cannot edit/delete)
+  isDownloadedCopy?: boolean;
+  // Original template publicId (for downloaded copies)
+  originalPublicId?: string;
+  // Original template's downloads count (for downloaded copies)
+  originalDownloads?: number;
 }
 
 interface WorkflowStage {
@@ -71,18 +79,32 @@ function toCardTemplate(template: WorkflowTemplate): Template {
     name: template.name,
     description: template.description || '',
     author: template.authorName || template.authorId,
+    authorId: template.authorId,
     isPrivate: template.isPrivate,
     tags: template.tags || [],
-    stages: template.stages?.map(s => s.name) || [],
+    stages: template.stages?.map(s => s.name || s) || [],
     downloads: template.downloads || 0,
     rating: template.rating || 0,
     category: template.category,
+    isDownloaded: template.isDownloaded || false,
+    // Flag to indicate if this is a downloaded copy (cannot edit/delete)
+    isDownloadedCopy: (template as any).isDownloadedCopy || false,
+    // Original downloads count from source template
+    originalDownloads: (template as any).originalDownloads,
   };
 }
 
-function TemplateCard({ template, onEdit, onDelete }: { template: Template; onEdit?: () => void; onDelete?: () => void }) {
+function TemplateCard({ template, onEdit, onDelete, onDownload, isDownloaded }: { template: Template; onEdit?: () => void; onDelete?: () => void; onDownload?: () => void; isDownloaded?: boolean }) {
   const visibleStages = template.stages.slice(0, 4);
   const remainingStages = template.stages.length - 4;
+
+  // Template đã download từ người khác = không thể edit/delete
+  const isDownloadedCopy = template.isDownloadedCopy;
+  
+  // Số downloads hiển thị: dùng originalDownloads nếu là bản copy, không thì dùng downloads
+  const displayDownloads = template.isDownloadedCopy && template.originalDownloads !== undefined
+    ? template.originalDownloads
+    : template.downloads;
 
   return (
     <div className="group rounded-xl border border-gray-200 bg-white p-5 transition-all duration-200 hover:border-gray-300 hover:shadow-lg">
@@ -91,12 +113,29 @@ function TemplateCard({ template, onEdit, onDelete }: { template: Template; onEd
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-base font-semibold text-foreground truncate">{template.name}</h3>
-            <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              {template.isPrivate ? 'Private' : 'Public'}
-            </span>
+            {/* Downloaded badge */}
+            {isDownloadedCopy ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Downloaded
+              </span>
+            ) : template.isPrivate ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                Private
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Public
+              </span>
+            )}
           </div>
           
           {/* Author */}
@@ -151,7 +190,7 @@ function TemplateCard({ template, onEdit, onDelete }: { template: Template; onEd
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            <span>{template.downloads}</span>
+            <span>{displayDownloads}</span>
           </div>
           {/* Rating */}
           <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -164,7 +203,38 @@ function TemplateCard({ template, onEdit, onDelete }: { template: Template; onEd
         
         {/* Action Buttons */}
         <div className="flex items-center gap-2">
-          {onEdit && (
+          {/* Download button for public templates in library */}
+          {onDownload && !template.isPrivate && !isDownloadedCopy && (
+            <button
+              onClick={onDownload}
+              disabled={isDownloaded}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-150",
+                isDownloaded
+                  ? "bg-green-100 border border-green-300 text-green-700 cursor-default"
+                  : "bg-blue-600 text-white hover:bg-blue-700"
+              )}
+            >
+              {isDownloaded ? (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Downloaded
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download
+                </>
+              )}
+            </button>
+          )}
+          
+          {/* Edit button - only for OWN templates (not downloaded copies) */}
+          {!isDownloadedCopy && onEdit && (
             <button
               onClick={onEdit}
               className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-all duration-150 hover:bg-gray-50 hover:border-gray-400"
@@ -175,6 +245,8 @@ function TemplateCard({ template, onEdit, onDelete }: { template: Template; onEd
               Edit
             </button>
           )}
+          
+          {/* Delete button */}
           {onDelete && (
             <button
               onClick={onDelete}
@@ -768,6 +840,21 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
   useEffect(() => {
     fetchData();
     setIsHydrated(true);
+
+    // Listen for workflow changes from other tabs/pages
+    const handleWorkflowChange = () => {
+      fetchData();
+    };
+
+    window.addEventListener('workflow-updated', handleWorkflowChange);
+    window.addEventListener('workflow-created', handleWorkflowChange);
+    window.addEventListener('workflow-deleted', handleWorkflowChange);
+
+    return () => {
+      window.removeEventListener('workflow-updated', handleWorkflowChange);
+      window.removeEventListener('workflow-created', handleWorkflowChange);
+      window.removeEventListener('workflow-deleted', handleWorkflowChange);
+    };
   }, [fetchData]);
 
   const handleSearch = useCallback((query: string, tags: string[]) => {
@@ -833,11 +920,39 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
     }
   };
 
+  const handleDownload = async (template: Template) => {
+    try {
+      const copiedTemplate = await workflowTemplateService.copyTemplate(template.id);
+      // Thêm template đã copy vào danh sách My Templates
+      // Đánh dấu là bản copy đã tải - không thể edit/delete
+      setMyTemplates(prev => [{
+        ...copiedTemplate,
+        isDownloadedCopy: true,
+        originalDownloads: copiedTemplate.originalDownloads || template.downloads,
+      }, ...prev]);
+      // Cập nhật trạng thái đã tải trong library
+      setLibraryTemplates(prev =>
+        prev.map(t => t.publicId === template.id ? { ...t, downloads: (t.downloads || 0) + 1, isDownloaded: true } : t)
+      );
+      // Thông báo cho các trang khác (Settings, Dropdown) cập nhật danh sách
+      window.dispatchEvent(new CustomEvent('workflow-created', { detail: { ...copiedTemplate, isDownloadedCopy: true } }));
+      toast.success('Template đã được thêm vào My Templates!');
+    } catch (error: any) {
+      if (error.message?.includes('already exists')) {
+        toast.warning('Template này đã có trong My Templates');
+      } else {
+        toast.error('Không thể tải template');
+      }
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!deletingTemplate) return;
     try {
       await workflowTemplateService.deleteTemplate(deletingTemplate.publicId);
+      const deletedId = deletingTemplate.publicId;
       setMyTemplates(prev => prev.filter(t => t.publicId !== deletingTemplate.publicId));
+      window.dispatchEvent(new CustomEvent('workflow-deleted', { detail: { publicId: deletedId } }));
       setShowDeleteModal(false);
       setDeletingTemplate(null);
       toast.success('Template deleted successfully');
@@ -849,8 +964,10 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
   const handleEditorSave = async (template: WorkflowTemplate) => {
     if (editingTemplate) {
       setMyTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+      window.dispatchEvent(new CustomEvent('workflow-updated', { detail: template }));
     } else {
       setMyTemplates(prev => [template, ...prev]);
+      window.dispatchEvent(new CustomEvent('workflow-created', { detail: template }));
     }
     setShowEditor(false);
     setEditingTemplate(null);
@@ -951,8 +1068,10 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
             <TemplateCard 
               key={template.id} 
               template={template}
-              onEdit={activeTab === 'my' ? () => handleEdit(template) : undefined}
+              onEdit={activeTab === 'my' && !template.isDownloadedCopy ? () => handleEdit(template) : undefined}
               onDelete={activeTab === 'my' ? () => handleDelete(template) : undefined}
+              onDownload={activeTab === 'library' && !template.isPrivate && !template.isDownloadedCopy ? () => handleDownload(template) : undefined}
+              isDownloaded={template.isDownloaded}
             />
           ))}
         </div>

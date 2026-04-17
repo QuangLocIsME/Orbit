@@ -38,13 +38,6 @@ interface PendingInvite {
   createdAt: string;
 }
 
-const roleBadgeStyles: Record<MemberRole, { bg: string; text: string }> = {
-  owner:  { bg: 'bg-[#FEF9C3]', text: 'text-[#A16207]' },
-  admin:  { bg: 'bg-[#DCFCE7]', text: 'text-[#16A34A]' },
-  member: { bg: 'bg-[#DBEAFE]', text: 'text-[#2563EB]' },
-  viewer: { bg: 'bg-[#F3F4F6]', text: 'text-[#4B5563]' },
-};
-
 const inviteStatusStyles: Record<InviteStatus, { bg: string; text: string; label: string }> = {
   pending: { bg: 'bg-[#FEF9C3]', text: 'text-[#A16207]', label: 'Pending' },
   accepted: { bg: 'bg-[#DCFCE7]', text: 'text-[#16A34A]', label: 'Accepted' },
@@ -82,14 +75,23 @@ function formatDate(dateStr: string): string {
   }
 }
 
+interface Role {
+  id: string;
+  name: string;
+  color: string;
+  roleKey: string;
+}
+
 interface RoleEditModalProps {
   isOpen: boolean;
   member: MemberWithUser | null;
   onClose: () => void;
   onConfirm: (memberId: string, newRole: MemberRole) => Promise<void>;
+  roles: Role[];
+  canManage: boolean;
 }
 
-function RoleEditModal({ isOpen, member, onClose, onConfirm }: RoleEditModalProps) {
+function RoleEditModal({ isOpen, member, onClose, onConfirm, roles, canManage }: RoleEditModalProps) {
   const [selectedRole, setSelectedRole] = useState<MemberRole>('member');
   const [saving, setSaving] = useState(false);
 
@@ -98,6 +100,16 @@ function RoleEditModal({ isOpen, member, onClose, onConfirm }: RoleEditModalProp
   }, [member]);
 
   if (!isOpen || !member) return null;
+
+  // Owner cannot be edited, admin can only be edited by owner
+  const canEditThisMember = member.role !== 'owner' && (member.role === 'admin' ? canManage : true);
+
+  // Filter roles: exclude owner, exclude admin if can't manage
+  const availableRoles = roles.filter(r => {
+    if (r.roleKey === 'owner') return false;
+    if (r.roleKey === 'admin' && !canEditThisMember) return false;
+    return true;
+  });
 
   const handleConfirm = async () => {
     setSaving(true);
@@ -127,20 +139,27 @@ function RoleEditModal({ isOpen, member, onClose, onConfirm }: RoleEditModalProp
           <p className="text-[14px] text-[#4A5565]">
             Update role for <span className="font-medium text-[#101828]">{member.user?.fullName ?? member.email}</span>
           </p>
-          {(['admin', 'member', 'viewer'] as MemberRole[]).map((role) => (
+          {availableRoles.map((role) => (
             <button
-              key={role}
-              onClick={() => setSelectedRole(role)}
+              key={role.roleKey}
+              onClick={() => setSelectedRole(role.roleKey as MemberRole)}
               className={cn(
-                "flex w-full items-center gap-3 rounded-[10px] border-2 p-4 text-left transition-colors capitalize",
-                selectedRole === role ? "border-[#2B7FFF] bg-[#EFF6FF]" : "border-[#E5E7EB] hover:border-[#D1D5DC]"
+                "flex w-full items-center gap-3 rounded-[10px] border-2 p-4 text-left transition-colors",
+                selectedRole === role.roleKey ? "border-[#2B7FFF] bg-[#EFF6FF]" : "border-[#E5E7EB] hover:border-[#D1D5DC]"
               )}
             >
               <div className={cn("h-4 w-4 rounded-full border-2 flex items-center justify-center",
-                selectedRole === role ? "border-[#2B7FFF]" : "border-[#D1D5DC]")}>
-                {selectedRole === role && <div className="h-2 w-2 rounded-full bg-[#2B7FFF]" />}
+                selectedRole === role.roleKey ? "border-[#2B7FFF]" : "border-[#D1D5DC]")}>
+                {selectedRole === role.roleKey && <div className="h-2 w-2 rounded-full bg-[#2B7FFF]" />}
               </div>
-              <span className="text-[14px] text-[#101828] capitalize">{role}</span>
+              <div className="flex items-center gap-2">
+                <span
+                  className="px-2 py-0.5 rounded text-[11px] font-medium text-white"
+                  style={{ backgroundColor: role.color }}
+                >
+                  {role.name}
+                </span>
+              </div>
             </button>
           ))}
         </div>
@@ -176,6 +195,7 @@ interface TeamsTabProps {
 export default function TeamsTab({ projectPublicId, currentUserRole: initialRole }: TeamsTabProps) {
   const [members, setMembers] = useState<MemberWithUser[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [currentUserRole, setCurrentUserRole] = useState<MemberRole>(initialRole ?? 'member');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -208,8 +228,29 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   }, [projects, projectPublicId, initialRole]);
 
   const canManage = currentUserRole === 'admin' || currentUserRole === 'owner';
-  const canEditRole = (memberRole: MemberRole) => canManage && memberRole !== 'admin';
-  const canRemove = (memberRole: MemberRole) => canManage && memberRole !== 'admin';
+  const canEditRole = (memberRole: MemberRole) => {
+    if (memberRole === 'owner') return false;
+    if (memberRole === 'admin') return currentUserRole === 'owner';
+    return canManage;
+  };
+  const canRemove = (memberRole: MemberRole) => {
+    if (memberRole === 'owner') return false;
+    if (memberRole === 'admin') return currentUserRole === 'owner'; // Only owner can remove admin
+    return canManage;
+  };
+
+  const fetchRoles = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: projectPublicId }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRoles(Array.isArray(data?.data) ? data.data : []);
+    } catch { /* network error */ }
+  }, [projectPublicId]);
 
   const fetchMembers = useCallback(async () => {
     try {
@@ -270,9 +311,15 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    await Promise.all([fetchMembers(), fetchInvites(), fetchTeams()]);
+    await Promise.all([fetchMembers(), fetchInvites(), fetchTeams(), fetchRoles()]);
     setLoading(false);
-  }, [fetchMembers, fetchInvites, fetchTeams]);
+  }, [fetchMembers, fetchInvites, fetchTeams, fetchRoles]);
+
+  // Helper: get role info by roleKey
+  const getRoleInfo = (roleKey: string): { name: string; color: string } => {
+    const role = roles.find(r => r.roleKey === roleKey);
+    return role ? { name: role.name, color: role.color } : { name: roleKey, color: '#6B7280' };
+  };
 
   useEffect(() => {
     fetchAll();
@@ -369,14 +416,20 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
     }
   };
 
-  const filteredMembers = members.filter((m) => {
-    const q = searchQuery.toLowerCase();
-    return (
-      (m.user?.fullName ?? '').toLowerCase().includes(q) ||
-      (m.user?.email ?? '').toLowerCase().includes(q) ||
-      m.role.toLowerCase().includes(q)
-    );
-  });
+  const filteredMembers = members
+    .filter((m) => {
+      const q = searchQuery.toLowerCase();
+      return (
+        (m.user?.fullName ?? '').toLowerCase().includes(q) ||
+        (m.user?.email ?? '').toLowerCase().includes(q) ||
+        m.role.toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      if (a.role === 'owner') return -1;
+      if (b.role === 'owner') return 1;
+      return 0;
+    });
 
   const filteredInvites = pendingInvites.filter((i) =>
     searchQuery === '' ||
@@ -519,7 +572,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
               const name = member.user?.fullName ?? member.email ?? 'Unknown';
               const email = member.user?.email ?? '';
               const color = getAvatarColor(email);
-              const badge = roleBadgeStyles[member.role];
+              const roleInfo = getRoleInfo(member.role);
               const memberTeams = teams.filter((t) => t.memberIds.includes(member.userId));
               return (
                 <div key={member.userId} className="rounded-xl border border-[#E5E7EB] bg-white p-5 hover:shadow-md transition-shadow">
@@ -529,7 +582,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="text-[14px] font-medium text-[#101828] truncate">{name}</h3>
-                      <p className="text-[12px] text-[#6A7282] truncate capitalize">{member.role}</p>
+                      <p className="text-[12px] text-[#6A7282]">{roleInfo.name}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mb-3">
@@ -540,8 +593,11 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                   </div>
                   <div className="flex items-center gap-2 mb-4">
                     <div className="h-4 w-4 rounded-full border-2 border-[#E5E7EB]" />
-                    <span className={cn("px-2 py-0.5 rounded text-[11px] font-medium capitalize", badge.bg, badge.text)}>
-                      {member.role}
+                    <span
+                      className="px-2 py-0.5 rounded text-[11px] font-medium text-white"
+                      style={{ backgroundColor: roleInfo.color }}
+                    >
+                      {roleInfo.name}
                     </span>
                   </div>
                   <div className="flex items-center justify-between pt-3 border-t border-[#F3F4F6]">
@@ -607,7 +663,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                 const name = member.user?.fullName ?? member.email ?? 'Unknown';
                 const email = member.user?.email ?? '';
                 const color = getAvatarColor(email);
-                const badge = roleBadgeStyles[member.role];
+                const roleInfo = getRoleInfo(member.role);
                 return (
                   <div key={member.userId} className="grid grid-cols-[2fr_1.2fr_1fr_0.8fr_0.5fr] gap-4 px-6 py-4 items-center hover:bg-[#FAFAFA] transition-colors">
                     <div className="flex items-center gap-3">
@@ -619,9 +675,12 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                         <p className="text-[12px] text-[#6A7282]">{email || '—'}</p>
                       </div>
                     </div>
-                    <span className="text-[14px] text-[#364153] capitalize">{member.role}</span>
-                    <span className={cn("px-2.5 py-1 rounded text-[12px] font-medium w-fit capitalize", badge.bg, badge.text)}>
-                      {member.role}
+                    <span className="text-[14px] text-[#364153]">{roleInfo.name}</span>
+                    <span
+                      className="px-2.5 py-1 rounded text-[12px] font-medium text-white w-fit"
+                      style={{ backgroundColor: roleInfo.color }}
+                    >
+                      {roleInfo.name}
                     </span>
                     <span className="text-[13px] text-[#4A5565]">{formatDate(member.createdAt)}</span>
                     <div className="flex items-center gap-1">
@@ -875,6 +934,8 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
         member={roleEditMember}
         onClose={() => setRoleEditMember(null)}
         onConfirm={handleRoleChange}
+        roles={roles}
+        canManage={canManage}
       />
 
       {/* Remove Member Confirmation */}

@@ -395,6 +395,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [lastActivity, setLastActivity] = useState<string | null>(null);
   const [loadingActivities, setLoadingActivities] = useState(true);
+  const [activitiesVersion, setActivitiesVersion] = useState(0); // Increment to trigger refresh
+  const [settingsUpdated, setSettingsUpdated] = useState(0);
 
   // Fetch real team members + documents count + clash count from backend API
   useEffect(() => {
@@ -468,7 +470,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           const payload = await activitiesRes.json();
           if (!cancelled) {
             setActivities(Array.isArray(payload?.data) ? payload.data : []);
-            setLastActivity(payload?.lastActivity || null);
+            // Prefer projectUpdatedAt when available (real project update timestamp)
+            setLastActivity(payload?.projectUpdatedAt || payload?.lastActivity || null);
           }
         }
         if (!cancelled) setLoadingActivities(false);
@@ -480,7 +483,12 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
     fetchProjectOverviewData();
     return () => { cancelled = true; };
-  }, [project.publicId]);
+  }, [project.publicId, settingsUpdated, activitiesVersion]);
+  
+  // Handle settings updated - refresh last activity timestamp
+  const handleSettingsUpdated = () => {
+    setSettingsUpdated(prev => prev + 1);
+  };
   
   // Check for stored tab on mount (used when navigating back from package detail)
   useEffect(() => {
@@ -614,6 +622,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           const payload = await crRes.json();
           setChangeRequests(payload.data || []);
         }
+        // Refresh activities
+        setActivitiesVersion(v => v + 1);
       } else {
         toast.error(data.message || 'Failed to create change request');
       }
@@ -907,6 +917,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         isFavorite={isFavorite}
         onTabChange={setActiveTab}
         onFavoriteChange={setIsFavorite}
+        projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
       />
 
       {/* Hero Section - Only show on Overview tab */}
@@ -1313,7 +1324,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Changes Tab */}
         {activeTab === 'changes' && (
-          <ChangesTab projectPublicId={project.publicId} />
+          <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} />
         )}
         {activeTab === 'changes_DISABLED_INLINE' && (
           <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
@@ -2756,6 +2767,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             projectCode={project.publicId}
             projectDescription={project.description}
             projectPublicId={project.publicId}
+            onSettingsUpdated={handleSettingsUpdated}
+            onActivityAdded={() => setActivitiesVersion(v => v + 1)}
           />
         )}
   

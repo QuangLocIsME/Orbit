@@ -71,3 +71,141 @@ export async function apiFetch(
 
   return response;
 }
+
+/**
+ * Upload project thumbnail lên Supabase Storage.
+ * @param projectId - Public ID của project
+ * @param file - File ảnh (File object từ input[type=file])
+ * @returns Promise với public URL của ảnh đã upload
+ */
+export async function uploadProjectThumbnail(projectId: string, file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append('thumbnail', file);
+  formData.append('projectId', projectId);
+
+  const response = await apiFetch('/api/projects/upload-thumbnail', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+    throw new Error(error.message || 'Failed to upload thumbnail');
+  }
+
+  const data = await response.json();
+  return data.data.coverImageUrl;
+}
+
+/**
+ * Update project settings (name, description, industry, coverImageUrl).
+ * @param projectId - Public ID của project
+ * @param updates - Object chứa các fields cần update
+ */
+export async function updateProject(
+  projectId: string,
+  updates: {
+    name?: string;
+    description?: string;
+    industry?: string;
+    coverImageUrl?: string;
+  }
+): Promise<void> {
+  const response = await apiFetch('/api/projects/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId, ...updates }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Update failed' }));
+    throw new Error(error.message || 'Failed to update project');
+  }
+}
+
+/**
+ * Get all roles for a project
+ */
+export async function fetchProjectRoles(projectId: string): Promise<any[]> {
+  const response = await apiFetch('/api/roles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to fetch roles' }));
+    throw new Error(error.message || 'Failed to fetch roles');
+  }
+
+  const data = await response.json();
+  return data.data || [];
+}
+
+/**
+ * Create a new role
+ */
+export async function createProjectRole(
+  projectId: string,
+  roleData: {
+    name: string;
+    description?: string;
+    color?: string;
+    accessLevel?: string;
+    permissions?: string[];
+  }
+): Promise<any> {
+  const response = await apiFetch('/api/roles/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId, ...roleData }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to create role' }));
+    throw new Error(error.message || 'Failed to create role');
+  }
+
+  return (await response.json()).data;
+}
+
+/**
+ * Update a role
+ */
+export async function updateProjectRole(
+  roleId: string,
+  roleData: {
+    name: string;
+    description?: string;
+    color?: string;
+    accessLevel?: string;
+    permissions?: string[];
+  }
+): Promise<any> {
+  const response = await apiFetch(`/api/roles/${roleId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(roleData),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update role' }));
+    throw new Error(error.message || 'Failed to update role');
+  }
+
+  return (await response.json()).data;
+}
+
+/**
+ * Delete a role
+ */
+export async function deleteProjectRole(roleId: string): Promise<void> {
+  const response = await apiFetch(`/api/roles/${roleId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to delete role' }));
+    throw new Error(error.message || 'Failed to delete role');
+  }
+}

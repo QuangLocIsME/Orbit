@@ -26,4 +26,10 @@ router.post('/change-requests/comments/list', authenticate, (req, res) =>
 router.post('/change-requests/comments/create', authenticate, (req, res) =>
     ChangeRequestController.createComment(req, res));
 
+router.put('/change-requests/comments', authenticate, (req, res) =>
+    ChangeRequestController.updateComment(req, res));
+
+router.delete('/change-requests/comments', authenticate, (req, res) =>
+    ChangeRequestController.deleteComment(req, res));
+
 module.exports = router;

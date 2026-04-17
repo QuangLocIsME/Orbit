@@ -1,42 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
-
-const permissions = [
-  {
-    id: 'admin',
-    label: 'Admin',
-    description: 'Can manage project, members, and approve changes',
-    badgeBg: 'bg-[#FEF2F2]',
-    badgeBorder: 'border-[#FFC9C9]',
-    badgeText: 'text-[#C10007]',
-  },
-  {
-    id: 'member',
-    label: 'Member',
-    description: 'Can create and edit content, submit changes for review',
-    badgeBg: 'bg-[#F0FDF4]',
-    badgeBorder: 'border-[#B9F8CF]',
-    badgeText: 'text-[#008236]',
-  },
-  {
-    id: 'viewer',
-    label: 'Viewer',
-    description: 'View-only access to project content',
-    badgeBg: 'bg-[#F9FAFB]',
-    badgeBorder: 'border-[#E5E7EB]',
-    badgeText: 'text-[#364153]',
-  },
-];
 
 export interface TeamOption {
   id: string;
   name: string;
   description: string;
   color: string;
+}
+
+interface Role {
+  roleKey: string;
+  name: string;
+  description: string;
+  color: string;
+  isSystem: boolean;
 }
 
 interface AddMemberModalProps {
@@ -56,11 +37,41 @@ export default function AddMemberModal({
   onSuccess,
   teams = [],
 }: AddMemberModalProps) {
+  const [roles, setRoles] = useState<Role[]>([]);
   const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [selectedPermission, setSelectedPermission] = useState('member');
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setIsLoadingRoles(true);
+    const fetchRoles = async () => {
+      try {
+        const res = await apiFetch('/api/roles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId }),
+        });
+        const data = await res.json();
+        if (res.ok && data.data) {
+          const inviteableRoles = data.data.filter((r: Role) => r.roleKey !== 'owner');
+          setRoles(inviteableRoles);
+          if (inviteableRoles.length > 0) {
+            setSelectedPermission(inviteableRoles[0].roleKey);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch roles:', err);
+      } finally {
+        setIsLoadingRoles(false);
+      }
+    };
+    fetchRoles();
+  }, [isOpen, projectId]);
 
   if (!isOpen) return null;
 
@@ -72,14 +83,28 @@ export default function AddMemberModal({
 
   const handleClose = () => {
     setEmail('');
+    setEmailError('');
     setJobTitle('');
     setSelectedPermission('member');
     setSelectedTeams([]);
+    setRoles([]);
     onClose();
+  };
+
+  const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    if (value && !isValidEmail(value)) {
+      setEmailError('Invalid email format');
+    } else {
+      setEmailError('');
+    }
   };
 
   const handleSubmit = async () => {
     if (!email.trim()) return;
+    if (emailError) return;
     setIsSubmitting(true);
     try {
       const res = await apiFetch('/api/invites', {
@@ -142,11 +167,19 @@ export default function AddMemberModal({
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => handleEmailChange(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
               placeholder="e.g. john.doe@example.com"
-              className="w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-2.5 text-[16px] placeholder:text-[#10182880] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+              className={cn(
+                "w-full rounded-[10px] border bg-[#F9FAFB] px-4 py-2.5 text-[16px] placeholder:text-[#10182880] focus:outline-none focus:ring-1",
+                emailError
+                  ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+                  : "border-[#E5E7EB] focus:border-[#2B7FFF] focus:ring-[#2B7FFF]"
+              )}
             />
+            {emailError && (
+              <p className="text-[12px] text-red-500 mt-1">{emailError}</p>
+            )}
           </div>
 
           {/* Job Title */}
@@ -165,14 +198,14 @@ export default function AddMemberModal({
           <div className="space-y-3">
             <label className="block text-[14px] text-[#364153]">Project Permission</label>
             <div className="space-y-2">
-              {permissions.map((permission) => (
+              {roles.map((role) => (
                 <button
-                  key={permission.id}
+                  key={role.roleKey}
                   type="button"
-                  onClick={() => setSelectedPermission(permission.id)}
+                  onClick={() => setSelectedPermission(role.roleKey)}
                   className={cn(
                     "flex w-full items-start gap-3 rounded-[10px] border-2 p-4 text-left transition-colors",
-                    selectedPermission === permission.id
+                    selectedPermission === role.roleKey
                       ? "border-[#2B7FFF] bg-[#EFF6FF]"
                       : "border-[#E5E7EB] hover:border-[#D1D5DC]"
                   )}
@@ -180,30 +213,32 @@ export default function AddMemberModal({
                   <div className="pt-0.5">
                     <div className={cn(
                       "h-4 w-4 rounded-full border-2 flex items-center justify-center",
-                      selectedPermission === permission.id ? "border-[#2B7FFF]" : "border-[#D1D5DC]"
+                      selectedPermission === role.roleKey ? "border-[#2B7FFF]" : "border-[#D1D5DC]"
                     )}>
-                      {selectedPermission === permission.id && (
+                      {selectedPermission === role.roleKey && (
                         <div className="h-2 w-2 rounded-full bg-[#2B7FFF]" />
                       )}
                     </div>
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={cn(
-                        "px-2.5 py-0.5 rounded-full border text-[12px]",
-                        permission.badgeBg,
-                        permission.badgeBorder,
-                        permission.badgeText
-                      )}>
-                        {permission.label}
+                      <span
+                        className="px-2.5 py-0.5 rounded-full border text-[12px]"
+                        style={{
+                          backgroundColor: role.color + '20',
+                          borderColor: role.color + '60',
+                          color: role.color,
+                        }}
+                      >
+                        {role.name}
                       </span>
-                      {selectedPermission === permission.id && (
+                      {selectedPermission === role.roleKey && (
                         <svg className="h-4 w-4 text-[#155DFC]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                       )}
                     </div>
-                    <p className="text-[12px] text-[#4A5565]">{permission.description}</p>
+                    <p className="text-[12px] text-[#4A5565]">{role.description}</p>
                   </div>
                 </button>
               ))}

@@ -24,6 +24,7 @@ export interface WorkflowTemplate {
   rating: number;
   createdAt: string;
   updatedAt: string;
+  isDownloaded?: boolean;
 }
 
 interface PaginatedResponse<T> {
@@ -79,8 +80,36 @@ class WorkflowTemplateService {
     const query = searchParams.toString();
     const res = await apiFetch(`${this.baseUrl}/my${query ? `?${query}` : ''}`);
     const json: ApiResponse<PaginatedResponse<WorkflowTemplate>> = await res.json();
-    
+
     if (!res.ok) throw new Error(json.message || 'Failed to fetch my templates');
+    
+    // Add isDownloadedCopy flag from repository response
+    json.data.templates = json.data.templates.map(t => ({
+      ...t,
+      isDownloadedCopy: (t as any).isDownloadedCopy || false,
+    }));
+    
+    return json.data;
+  }
+
+  // Get templates that user has downloaded (copied from others)
+  async getDownloadedTemplates(params?: { page?: number; limit?: number }): Promise<PaginatedResponse<WorkflowTemplate>> {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.limit) searchParams.set('limit', params.limit.toString());
+
+    const query = searchParams.toString();
+    const res = await apiFetch(`${this.baseUrl}/downloaded${query ? `?${query}` : ''}`);
+    const json: ApiResponse<PaginatedResponse<WorkflowTemplate>> = await res.json();
+
+    if (!res.ok) throw new Error(json.message || 'Failed to fetch downloaded templates');
+    
+    // Mark all downloaded templates as downloaded copies
+    json.data.templates = json.data.templates.map(t => ({
+      ...t,
+      isDownloadedCopy: true,
+    }));
+    
     return json.data;
   }
 
@@ -156,6 +185,18 @@ class WorkflowTemplateService {
     const json: ApiResponse<WorkflowTemplate> = await res.json();
     
     if (!res.ok) throw new Error(json.message || 'Failed to use template');
+    return json.data;
+  }
+
+  // Copy template to user's templates
+  async copyTemplate(publicId: string): Promise<WorkflowTemplate> {
+    const res = await apiFetch(`${this.baseUrl}/copy/${publicId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const json: ApiResponse<WorkflowTemplate> = await res.json();
+    
+    if (!res.ok) throw new Error(json.message || 'Failed to copy template');
     return json.data;
   }
 

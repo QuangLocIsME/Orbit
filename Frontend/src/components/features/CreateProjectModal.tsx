@@ -434,6 +434,11 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
         
         onProjectCreated?.(createdProject);
 
+        // Dispatch event to refresh Sidebar
+        window.dispatchEvent(new CustomEvent('orbit:project-created', {
+          detail: { project: createdProject }
+        }));
+
         onClose();
         setProjectName('');
         setSelectedIndustry(null);

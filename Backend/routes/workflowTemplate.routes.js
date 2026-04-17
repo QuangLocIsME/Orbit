@@ -12,6 +12,9 @@ router.get('/', controller.getAll);
 // GET /api/workflow-templates/my - Get user's own templates
 router.get('/my', controller.getMyTemplates);
 
+// GET /api/workflow-templates/downloaded - Get templates that user has downloaded (copied from others)
+router.get('/downloaded', controller.getDownloadedTemplates);
+
 // GET /api/workflow-templates/tags - Get all available tags
 router.get('/tags', controller.getTags);
 
@@ -23,6 +26,9 @@ router.get('/:publicId', controller.getById);
 
 // POST /api/workflow-templates - Create new template
 router.post('/', controller.create);
+
+// POST /api/workflow-templates/copy/:publicId - Copy template to user's templates
+router.post('/copy/:publicId', controller.copyTemplate);
 
 // PUT /api/workflow-templates/:publicId - Update template
 router.put('/:publicId', controller.update);

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, uploadProjectThumbnail, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole } from '@/lib/api-client';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
@@ -261,6 +261,9 @@ interface SettingsTabProps {
   projectCode?: string;
   projectDescription?: string;
   projectPublicId?: string;
+  projectType?: 'construction' | 'design' | 'software' | 'research';
+  onSettingsUpdated?: () => void;
+  onActivityAdded?: () => void; // Trigger refresh activities
 }
 
 const settingsMenuItems = [
@@ -286,7 +289,10 @@ export default function SettingsTab({
   projectName = 'Metro Station - Phase 2',
   projectCode = 'MS-P2-2025',
   projectDescription = '',
-  projectPublicId = ''
+  projectPublicId = '',
+  projectType = 'construction',
+  onSettingsUpdated,
+  onActivityAdded
 }: SettingsTabProps) {
   const [activeMenu, setActiveMenu] = useState('general');
   const [name, setName] = useState(projectName);
@@ -334,13 +340,15 @@ export default function SettingsTab({
   // Discipline validation error
   const [disciplineNameError, setDisciplineNameError] = useState(false);
   const [isLoadingDisciplines, setIsLoadingDisciplines] = useState(false);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   
   // Edit Discipline Modal state
   const [showEditDisciplineModal, setShowEditDisciplineModal] = useState(false);
   const [editingDiscipline, setEditingDiscipline] = useState<Discipline | null>(null);
   
   // Project thumbnail
-  const [projectThumbnail, setProjectThumbnail] = useState('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=200&h=120&fit=crop');
+  const [projectThumbnail, setProjectThumbnail] = useState<string | null>('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=200&h=120&fit=crop');
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Template apply success
@@ -357,7 +365,7 @@ export default function SettingsTab({
   const [editTagColor, setEditTagColor] = useState('#6366F1');
   
   // Workflow state
-  const [selectedWorkflow, setSelectedWorkflow] = useState('construction');
+  const [selectedWorkflow, setSelectedWorkflow] = useState('');
   const [showCreateWorkflowModal, setShowCreateWorkflowModal] = useState(false);
   const [showEditWorkflowModal, setShowEditWorkflowModal] = useState(false);
   const [showDeleteWorkflowModal, setShowDeleteWorkflowModal] = useState(false);
@@ -465,8 +473,9 @@ export default function SettingsTab({
     const fetchWorkflowTemplates = async () => {
       setWorkflowTemplatesLoading(true);
       try {
-        const res = await workflowTemplateService.getMyTemplates();
-        setWorkflowTemplates(res.templates);
+        // getMyTemplates đã trả về tất cả templates (own + downloaded copies)
+        const myRes = await workflowTemplateService.getMyTemplates({ limit: 100 });
+        setWorkflowTemplates(myRes.templates);
       } catch (error) {
         console.error('Failed to fetch workflow templates:', error);
       } finally {
@@ -474,6 +483,16 @@ export default function SettingsTab({
       }
     };
     fetchWorkflowTemplates();
+
+    // Listen for workflow changes (including copied templates)
+    const handleWorkflowCreated = () => fetchWorkflowTemplates();
+    window.addEventListener('workflow-created', handleWorkflowCreated);
+    window.addEventListener('workflow-updated', handleWorkflowCreated);
+
+    return () => {
+      window.removeEventListener('workflow-created', handleWorkflowCreated);
+      window.removeEventListener('workflow-updated', handleWorkflowCreated);
+    };
   }, []);
 
   const handleDeleteDiscipline = async (id: string) => {
@@ -520,10 +539,56 @@ export default function SettingsTab({
   
   // Handle General Settings Save
   const handleSaveGeneralSettings = async () => {
+    if (!name.trim()) {
+      toast.error('Project name is required');
+      return;
+    }
+
     setGeneralSaveState('saving');
-    // Simulate save operation
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setGeneralSaveState('success');
+    try {
+      const updates: { name: string; description: string; coverImageUrl?: string } = {
+        name: name.trim(),
+        description: description.trim(),
+      };
+
+      if (coverImageUrl) {
+        updates.coverImageUrl = coverImageUrl;
+      }
+
+      await updateProject(projectPublicId, updates);
+      setGeneralSaveState('success');
+      toast.success('Settings saved successfully');
+      setCoverImageUrl(null);
+      onSettingsUpdated?.();
+      onActivityAdded?.(); // Trigger activities refresh
+
+      // Update project name in localStorage for TopBar
+      try {
+        const userId = (() => {
+          try {
+            const u = localStorage.getItem('orbit_user');
+            if (u) return JSON.parse(u).id;
+          } catch { /* ignore */ }
+          return null;
+        })();
+        const storageKey = userId ? `orbit-open-projects:${userId}` : 'orbit-open-projects';
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          const projects = JSON.parse(stored);
+          const updatedProjects = projects.map((p: { id: string; title: string; path: string }) =>
+            p.id === projectPublicId ? { ...p, title: name.trim() } : p
+          );
+          localStorage.setItem(storageKey, JSON.stringify(updatedProjects));
+          // Dispatch custom event for TopBar to update immediately
+          window.dispatchEvent(new CustomEvent('orbit:project-updated', {
+            detail: { projectId: projectPublicId, title: name.trim() }
+          }));
+        }
+      } catch { /* ignore localStorage errors */ }
+    } catch {
+      setGeneralSaveState('error');
+      toast.error('Failed to save settings');
+    }
     setTimeout(() => setGeneralSaveState('idle'), 3000);
   };
   
@@ -532,14 +597,25 @@ export default function SettingsTab({
     fileInputRef.current?.click();
   };
   
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProjectThumbnail(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProjectThumbnail(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    if (projectPublicId) {
+      try {
+        const publicUrl = await uploadProjectThumbnail(projectPublicId, file);
+        setCoverImageUrl(publicUrl);
+        setProjectThumbnail(publicUrl);
+        toast.success('Image uploaded successfully');
+      } catch {
+        toast.error('Failed to upload image');
+      }
     }
   };
   
@@ -577,6 +653,7 @@ export default function SettingsTab({
             : d
         ));
         toast.success('Discipline updated');
+        onActivityAdded?.(); // Trigger activities refresh
       } else {
         const data = await res.json();
         toast.error(data.message || 'Failed to update discipline');
@@ -699,7 +776,7 @@ export default function SettingsTab({
   useEffect(() => {
     let cancelled = false;
 
-    const loadTaskTags = async () => {
+    const loadWorkflowData = async () => {
       if (!projectPublicId) return;
 
       setIsLoadingTaskTags(true);
@@ -713,6 +790,13 @@ export default function SettingsTab({
         if (!response.ok) return;
 
         const payload = await response.json();
+
+        // Set workflowTemplateId from project
+        const workflowTemplateId = payload?.data?.workflowTemplateId;
+        if (!cancelled && workflowTemplateId) {
+          setSelectedWorkflow(workflowTemplateId);
+        }
+
         const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
         if (!cancelled && tags.length > 0) {
           setTaskTags(
@@ -731,7 +815,39 @@ export default function SettingsTab({
       }
     };
 
-    loadTaskTags();
+    loadWorkflowData();
+
+    // Listen for workflow applied to project
+    const handleWorkflowApplied = () => loadWorkflowData();
+    window.addEventListener('workflow-applied', handleWorkflowApplied);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('workflow-applied', handleWorkflowApplied);
+    };
+  }, [projectPublicId]);
+
+  // Load roles from API
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRoles = async () => {
+      if (!projectPublicId) return;
+
+      setIsLoadingRoles(true);
+      try {
+        const data = await fetchProjectRoles(projectPublicId);
+        if (!cancelled && Array.isArray(data) && data.length > 0) {
+          setRoles(data);
+        }
+      } catch {
+        // keep default roles on error
+      } finally {
+        if (!cancelled) setIsLoadingRoles(false);
+      }
+    };
+
+    loadRoles();
     return () => {
       cancelled = true;
     };
@@ -754,8 +870,22 @@ export default function SettingsTab({
     }
   };
 
-  const handleDeleteRole = (id: string) => {
-    setRoles(roles.filter(r => r.id !== id));
+  const handleDeleteRole = async (id: string) => {
+    const previous = roles;
+    const next = roles.filter(r => r.id !== id);
+    setRoles(next);
+
+    if (!projectPublicId) {
+      setRoles(previous);
+      return;
+    }
+
+    try {
+      await deleteProjectRole(id);
+    } catch {
+      setRoles(previous);
+      toast.error('Failed to delete role');
+    }
   };
 
   const handleToggleNotification = (id: string, channel: 'email' | 'inApp' | 'push') => {
@@ -834,6 +964,7 @@ export default function SettingsTab({
         const data = await res.json();
         setDisciplines(prev => [...prev, data.data]);
         toast.success('Discipline added');
+        onActivityAdded?.(); // Trigger activities refresh
       } else {
         const data = await res.json();
         toast.error(data.message || 'Failed to add discipline');
@@ -1221,12 +1352,40 @@ export default function SettingsTab({
             <div className="mb-6">
               <label className="block text-[14px] font-normal text-[#101828] mb-2">Project Thumbnail</label>
               <div className="flex items-center gap-4">
-                <div className="h-20 w-32 rounded-[10px] border border-[#E5E7EB] bg-gray-100 overflow-hidden">
-                  <img 
-                    src={projectThumbnail} 
-                    alt="Project thumbnail" 
-                    className="h-full w-full object-cover"
-                  />
+                <div className="h-20 w-32 rounded-[10px] border border-[#E5E7EB] bg-gray-100 overflow-hidden flex items-center justify-center relative">
+                  {projectThumbnail ? (
+                    <img 
+                      src={projectThumbnail} 
+                      alt="Project thumbnail" 
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className={cn(
+                      "h-full w-full flex items-center justify-center",
+                      projectType === 'software' && "bg-gradient-to-br from-cyan-50 to-cyan-100",
+                      projectType === 'design' && "bg-gradient-to-br from-purple-50 to-purple-100",
+                      projectType === 'construction' && "bg-gradient-to-br from-blue-50 to-blue-100",
+                      projectType === 'research' && "bg-gradient-to-br from-teal-50 to-teal-100",
+                      !projectType && "bg-gradient-to-br from-gray-50 to-gray-100"
+                    )}>
+                      <div className={cn(
+                        "flex h-10 w-10 items-center justify-center rounded-lg",
+                        projectType === 'software' && "bg-cyan-500 text-white",
+                        projectType === 'design' && "bg-purple-500 text-white",
+                        projectType === 'construction' && "bg-blue-500 text-white",
+                        projectType === 'research' && "bg-teal-500 text-white",
+                        !projectType && "bg-gray-500 text-white"
+                      )}>
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {projectType === 'software' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />}
+                          {projectType === 'design' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />}
+                          {projectType === 'construction' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />}
+                          {projectType === 'research' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />}
+                          {!projectType && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <input
                   type="file"
@@ -1576,108 +1735,6 @@ export default function SettingsTab({
               <p className="text-[14px] text-[#6A7282] mb-4">Select Workflow Template</p>
               
               <div className="space-y-4">
-                {/* Construction Standard - Selected */}
-                <div 
-                  onClick={() => setSelectedWorkflow('construction')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'construction' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Construction Standard</h3>
-                        <p className="text-[14px] text-[#6A7282] mb-3">Traditional construction workflow with 5 stages</p>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {['Backlog', 'To Do', 'In Progress', 'Review', 'Done'].map((stage, idx) => (
-                            <span key={stage} className="flex items-center">
-                              <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage}</span>
-                              {idx < 4 && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {selectedWorkflow === 'construction' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Agile Scrum */}
-                <div 
-                  onClick={() => setSelectedWorkflow('agile')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'agile' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Agile Scrum</h3>
-                        <p className="text-[14px] text-[#6A7282] mb-3">Scrum-based workflow with sprint planning</p>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {['Product Backlog', 'Sprint Backlog', 'In Progress', 'Testing', 'Review', 'Done'].map((stage, idx) => (
-                            <span key={stage} className="flex items-center">
-                              <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage}</span>
-                              {idx < 5 && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {selectedWorkflow === 'agile' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Design Review */}
-                <div 
-                  onClick={() => setSelectedWorkflow('design')}
-                  className={cn(
-                    "rounded-[12px] border-2 p-5 cursor-pointer transition-all",
-                    selectedWorkflow === 'design' 
-                      ? "border-[#155DFC] bg-[#F8FAFF]" 
-                      : "border-[#E5E7EB] bg-white hover:border-[#9CA3AF]"
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-[#F3F4F6] flex items-center justify-center text-[#6A7282]">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-[16px] font-medium text-[#101828]">Design Review</h3>
-                        <p className="text-[14px] text-[#6A7282] mb-3">Streamlined design approval process</p>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {['Draft', 'Review', 'Revision', 'Approved'].map((stage, idx) => (
-                            <span key={stage} className="flex items-center">
-                              <span className="px-3 py-1 rounded bg-[#F3F4F6] text-[13px] text-[#374151]">{stage}</span>
-                              {idx < 3 && <ChevronRight className="h-4 w-4 text-[#9CA3AF] mx-1" />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {selectedWorkflow === 'design' && (
-                      <CheckCircle2 className="h-5 w-5 text-[#155DFC]" />
-                    )}
-                  </div>
-                </div>
-
                 {/* User's Workflow Templates */}
                 {workflowTemplates.length > 0 && workflowTemplates.map((template) => (
                   <div
@@ -3094,7 +3151,7 @@ export default function SettingsTab({
               Cancel
             </button>
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (newRoleName.trim()) {
                   const selectedPerms: string[] = [];
                   Object.entries(newRoleContentPerms).forEach(([key, val]) => {
@@ -3107,25 +3164,27 @@ export default function SettingsTab({
                     if (val) selectedPerms.push(key.replace(/([A-Z])/g, ' $1').trim());
                   });
                   
-                  const newRole: Role = {
-                    id: Date.now().toString(),
-                    name: newRoleName.trim(),
-                    accessLevel: newRolePermissionLevel as 'full' | 'high' | 'medium' | 'minimal',
-                    isSystem: false,
-                    memberCount: 0,
-                    description: newRoleDescription.trim() || 'Custom role',
-                    permissions: selectedPerms.length > 0 ? selectedPerms : ['View All'],
-                    color: newRoleColor
-                  };
-                  setRoles([...roles, newRole]);
-                  setShowCreateRoleModal(false);
-                  setNewRoleName('');
-                  setNewRoleDescription('');
-                  setNewRoleColor('#6366f1');
-                  setNewRolePermissionLevel('medium');
-                  setNewRoleContentPerms({viewAll: false, editOwn: false, editAll: false, createContent: false, deleteContent: false, approveChanges: false, submitChanges: false});
-                  setNewRoleTeamPerms({viewTeam: false, manageTeam: false, assignTasks: false, manageRoles: false});
-                  setNewRoleSettingsPerms({viewSettings: false, manageSettings: false, manageWorkflow: false, manageIntegrations: false});
+                  try {
+                    const newRole = await createProjectRole(projectPublicId, {
+                      name: newRoleName.trim(),
+                      description: newRoleDescription.trim() || 'Custom role',
+                      color: newRoleColor,
+                      accessLevel: newRolePermissionLevel,
+                      permissions: selectedPerms.length > 0 ? selectedPerms : ['View All'],
+                    });
+                    setRoles([...roles, newRole]);
+                    setShowCreateRoleModal(false);
+                    setNewRoleName('');
+                    setNewRoleDescription('');
+                    setNewRoleColor('#6366f1');
+                    setNewRolePermissionLevel('medium');
+                    setNewRoleContentPerms({viewAll: false, editOwn: false, editAll: false, createContent: false, deleteContent: false, approveChanges: false, submitChanges: false});
+                    setNewRoleTeamPerms({viewTeam: false, manageTeam: false, assignTasks: false, manageRoles: false});
+                    setNewRoleSettingsPerms({viewSettings: false, manageSettings: false, manageWorkflow: false, manageIntegrations: false});
+                    toast.success('Role created');
+                  } catch {
+                    toast.error('Failed to create role');
+                  }
                 }
               }}
               className="flex-1 h-11 rounded-[10px] bg-[#818CF8] text-[14px] font-medium text-white hover:bg-[#6366F1] transition-colors"
@@ -3241,15 +3300,18 @@ export default function SettingsTab({
         onSuccess={(template) => {
           if (showEditWorkflowModal) {
             setWorkflowTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+            window.dispatchEvent(new CustomEvent('workflow-updated', { detail: template }));
             setShowEditWorkflowModal(false);
             setEditingWorkflow(null);
             toast.success('Workflow updated successfully');
           } else {
             setWorkflowTemplates(prev => [template, ...prev]);
             setSelectedWorkflow(template.publicId);
+            window.dispatchEvent(new CustomEvent('workflow-created', { detail: template }));
             setShowCreateWorkflowModal(false);
             toast.success('Workflow created successfully');
           }
+          onActivityAdded?.(); // Trigger activities refresh
         }}
       />
     )}
@@ -3263,9 +3325,12 @@ export default function SettingsTab({
           setDeletingWorkflow(null);
         }}
         onSuccess={() => {
+          const deletedId = deletingWorkflow.publicId;
           setWorkflowTemplates(prev => prev.filter(t => t.publicId !== deletingWorkflow.publicId));
+          window.dispatchEvent(new CustomEvent('workflow-deleted', { detail: { publicId: deletedId } }));
           if (selectedWorkflow === deletingWorkflow.publicId) {
-            setSelectedWorkflow('construction');
+            const remainingTemplates = workflowTemplates.filter(t => t.publicId !== deletingWorkflow.publicId);
+            setSelectedWorkflow(remainingTemplates.length > 0 ? remainingTemplates[0].publicId : '');
           }
           setShowDeleteWorkflowModal(false);
           setDeletingWorkflow(null);
