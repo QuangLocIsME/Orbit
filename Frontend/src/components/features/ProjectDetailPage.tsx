@@ -688,6 +688,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [tasksViewMode, setTasksViewMode] = useState<'board' | 'list' | 'calendar'>('board');
   const [tasksSearchQuery, setTasksSearchQuery] = useState('');
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [pendingTaskStageId, setPendingTaskStageId] = useState<string | undefined>(undefined);
   const [tasksData, setTasksData] = useState<Task[]>([]);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [projectTaskTags, setProjectTaskTags] = useState<string[]>([]);
@@ -1665,7 +1666,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   onTaskStatusChange={handleTaskStatusChange}
                   onTaskClick={setSelectedTaskId}
                   onAddTask={(stageId) => {
-                    // TODO: pass stageId to create task modal
+                    setPendingTaskStageId(stageId);
                     setIsNewTaskModalOpen(true);
                   }}
                 />
@@ -2797,10 +2798,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {/* Create Task Modal */}
         <CreateTaskModal
           isOpen={isNewTaskModalOpen}
-          onClose={() => setIsNewTaskModalOpen(false)}
+          onClose={() => { setIsNewTaskModalOpen(false); setPendingTaskStageId(undefined); }}
           assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
           workflowStages={selectedWorkflowStages}
+          defaultStageId={pendingTaskStageId}
           onSubmit={async (task) => {
             try {
               const response = await apiFetch('/api/tasks/create', {

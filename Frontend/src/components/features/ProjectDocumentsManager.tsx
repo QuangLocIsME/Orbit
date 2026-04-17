@@ -127,7 +127,8 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   const [folderName, setFolderName] = useState('');
 
   const [isUploading, setIsUploading] = useState(false);
-  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [uploadQueue, setUploadQueue] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [hoveredId, setHoveredId] = useState<string>('');
   const [renamingNodeId, setRenamingNodeId] = useState<string>('');
   const [renameValue, setRenameValue] = useState('');
@@ -256,54 +257,65 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     await loadDocuments();
   };
 
-  const uploadFile = async (file: File) => {
+  const uploadFile = async (file: File): Promise<void> => {
+    const location = deriveLocation(currentFolder, packageNode);
+    const packageId = location.packageId;
+    const folderType = location.folderType;
+
+    const formData = new FormData();
+    formData.append('projectId', projectId);
+    formData.append('packageId', packageId);
+    formData.append('folderType', folderType);
+    formData.append('folderPath', location.folderPath);
+    formData.append('file', file);
+
+    const res = await fetch('/api/projects/packages/upload', {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+
+    const payload = await res.json().catch(() => null);
+
+    if (!res.ok || !payload?.success) {
+      throw new Error(payload?.message || `Upload failed (${res.status})`);
+    }
+
+    toast.success(payload?.mode === 'queue' ? `Queued: ${file.name}` : `Uploaded: ${file.name}`);
+  };
+
+  const processUploadQueue = async () => {
+    const currentQueue = uploadQueue;
+    if (currentQueue.length === 0) {
+      setIsUploading(false);
+      setUploadProgress({ done: 0, total: 0 });
+      return;
+    }
+
     setIsUploading(true);
+    const [current, ...rest] = currentQueue;
+    setUploadProgress({ done: currentQueue.length - rest.length, total: currentQueue.length });
+
     try {
-      const location = deriveLocation(currentFolder, packageNode);
-      const packageId = location.packageId;
-      const folderType = location.folderType;
-
-      const formData = new FormData();
-      formData.append('projectId', projectId);
-      formData.append('packageId', packageId);
-      formData.append('folderType', folderType);
-      formData.append('folderPath', location.folderPath);
-      formData.append('file', file);
-
-      console.log('[Upload] Starting upload:', {
-        fileName: file.name,
-        fileSize: file.size,
-        projectId,
-        packageId,
-        folderType,
-      });
-
-      const res = await fetch('/api/projects/packages/upload', {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      });
-
-      console.log('[Upload] Response status:', res.status);
-
-      const payload = await res.json().catch(() => null);
-      console.log('[Upload] Response payload:', payload);
-
-      if (!res.ok || !payload?.success) {
-        throw new Error(payload?.message || `Upload failed (${res.status})`);
-      }
-
-      toast.success(payload?.mode === 'queue' ? 'Large file queued for background processing' : 'File uploaded successfully');
+      await uploadFile(current);
       await loadDocuments();
     } catch (error) {
-      console.error('[Upload] Error:', error);
-      toast.error(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsUploading(false);
-      setPendingUploadFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      toast.error(`Upload failed: ${current.name} - ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+
+    setUploadQueue(rest);
   };
+
+  // Trigger queue processing whenever queue changes
+  useEffect(() => {
+    if (uploadQueue.length > 0 && !isUploading) {
+      processUploadQueue();
+    }
+    if (uploadQueue.length === 0 && isUploading) {
+      setIsUploading(false);
+      setUploadProgress({ done: 0, total: 0 });
+    }
+  }, [uploadQueue, isUploading]);
 
   const handleDelete = async (node: TreeNode) => {
     const endpoint = node.type === 'folder'
@@ -435,12 +447,6 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     return 'IFC viewer is not ready';
   };
 
-  useEffect(() => {
-    if (pendingUploadFile) {
-      uploadFile(pendingUploadFile).catch((err: any) => toast.error(err?.message || 'Upload failed'));
-    }
-  }, [pendingUploadFile]);
-
   if (loading) {
     return <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px] text-sm text-gray-500">Loading documents...</div>;
   }
@@ -465,14 +471,24 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
           >
             <Upload className="h-4 w-4" />
-            {isUploading ? 'Uploading...' : 'Upload File'}
+            {isUploading
+              ? `Uploading ${uploadProgress.done + 1}/${uploadProgress.total}...`
+              : uploadQueue.length > 0
+                ? `${uploadQueue.length} queued...`
+                : 'Upload Files'}
           </button>
 
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             className="hidden"
-            onChange={(e) => setPendingUploadFile(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (files.length === 0) return;
+              setUploadQueue((prev) => [...prev, ...files]);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            }}
           />
         </div>
       </div>

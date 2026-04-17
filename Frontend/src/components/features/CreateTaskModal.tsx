@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface WorkflowStage {
@@ -15,6 +15,7 @@ interface CreateTaskModalProps {
   assigneeOptions?: { id: string; name: string }[];
   tagOptions?: string[];
   workflowStages?: WorkflowStage[];
+  defaultStageId?: string;
 }
 
 interface TaskFormData {
@@ -43,7 +44,7 @@ const priorityOptions = [
   { id: 'urgent', label: 'Urgent' },
 ];
 
-export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions, workflowStages }: CreateTaskModalProps) {
+export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions, workflowStages, defaultStageId }: CreateTaskModalProps) {
   const teamMembers = assigneeOptions && assigneeOptions.length > 0
     ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
     : [{ id: '', name: 'Unassigned' }];
@@ -53,11 +54,23 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
     : [];
 
   const stages = workflowStages && workflowStages.length > 0 ? workflowStages : defaultStages;
-  const firstStageId = stages[0]?.id || 'backlog';
+
+  // Resolve initial status: use defaultStageId if it exists and is valid, otherwise first stage
+  const resolvedInitialStageId = (() => {
+    if (defaultStageId && stages.some(s => s.id === defaultStageId)) return defaultStageId;
+    return stages[0]?.id || 'backlog';
+  })();
+
+  // Sync status when modal opens with a new defaultStageId
+  useEffect(() => {
+    if (isOpen) {
+      setFormData(prev => ({ ...prev, status: resolvedInitialStageId }));
+    }
+  }, [isOpen, resolvedInitialStageId]);
 
   const [formData, setFormData] = useState<TaskFormData>({
     title: '',
-    status: firstStageId,
+    status: resolvedInitialStageId,
     priority: 'medium',
     description: '',
     assignee: '',
@@ -66,13 +79,13 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
     linkedItems: '',
   });
 
-  if (!isOpen) return null;
-
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onClose();
     }
   };
+
+  if (!isOpen) return null;
 
   const handleTagToggle = (tag: string) => {
     setFormData(prev => ({
@@ -88,7 +101,7 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
     onSubmit?.(formData);
     setFormData({
       title: '',
-      status: firstStageId,
+      status: resolvedInitialStageId,
       priority: 'medium',
       description: '',
       assignee: '',
