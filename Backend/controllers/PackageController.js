@@ -145,22 +145,6 @@ class PackageController {
                 updatedAt: new Date(),
             });
 
-            // Create a package folder at project root in documents tree
-            await DocumentFolderRepository.createFolder({
-                projectId: normalizedProjectId,
-                packageId: packageDoc.publicId,
-                folderType: 'files',
-                folderPath: '',
-                createdBy: userId,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-            });
-
-            broadcastProject(normalizedProjectId, 'documents:refresh', {
-                projectId: normalizedProjectId,
-                packageId: packageDoc.publicId,
-            });
-
             return res.status(201).json({
                 success: true,
                 message: 'Package created',
@@ -261,6 +245,16 @@ class PackageController {
                 (folder) => !folder.packageId || visiblePackageIds.has(folder.packageId)
             );
 
+            // Only create package nodes for packages that have at least one document or folder.
+            // This prevents "phantom folders" from appearing every time a package is created.
+            const packagesWithContent = new Set();
+            for (const doc of filteredDocs) {
+                if (doc.packageId) packagesWithContent.add(doc.packageId);
+            }
+            for (const folder of filteredFolders) {
+                if (folder.packageId) packagesWithContent.add(folder.packageId);
+            }
+
             const packageNameMap = new Map(
                 (visiblePackages || []).map((pkg) => [pkg.publicId, pkg.name || `Package ${String(pkg.publicId).slice(0, 8)}`])
             );
@@ -319,8 +313,12 @@ class PackageController {
                 return parentKey;
             };
 
+            // Only create package nodes for packages that have actual content (docs or folders).
+            // Empty packages won't show up in the Documents tab until user uploads a file/creates a folder.
             for (const pkg of visiblePackages) {
-                resolveScopeNode(pkg.publicId);
+                if (packagesWithContent.has(pkg.publicId)) {
+                    resolveScopeNode(pkg.publicId);
+                }
             }
 
             for (const folder of filteredFolders) {

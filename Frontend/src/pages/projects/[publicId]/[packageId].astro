@@ -1,7 +1,6 @@
 ---
 export const prerender = false;
-
-import ProjectLayout from '@/layouts/ProjectLayout.astro';
+import ProjectTopBar from '@/components/layout/ProjectTopBar';
 import PackageDetailPage from '@/components/features/PackageDetailPage';
 
 const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
@@ -38,10 +37,30 @@ if (!project) {
 }
 ---
 
-<ProjectLayout
-  title={`Package Detail - ${String(project.name)} - ORBIT`}
-  projectName={String(project.name)}
-  projectSlug={String(project.publicId)}
->
-  <PackageDetailPage projectPublicId={publicId} packageId={packageId} client:load />
-</ProjectLayout>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <title>{`Package Detail - ${String(project.name)} - ORBIT`}</title>
+  </head>
+  <body class="min-h-screen font-sans bg-[#F2F4F7]">
+    <ProjectTopBar
+      projectName={String(project.name)}
+      projectSlug={String(project.publicId)}
+      packageName="Package"
+      client:load
+    />
+    <main class="min-h-[calc(100vh-130px)] bg-[#F2F4F7] pt-[130px]">
+      <PackageDetailPage projectPublicId={publicId} packageId={packageId} client:load />
+    </main>
+  </body>
+</html>
+
+<style is:global>
+  @import '../../styles/global.css';
+</style>

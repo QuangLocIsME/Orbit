@@ -27,14 +27,24 @@ const {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>{title}</title>
   </head>
-  <body class="min-h-screen font-sans bg-white">
+  <body class="min-h-screen font-sans bg-[#F2F4F7]">
+    <script>
+      import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
+      window.addEventListener('orbit:auth-expired', () => import('astro:transitions/client').then(m => m.navigate('/login')));
+      window.addEventListener('orbit:sign-out', () => {
+        clearAll();
+        import('astro:transitions/client').then(m => m.navigate('/login'));
+      });
+      hydrateApp();
+      initAppSocket();
+    </script>
     <ProjectTopBar
       projectName={projectName}
       projectSlug={projectSlug}
       packageName={packageName}
       client:load
     />
-    <main class="min-h-[calc(100vh-130px)]">
+    <main class="min-h-[calc(100vh-130px)] bg-[#F2F4F7] pt-[130px]">
       <slot />
     </main>
   </body>

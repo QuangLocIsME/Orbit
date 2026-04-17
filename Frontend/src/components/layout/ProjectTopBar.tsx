@@ -12,6 +12,11 @@ interface OpenProject {
   path: string;
 }
 
+interface TabItem {
+  id: string;
+  label: string;
+}
+
 interface ProjectTopBarProps {
   projectName: string;
   projectSlug: string;
@@ -21,15 +26,17 @@ interface ProjectTopBarProps {
   onTabChange?: (tabId: string) => void;
   onFavoriteChange?: (isFavorite: boolean) => void;
   projectRole?: 'owner' | 'admin' | 'member' | 'viewer';
+  tabs?: TabItem[];
 }
 
-export default function ProjectTopBar({ projectName, projectSlug, packageName, activeTab = 'overview', isFavorite: initialFavorite = false, onTabChange, onFavoriteChange, projectRole }: ProjectTopBarProps) {
-  // State for managing open project tabs
+export default function ProjectTopBar({ projectName, projectSlug, packageName, activeTab: externalActiveTab, isFavorite: initialFavorite = false, onTabChange, onFavoriteChange, projectRole, tabs }: ProjectTopBarProps) {
   const [openProjects, setOpenProjects] = useState<OpenProject[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isFavorite, setIsFavorite] = useState(initialFavorite);
   const [isTogglingFavorite, setIsTogglingFavorite] = useState(false);
   const [displayProjectName, setDisplayProjectName] = useState(projectName);
+  const [internalActiveTab, setInternalActiveTab] = useState('overview');
+  const activeTab = (externalActiveTab ?? internalActiveTab);
 
   // Get current userId from localStorage to scope open-projects per user
   const userId = (() => {
@@ -389,24 +396,32 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
       {/* Third row - Navigation tabs */}
       <div className="flex h-9 items-center px-6 border-t border-gray-100">
         <nav className="flex items-center">
-          {[
+          {(tabs ?? [
             { id: 'overview', label: 'Overview' },
-            { id: 'packages', label: 'Packages' },
+            ...(packageName ? [] : [{ id: 'packages', label: 'Packages' }]),
             { id: 'documents', label: 'Documents' },
-            { id: 'versions', label: 'Versions' },
-            { id: 'changes', label: 'Changes' },
+            ...(packageName ? [] : [
+              { id: 'versions', label: 'Versions' },
+              { id: 'changes', label: 'Changes' },
+            ]),
             { id: 'tasks', label: 'Tasks' },
-            { id: 'clashes', label: 'Clashes' },
-            { id: 'teams', label: 'Teams' },
-            { id: 'extensions', label: 'Extensions' },
+            ...(packageName ? [] : [
+              { id: 'clashes', label: 'Clashes' },
+              { id: 'teams', label: 'Teams' },
+            ]),
+            { id: 'activity', label: 'Activity' },
             ...(projectRole === 'admin' || projectRole === 'owner' ? [{ id: 'settings', label: 'Settings' }] : []),
-          ].map((tab) => {
-            const isActive = packageName ? tab.id === 'packages' : activeTab === tab.id;
-            
+          ]).map((tab) => {
+            const isActive = activeTab === tab.id;
+
             return (
               <button
                 key={tab.id}
-                onClick={() => onTabChange?.(tab.id)}
+                onClick={() => {
+                  setInternalActiveTab(tab.id);
+                  onTabChange?.(tab.id);
+                  window.dispatchEvent(new CustomEvent('orbit:topbar-tab-change', { detail: { tabId: tab.id } }));
+                }}
                 className={`px-3 py-2 text-sm transition-colors ${
                   isActive
                     ? 'text-blue-600 border-b-2 border-blue-600 -mb-px'

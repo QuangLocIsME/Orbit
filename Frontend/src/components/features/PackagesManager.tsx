@@ -278,19 +278,6 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
         throw new Error(payload?.message || 'Failed to create package');
       }
 
-      const createdPackageId = payload?.data?.publicId;
-      if (newPackage.initialStatus === 'Active' && createdPackageId) {
-        await apiFetch('/api/projects/packages/update', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({
-            projectId: selectedProjectId,
-            packageId: createdPackageId,
-            status: 'Active',
-          }),
-        });
-      }
-
       toast.success('Package created successfully');
       setShowCreateModal(false);
       resetCreateForm();

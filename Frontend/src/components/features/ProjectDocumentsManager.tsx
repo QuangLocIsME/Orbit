@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight, Eye, Download, Trash2 } from 'lucide-react';
+import {
+  FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight,
+  Eye, Download, Trash2, Pencil,
+} from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
 import {
@@ -53,6 +56,8 @@ interface TreeNode {
   conversionStatus?: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'NOT_SUPPORTED';
   conversionError?: string;
   versionNumber?: number;
+  isPackage?: boolean;
+  icon?: string;
 }
 
 function findNodeById(node: TreeNode | null, id: string): TreeNode | null {
@@ -81,6 +86,10 @@ function buildBreadcrumbs(root: TreeNode | null, currentId: string): TreeNode[] 
 
   dfs(root);
   return path;
+}
+
+function isInPackageFolder(nodeId: string): boolean {
+  return nodeId.includes('/pkg/');
 }
 
 function deriveLocation(
@@ -126,6 +135,14 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null);
 
+  const [contextMenu, setContextMenu] = useState<{
+    node: TreeNode;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const registerProjectCallback = useAppStore((s) => s.registerProjectCallback);
 
@@ -136,6 +153,25 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     });
     return cleanup;
   }, [registerProjectCallback, projectId]);
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [contextMenu]);
 
   const loadDocuments = async () => {
     const res = await fetch('/api/projects/packages/documents/list', {
@@ -299,6 +335,17 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
     setRenameValue(node.name);
     setRenameError('');
   };
+
+  const handleDoubleClickName = (node: TreeNode) => {
+    if (packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
+    startRename(node);
+  };
+
+  const handleSingleClickFolder = (child: TreeNode) => {
+    if (child.icon !== 'package') setCurrentFolderId(child.id);
+  };
+
+  const isInPackageContext = packageNode?.isPackage || isInPackageFolder(currentFolderId);
 
   const submitRename = async (node: TreeNode) => {
     if (!renameValue.trim()) {
@@ -464,9 +511,14 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                       className={!isLast ? 'border-b border-gray-200' : ''}
                       onMouseEnter={() => setHoveredId(child.id)}
                       onMouseLeave={() => setHoveredId('')}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
+                        setContextMenu({ node: child, x: e.clientX, y: e.clientY });
+                      }}
                     >
                       <div className="flex items-center gap-4 px-4 py-4 hover:bg-gray-50">
-                        <button onClick={(e) => { e.stopPropagation(); setCurrentFolderId(child.id); }} className="flex items-center gap-4 text-left">
+                        <button onClick={() => handleSingleClickFolder(child)} className="flex items-center gap-4 text-left">
                           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
                             <Folder className="h-5 w-5 text-gray-500" />
                           </span>
@@ -490,22 +542,25 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                             )}
                           </div>
                         ) : (
-                          <button
-                            onClick={() => startRename(child)}
-                            className="flex-1 text-left text-sm font-medium text-[#101828]"
+                          <div
+                            onClick={() => handleSingleClickFolder(child)}
+                            onDoubleClick={() => handleDoubleClickName(child)}
+                            className={isInPackageContext ? 'flex-1 text-sm font-medium text-[#101828]' : 'flex-1 cursor-pointer text-sm font-medium text-[#101828]'}
                           >
                             {child.name}
-                          </button>
+                          </div>
                         )}
 
                         {hoveredId === child.id && (
                           <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => setDeleteTarget(child)}
-                              className="rounded p-1 text-red-500 hover:bg-red-50"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            {!packageNode?.isPackage && child.icon !== 'package' && !isInPackageFolder(currentFolderId) && (
+                              <button
+                                onClick={() => setDeleteTarget(child)}
+                                className="rounded p-1 text-red-500 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -520,6 +575,11 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                     className={!isLast ? 'border-b border-gray-200' : ''}
                     onMouseEnter={() => setHoveredId(child.id)}
                     onMouseLeave={() => setHoveredId('')}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
+                      setContextMenu({ node: child, x: e.clientX, y: e.clientY });
+                    }}
                   >
                     <div className="flex items-center gap-4 px-4 py-4 hover:bg-gray-50">
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
@@ -544,12 +604,12 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                           )}
                         </div>
                       ) : (
-                        <button
-                          onClick={() => startRename(child)}
-                          className="flex-1 text-left text-sm font-medium text-[#101828]"
+                        <div
+                          onDoubleClick={() => handleDoubleClickName(child)}
+                          className={isInPackageContext ? 'flex-1 text-sm font-medium text-[#101828]' : 'flex-1 cursor-pointer text-sm font-medium text-[#101828]'}
                         >
                           {child.name}
-                        </button>
+                        </div>
                       )}
 
                       {hoveredId === child.id && (
@@ -587,12 +647,14 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                           >
                             <Download className="h-4 w-4" />
                           </button>
-                          <button
-                            onClick={() => setDeleteTarget(child)}
-                            className="rounded p-1 text-red-500 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {!packageNode?.isPackage && !isInPackageFolder(currentFolderId) && (
+                            <button
+                              onClick={() => setDeleteTarget(child)}
+                              className="rounded p-1 text-red-500 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -635,6 +697,41 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
           <div className="max-h-[90vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
             <img src={previewImageUrl} alt="Preview" className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain" />
           </div>
+        </div>
+      )}
+
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-[100] min-w-[160px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {!packageNode?.isPackage && !isInPackageFolder(currentFolderId) && (
+            <>
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  startRename(contextMenu.node);
+                }}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <Pencil className="h-4 w-4 text-gray-400" />
+                Rename
+              </button>
+              <div className="mx-3 border-t border-gray-100" />
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  setDeleteTarget(contextMenu.node);
+                }}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </button>
+            </>
+          )}
         </div>
       )}
 
