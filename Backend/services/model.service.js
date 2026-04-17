@@ -208,9 +208,15 @@ const createIfcApi = async () => {
 // 512 MB heap per model — the default ~17 MB causes RangeError on large IFC files.
 const IFC_MEMORY_LIMIT = 512 * 1024 * 1024;
 
-const MAX_CLASH_TRIANGLES_PER_OBJECT = Number(process.env.ORBIT_CLASH_MESH_MAX_TRIS || '80');
+const rawMaxClashTris = Number(process.env.ORBIT_CLASH_MESH_MAX_TRIS || '80');
+const MAX_CLASH_TRIANGLES_PER_OBJECT = Number.isFinite(rawMaxClashTris) && rawMaxClashTris > 0
+    ? Math.floor(rawMaxClashTris)
+    : Number.POSITIVE_INFINITY;
 const ORBIT_DISABLE_CLASH_MESH = process.env.ORBIT_DISABLE_CLASH_MESH === '1';
-const ORBIT_MAX_OBJECTS_WITH_MESH = Number(process.env.ORBIT_MAX_OBJECTS_WITH_MESH || '1200');
+const rawMaxObjectsWithMesh = Number(process.env.ORBIT_MAX_OBJECTS_WITH_MESH || '12000');
+const ORBIT_MAX_OBJECTS_WITH_MESH = Number.isFinite(rawMaxObjectsWithMesh) && rawMaxObjectsWithMesh > 0
+    ? Math.floor(rawMaxObjectsWithMesh)
+    : Number.POSITIVE_INFINITY;
 
 const triCentroid9 = (flat, o) => [
     (flat[o] + flat[o + 3] + flat[o + 6]) / 3,
@@ -581,6 +587,21 @@ const mergeImportedModels = (workspace, importedModels) => {
     };
 };
 
+const stripClashMeshFromImports = (imports = []) =>
+    imports.map((entry) => ({
+        ...entry,
+        objects: Array.isArray(entry.objects)
+            ? entry.objects.map((object) => ({ ...object, clashMesh: null }))
+            : [],
+    }));
+
+const isWorkspaceSizeOverflowError = (error) => {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('offset') && message.includes('out of range')
+        || message.includes('bson')
+        || message.includes('document exceeds maximum allowed bson size');
+};
+
 class ModelService {
     async importModels(projectSlug, imports = []) {
         if (!Array.isArray(imports) || imports.length === 0) {
@@ -617,10 +638,21 @@ class ModelService {
             throw new Error(`All files failed to parse${detail}. They may be too large or corrupt.`);
         }
 
-        const workspace = await updateWorkspace(projectSlug, (current) =>
-            mergeImportedModels(current, parsedImports));
+        let workspace;
+        let meshStrippedForStorage = false;
+        try {
+            workspace = await updateWorkspace(projectSlug, (current) =>
+                mergeImportedModels(current, parsedImports));
+        } catch (persistErr) {
+            if (!isWorkspaceSizeOverflowError(persistErr)) throw persistErr;
+            meshStrippedForStorage = true;
+            const compactImports = stripClashMeshFromImports(parsedImports);
+            workspace = await updateWorkspace(projectSlug, (current) =>
+                mergeImportedModels(current, compactImports));
+        }
+
         const federatedModel = await this.getFederatedModel(projectSlug, workspace);
-        return { federatedModel, skippedFiles };
+        return { federatedModel, skippedFiles, meshStrippedForStorage };
     }
 
     async getFederatedModel(projectSlug, workspaceOverride = null) {

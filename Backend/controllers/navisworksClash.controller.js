@@ -58,8 +58,8 @@ class NavisworksClashController {
                 body: req.body,
             });
 
-            const { federatedModel, skippedFiles } = await modelService.importModels(projectSlug, imports);
-            return res.status(200).json({ success: true, federatedModel, skippedFiles });
+            const { federatedModel, skippedFiles, meshStrippedForStorage } = await modelService.importModels(projectSlug, imports);
+            return res.status(200).json({ success: true, federatedModel, skippedFiles, meshStrippedForStorage });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to import models');
         }
@@ -315,8 +315,8 @@ class NavisworksClashController {
 
             if (imports.length === 0) return errorResponse(res, 400, 'No valid IFC documents found');
 
-            const { federatedModel, skippedFiles } = await modelService.importModels(projectSlug, imports);
-            return res.status(200).json({ success: true, federatedModel, skippedFiles });
+            const { federatedModel, skippedFiles, meshStrippedForStorage } = await modelService.importModels(projectSlug, imports);
+            return res.status(200).json({ success: true, federatedModel, skippedFiles, meshStrippedForStorage });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to import from documents');
         }
