@@ -23,6 +23,12 @@ class InviteController {
                 return errorResponse(res, 400, 'Missing projectId or email');
             }
 
+            // Validate email format
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(normalizedEmail)) {
+                return errorResponse(res, 400, 'Invalid email format');
+            }
+
             const callerId = req.user?.id;
             if (!callerId) {
                 return errorResponse(res, 401, 'Unauthorized');

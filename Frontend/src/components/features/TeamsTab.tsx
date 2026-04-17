@@ -235,7 +235,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   };
   const canRemove = (memberRole: MemberRole) => {
     if (memberRole === 'owner') return false;
-    if (memberRole === 'admin') return false; // Admin cannot remove admin
+    if (memberRole === 'admin') return currentUserRole === 'owner'; // Only owner can remove admin
     return canManage;
   };
 
@@ -350,7 +350,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
       const res = await apiFetch('/api/projects/members/update-role', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: projectPublicId, userId, role: newRole }),
+        body: JSON.stringify({ projectId: projectPublicId, targetUserId: userId, role: newRole }),
       });
       const data = await res.json();
       if (!res.ok) {
