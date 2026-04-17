@@ -1,9 +1,47 @@
 ---
 export const prerender = false;
-import DashboardLayout from '@/layouts/DashboardLayout.astro';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import GlobalTopBar from '@/components/layout/GlobalTopBar';
 import PackagesManager from '@/components/features/PackagesManager';
+import { Toaster } from '@/components/ui/sonner';
 ---
 
-<DashboardLayout title="Packages - ORBIT" pageTitle="Packages">
-  <PackagesManager client:load />
-</DashboardLayout>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <title>Packages - ORBIT</title>
+  </head>
+  <body class="min-h-screen font-sans bg-background">
+    <script>
+      import { navigate } from 'astro:transitions/client';
+      import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
+
+      window.addEventListener('orbit:auth-expired', () => navigate('/login'));
+      window.addEventListener('orbit:sign-out', () => {
+        clearAll();
+        navigate('/login');
+      });
+
+      hydrateApp();
+      initAppSocket();
+    </script>
+
+    <GlobalTopBar client:load activeTab="packages" />
+
+    <main class="min-h-screen bg-background pt-[105px]">
+      <PackagesManager client:load />
+    </main>
+
+    <Toaster client:load />
+  </body>
+</html>
+
+<style is:global>
+  @import '../styles/global.css';
+</style>

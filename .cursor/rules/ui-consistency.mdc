@@ -1,0 +1,51 @@
+---
+description: UI consistency and component reuse
+alwaysApply: true
+---
+
+# UI Consistency & Component Reuse
+
+## Core Principles
+
+1. **Reuse existing components first** - Always check `src/components/ui/` and `src/components/features/` before writing new UI code.
+
+2. **Use shadcn/ui components** - The project uses shadcn/ui. Always prefer:
+   - `Button` from `@/components/ui/button`
+   - `Dialog`, `AlertDialog` from `@/components/ui/dialog`
+   - `Input`, `Label` from `@/components/ui/input`
+   - `DropdownMenu` from `@/components/ui/dropdown-menu`
+   - `Select` from `@/components/ui/select`
+   - `Toast` via `sonner`
+   - Existing skeleton components in `src/components/ui/skeletons/`
+
+3. **Do not create custom modals, dialogs, or alerts** - Use `AlertDialog` or `Dialog` components instead of raw HTML/CSS overlays. See `AlertDialog` usage in `ProjectDocumentsManager.tsx` as reference.
+
+4. **Consistent styling** - Use Tailwind classes that match the project's design system:
+   - Colors: `text-[#101828]`, `text-gray-500`, `bg-white`, `border-gray-200`
+   - Spacing: `px-4 py-2`, `space-y-6`
+   - Typography: `text-sm font-medium`, `text-[24px]`
+
+5. **Never write inline modal/dialog HTML** - Always wrap shadcn/ui components. The project already has all necessary dialog primitives.
+
+6. **Check before adding icons** - Use `lucide-react` icons which are already imported across the project.
+
+## Anti-patterns
+
+```tsx
+// ❌ BAD - Custom alert overlay
+<div className="fixed inset-0 bg-black/40">
+  <div className="bg-white p-4">Confirm?</div>
+</div>
+
+// ✅ GOOD - Reuse AlertDialog
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+```
+
+```tsx
+// ❌ BAD - Custom button
+<button className="px-4 py-2 bg-blue-600 text-white rounded-lg">Submit</button>
+
+// ✅ GOOD - Reuse Button component
+import { Button } from '@/components/ui/button';
+<Button>Submit</Button>
+```

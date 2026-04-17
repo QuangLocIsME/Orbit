@@ -8,7 +8,7 @@ interface Props {
   packageName: string;
 }
 
-const { 
+const {
   title = 'ORBIT - Package Detail',
   projectName,
   projectSlug,
@@ -28,15 +28,12 @@ const {
     <title>{title}</title>
   </head>
   <body class="min-h-screen font-sans bg-white">
-    <!-- Project Top Bar with tabs -->
-    <ProjectTopBar 
-      projectName={projectName} 
-      projectSlug={projectSlug} 
+    <ProjectTopBar
+      projectName={projectName}
+      projectSlug={projectSlug}
       packageName={packageName}
-      client:load 
+      client:load
     />
-    
-    <!-- Main Content (no sidebar, centered with margins) -->
     <main class="min-h-[calc(100vh-130px)]">
       <slot />
     </main>

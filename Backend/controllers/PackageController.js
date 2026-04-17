@@ -923,6 +923,15 @@ class PackageController {
                 return badRequest(res, 'projectId, folderId, newName are required');
             }
 
+            if (normalizedName.length > 255) {
+                return badRequest(res, 'Folder name must not exceed 255 characters');
+            }
+
+            const invalidChars = /[<>:"/\\|?*\x00-\x1f]/;
+            if (invalidChars.test(normalizedName)) {
+                return badRequest(res, 'Folder name contains invalid characters');
+            }
+
             const userId = req.user?.id;
             if (!userId) return unauthorized(res);
 
@@ -931,16 +940,46 @@ class PackageController {
                 return forbidden(res, 'Only project members can rename folders');
             }
 
-            const folder = await DocumentFolderRepository.findByPublicId(normalizedFolderId);
-            if (!folder || folder.projectId !== normalizedProjectId) {
+            let folder;
+            let folderPath;
+
+            if (normalizedFolderId.startsWith('root/pkg/') || normalizedFolderId === 'root') {
+                return badRequest(res, 'Root or package folder cannot be renamed');
+            }
+
+            if (normalizedFolderId.startsWith('root/')) {
+                folderPath = normalizedFolderId.slice(5);
+            } else {
+                folderPath = normalizedFolderId;
+            }
+
+            folder = await DocumentFolderRepository.findOneByPath({
+                projectId: normalizedProjectId,
+                packageId: null,
+                folderPath,
+            });
+
+            if (!folder) {
                 return notFound(res, 'Folder not found');
             }
 
             const parts = String(folder.folderPath || '').split('/').filter(Boolean);
             if (!parts.length) return badRequest(res, 'Root folder cannot be renamed');
 
-            parts[parts.length - 1] = normalizedName;
-            const newPath = parts.join('/');
+            const parentPath = parts.slice(0, -1).join('/');
+
+            const siblings = await DocumentFolderRepository.findSiblings({
+                projectId: normalizedProjectId,
+                packageId: folder.packageId || null,
+                parentPath: parentPath || '',
+            });
+
+            const duplicate = siblings.find(s => s.publicId !== folder.publicId && s.folderPath === parentPath + '/' + normalizedName);
+            if (duplicate) {
+                return conflict(res, 'A folder with this name already exists in this location');
+            }
+
+            const newPath = parts.slice(0, -1).concat(normalizedName).join('/');
             const oldPath = folder.folderPath;
 
             await DocumentFolderRepository.renamePathPrefix({

@@ -1,0 +1,71 @@
+---
+export const prerender = false;
+import PackageLayout from '@/layouts/PackageLayout.astro';
+import PackageDetailPage from '@/components/features/PackageDetailPage';
+
+const projectId = Astro.params.projectId as string;
+const packageId = Astro.params.packageId as string;
+
+if (!projectId || !packageId) {
+  return Astro.redirect('/projects');
+}
+
+const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
+const accessToken = Astro.cookies.get('accessToken')?.value;
+
+let project: any = null;
+let pkg: any = null;
+
+try {
+  const res = await fetch(`${backendUrl}/api/projects/me`, {
+    headers: {
+      Cookie: `accessToken=${accessToken}`,
+      Accept: 'application/json',
+    },
+    credentials: 'include',
+  });
+
+  if (res.ok) {
+    const payload = await res.json();
+    const projects: Array<Record<string, unknown>> = Array.isArray(payload?.data) ? payload.data : [];
+    project = projects.find((p: Record<string, unknown>) => String(p.publicId) === projectId);
+  }
+} catch {
+  // ignore and redirect below
+}
+
+if (!project) {
+  return Astro.redirect('/projects');
+}
+
+// Fetch package info for the breadcrumb
+try {
+  const pkgRes = await fetch(`${backendUrl}/api/projects/packages/list`, {
+    method: 'POST',
+    headers: {
+      Cookie: `accessToken=${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify({ projectId, listType: 'all' }),
+  });
+
+  if (pkgRes.ok) {
+    const pkgPayload = await pkgRes.json();
+    const packages: Array<Record<string, unknown>> = Array.isArray(pkgPayload?.data) ? pkgPayload.data : [];
+    pkg = packages.find((p: Record<string, unknown>) => String(p.publicId) === packageId);
+  }
+} catch {
+  // ignore
+}
+---
+
+<PackageLayout
+  title={`${pkg?.name || 'Package'} - ${String(project.name)} - ORBIT`}
+  projectName={String(project.name)}
+  projectSlug={String(project.publicId)}
+  packageName={pkg?.name || 'Package'}
+>
+  <PackageDetailPage projectPublicId={projectId} packageId={packageId} client:load />
+</PackageLayout>

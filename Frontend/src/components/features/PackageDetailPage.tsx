@@ -6,6 +6,7 @@ import { apiFetch } from '@/lib/api-client';
 import { FileText, FolderPlus, Upload, Image as ImageIcon } from 'lucide-react';
 
 interface PackageDetailPageProps {
+  projectPublicId?: string;
   packageId: string;
 }
 
@@ -27,7 +28,7 @@ interface TreeNode {
   category?: string;
 }
 
-export default function PackageDetailPage({ packageId }: PackageDetailPageProps) {
+export default function PackageDetailPage({ projectPublicId, packageId }: PackageDetailPageProps) {
   const [loading, setLoading] = useState(true);
   const [pkg, setPkg] = useState<PackageItem | null>(null);
   const [documentsTree, setDocumentsTree] = useState<TreeNode | null>(null);
@@ -40,9 +41,26 @@ export default function PackageDetailPage({ packageId }: PackageDetailPageProps)
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadFolderPath, setUploadFolderPath] = useState('');
 
-  const projectId = pkg?.projectId || '';
+  const projectId = projectPublicId || pkg?.projectId || '';
 
   const loadPackage = async () => {
+    if (projectPublicId) {
+      const listRes = await apiFetch('/api/projects/packages/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: projectPublicId, listType: 'all' }),
+      });
+      if (!listRes.ok) throw new Error('Không thể tải packages');
+      const payload = await listRes.json();
+      const items = Array.isArray(payload?.data) ? payload.data : [];
+      const found = items.find((p: any) => p.publicId === packageId);
+      if (found) {
+        setPkg(found);
+        return found;
+      }
+      throw new Error('Không tìm thấy package hoặc bạn không có quyền truy cập');
+    }
+
     const projectsRes = await apiFetch('/api/projects/me');
     if (!projectsRes.ok) throw new Error('Không thể tải projects');
     const projectPayload = await projectsRes.json();
