@@ -1,17 +1,13 @@
 Backend/.env
-Backend/node_modules
 *.md
 .github/skills/
 
 /Backend/tmp
 .gitnexus
+.claude/worktrees/
+Backend/scripts/
+
+# Dependencies — Backend & Frontend (và mọi thư mục node_modules trong repo)
 Backend/node_modules/
 Frontend/node_modules/
-
-Backend/node_modules/
-Backend/node_modules/
-Backend/node_modules/
-.claude/worktrees/
-Backend/node_modules/
-Backend/node_modules/
-Backend/scripts/
+**/node_modules/
