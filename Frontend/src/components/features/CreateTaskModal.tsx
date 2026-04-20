@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface WorkflowStage {
@@ -14,6 +14,7 @@ interface CreateTaskModalProps {
   onSubmit?: (task: TaskFormData) => void;
   assigneeOptions?: { id: string; name: string }[];
   tagOptions?: string[];
+  linkedItemSuggestions?: { label: string; value: string }[];
   workflowStages?: WorkflowStage[];
   defaultStageId?: string;
 }
@@ -44,7 +45,7 @@ const priorityOptions = [
   { id: 'urgent', label: 'Urgent' },
 ];
 
-export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions, workflowStages, defaultStageId }: CreateTaskModalProps) {
+export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions, linkedItemSuggestions, workflowStages, defaultStageId }: CreateTaskModalProps) {
   const teamMembers = assigneeOptions && assigneeOptions.length > 0
     ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
     : [{ id: '', name: 'Unassigned' }];
@@ -52,6 +53,14 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
   const resolvedTagOptions = Array.isArray(tagOptions)
     ? tagOptions
     : [];
+  const linkedSuggestions = useMemo(
+    () => (linkedItemSuggestions || [])
+      .map((item) => ({ label: String(item?.label || '').trim(), value: String(item?.value || '').trim() }))
+      .filter((item) => item.label && item.value)
+      .slice(0, 100),
+    [linkedItemSuggestions]
+  );
+  const linkedSuggestionsListId = useId();
 
   const stages = workflowStages && workflowStages.length > 0 ? workflowStages : defaultStages;
 
@@ -294,18 +303,45 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
           {/* Linked Drawings & Models */}
           <div className="space-y-2">
             <label className="text-[14px] text-[#101828]">Linked Drawings & Models</label>
+            {linkedSuggestions.length > 0 && (
+              <select
+                value={linkedSuggestions.some((item) => item.value === formData.linkedItems) ? formData.linkedItems : ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
+                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] text-[#101828] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+              >
+                <option value="">Select from documents, change requests, or clashes...</option>
+                {linkedSuggestions.map((item) => (
+                  <option key={`${item.value}-${item.label}`} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            )}
             <div className="relative">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
               </svg>
               <input
                 type="text"
+                list={linkedSuggestions.length > 0 ? linkedSuggestionsListId : undefined}
                 value={formData.linkedItems}
                 onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
-                placeholder="Link to drawings, change requests, or clashes..."
+                placeholder={linkedSuggestions.length > 0 ? 'Or paste a custom link...' : 'Link to drawings, change requests, or clashes...'}
                 className="w-full pl-10 pr-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
               />
+              {linkedSuggestions.length > 0 && (
+                <datalist id={linkedSuggestionsListId}>
+                  {linkedSuggestions.map((item) => (
+                    <option key={`${item.value}-${item.label}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </datalist>
+              )}
             </div>
+            {linkedSuggestions.length > 0 && (
+              <p className="text-[12px] text-[#6A7282]">Suggestions are loaded from documents, change requests, and clashes.</p>
+            )}
           </div>
         </div>
 

@@ -43,6 +43,13 @@ const canMutateProjectTasks = (member) => {
     return ['owner', 'admin', 'manager', 'member'].includes(member.role);
 };
 
+const canChangeTaskStatus = ({ member, userId, task }) => {
+    if (!member || member.status !== 'accepted' || !task) return false;
+    if (['owner', 'admin', 'manager'].includes(member.role)) return true;
+    if (member.role !== 'member') return false;
+    return Boolean(task.assigneeId) && String(task.assigneeId) === String(userId);
+};
+
 const buildScopeFilter = (projectId, packageId = null) => {
     if (packageId) {
         return { projectId, packageId };
@@ -258,12 +265,17 @@ class TaskController {
                 return forbidden(res);
             }
 
+            const currentTask = await Task.findOne({ publicId: taskId, ...buildScopeFilter(projectId, packageId) }).lean();
+            if (!currentTask) return notFound(res, 'Task not found');
+            if (!canChangeTaskStatus({ member, userId, task: currentTask })) {
+                return forbidden(res, 'Only owner/admin/manager or the assigned member can update task status');
+            }
+
             const updated = await Task.findOneAndUpdate(
-                { publicId: taskId, ...buildScopeFilter(projectId, packageId) },
+                { _id: currentTask._id },
                 { status, updatedAt: new Date() },
                 { returnDocument: 'after' }
             ).lean();
-
             if (!updated) return notFound(res, 'Task not found');
 
             socketService.broadcastProject(projectId, 'task:status-changed', {
@@ -435,11 +447,11 @@ class TaskController {
             if (!comment) return notFound(res, 'Comment not found');
 
             const member = await ProjectMemberRepository.findMember(comment.projectId, userId);
-            const isAdmin = member && member.role === 'admin';
+            if (!member) return forbidden(res);
             const isAuthor = comment.authorId === userId;
 
-            // Only author or admin can delete
-            if (!isAuthor && !isAdmin) return forbidden(res);
+            // Only author can delete their own comment
+            if (!isAuthor) return forbidden(res);
 
             await TaskComment.deleteOne({ publicId: commentId });
 

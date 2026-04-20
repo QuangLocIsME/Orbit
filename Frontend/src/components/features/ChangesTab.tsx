@@ -870,13 +870,17 @@ function DeleteConfirmModal({ cr, onClose, onDeleted }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ crId: cr.publicId }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         toast.success('Change request deleted');
         onDeleted(cr.publicId);
         onClose();
       } else {
-        toast.error(data.message || 'Failed to delete');
+        if (res.status === 403) {
+          toast.error('You do not have permission to delete this change request.');
+        } else {
+          toast.error(data?.message || 'Failed to delete change request');
+        }
       }
     } catch {
       toast.error('Failed to delete change request');

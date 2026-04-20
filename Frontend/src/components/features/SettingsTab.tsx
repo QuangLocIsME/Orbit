@@ -1,6 +1,6 @@
 'use client';
 // Settings Tab v1.0.72
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { apiFetch, uploadProjectThumbnail, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole } from '@/lib/api-client';
@@ -468,32 +468,49 @@ export default function SettingsTab({
       .finally(() => setIsLoadingDisciplines(false));
   }, [projectPublicId]);
 
-  // Fetch user's workflow templates
-  useEffect(() => {
-    const fetchWorkflowTemplates = async () => {
-      setWorkflowTemplatesLoading(true);
-      try {
-        // getMyTemplates đã trả về tất cả templates (own + downloaded copies)
-        const myRes = await workflowTemplateService.getMyTemplates({ limit: 100 });
-        setWorkflowTemplates(myRes.templates);
-      } catch (error) {
-        console.error('Failed to fetch workflow templates:', error);
-      } finally {
-        setWorkflowTemplatesLoading(false);
-      }
-    };
-    fetchWorkflowTemplates();
+  const fetchWorkflowTemplates = useCallback(async () => {
+    setWorkflowTemplatesLoading(true);
+    try {
+      const [myRes, downloadedRes, libraryRes] = await Promise.all([
+        workflowTemplateService.getMyTemplates({ limit: 100 }),
+        workflowTemplateService.getDownloadedTemplates({ limit: 100 }),
+        workflowTemplateService.getTemplates({ limit: 100, sort: 'recent' }),
+      ]);
 
-    // Listen for workflow changes (including copied templates)
-    const handleWorkflowCreated = () => fetchWorkflowTemplates();
-    window.addEventListener('workflow-created', handleWorkflowCreated);
-    window.addEventListener('workflow-updated', handleWorkflowCreated);
+      const byId = new Map<string, WorkflowTemplate>();
+      [...myRes.templates, ...downloadedRes.templates, ...libraryRes.templates].forEach((template) => {
+        if (!template?.publicId) return;
+        if (!byId.has(template.publicId)) {
+          byId.set(template.publicId, template);
+        }
+      });
+
+      setWorkflowTemplates(Array.from(byId.values()));
+    } catch (error) {
+      console.error('Failed to fetch workflow templates:', error);
+    } finally {
+      setWorkflowTemplatesLoading(false);
+    }
+  }, []);
+
+  // Fetch available workflow templates (my + downloaded + template library)
+  useEffect(() => {
+    void fetchWorkflowTemplates();
+
+    // Listen for workflow changes (including copied/deleted templates)
+    const handleWorkflowChanged = () => {
+      void fetchWorkflowTemplates();
+    };
+    window.addEventListener('workflow-created', handleWorkflowChanged);
+    window.addEventListener('workflow-updated', handleWorkflowChanged);
+    window.addEventListener('workflow-deleted', handleWorkflowChanged);
 
     return () => {
-      window.removeEventListener('workflow-created', handleWorkflowCreated);
-      window.removeEventListener('workflow-updated', handleWorkflowCreated);
+      window.removeEventListener('workflow-created', handleWorkflowChanged);
+      window.removeEventListener('workflow-updated', handleWorkflowChanged);
+      window.removeEventListener('workflow-deleted', handleWorkflowChanged);
     };
-  }, []);
+  }, [fetchWorkflowTemplates]);
 
   const handleDeleteDiscipline = async (id: string) => {
     try {
@@ -773,6 +790,64 @@ export default function SettingsTab({
     return response.ok;
   };
 
+  const handleApplyWorkflow = async () => {
+    if (!projectPublicId) return;
+    if (!selectedWorkflow) {
+      toast.error('Please select a workflow template first');
+      return;
+    }
+
+    setWorkflowApplyState('applying');
+    try {
+      const applyRes = await apiFetch('/api/projects/workflow/apply-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: projectPublicId,
+          workflowTemplateId: selectedWorkflow,
+        }),
+      });
+
+      if (!applyRes.ok) {
+        const errorPayload = await applyRes.json().catch(() => null);
+        toast.error(errorPayload?.message || 'Failed to apply workflow template');
+        setWorkflowApplyState('idle');
+        return;
+      }
+
+      const settingsRes = await apiFetch('/api/projects/workflow/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: projectPublicId,
+          settings: {
+            autoAssign: workflowSettings.autoAssign,
+            notifyStatusChange: workflowSettings.notifyStatusChange,
+            requireApproval: workflowSettings.requireApproval,
+          },
+        }),
+      });
+
+      if (!settingsRes.ok) {
+        const errorPayload = await settingsRes.json().catch(() => null);
+        toast.error(errorPayload?.message || 'Workflow template applied, but failed to save workflow settings');
+        setWorkflowApplyState('idle');
+        return;
+      }
+
+      setWorkflowApplyState('success');
+      window.dispatchEvent(new CustomEvent('workflow-applied', {
+        detail: { projectId: projectPublicId, workflowId: selectedWorkflow },
+      }));
+      toast.success('Workflow applied successfully');
+      onActivityAdded?.();
+      setTimeout(() => setWorkflowApplyState('idle'), 3000);
+    } catch {
+      toast.error('Failed to apply workflow');
+      setWorkflowApplyState('idle');
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -795,6 +870,15 @@ export default function SettingsTab({
         const workflowTemplateId = payload?.data?.workflowTemplateId;
         if (!cancelled && workflowTemplateId) {
           setSelectedWorkflow(workflowTemplateId);
+        }
+
+        const settings = payload?.data?.settings;
+        if (!cancelled && settings) {
+          setWorkflowSettings({
+            autoAssign: Boolean(settings.autoAssign),
+            notifyStatusChange: Boolean(settings.notifyStatusChange),
+            requireApproval: Boolean(settings.requireApproval),
+          });
         }
 
         const tags = Array.isArray(payload?.data?.taskTags) ? payload.data.taskTags : [];
@@ -1877,12 +1961,7 @@ export default function SettingsTab({
                 Cancel
               </button>
               <button 
-                onClick={async () => {
-                  setWorkflowApplyState('applying');
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                  setWorkflowApplyState('success');
-                  setTimeout(() => setWorkflowApplyState('idle'), 3000);
-                }}
+                onClick={handleApplyWorkflow}
                 disabled={workflowApplyState === 'applying'}
                 className={cn(
                   "inline-flex items-center gap-2 rounded-[10px] h-10 px-5 text-[14px] font-medium transition-colors",
@@ -3299,14 +3378,14 @@ export default function SettingsTab({
         }}
         onSuccess={(template) => {
           if (showEditWorkflowModal) {
-            setWorkflowTemplates(prev => prev.map(t => t.publicId === template.publicId ? template : t));
+            void fetchWorkflowTemplates();
             window.dispatchEvent(new CustomEvent('workflow-updated', { detail: template }));
             setShowEditWorkflowModal(false);
             setEditingWorkflow(null);
             toast.success('Workflow updated successfully');
           } else {
-            setWorkflowTemplates(prev => [template, ...prev]);
             setSelectedWorkflow(template.publicId);
+            void fetchWorkflowTemplates();
             window.dispatchEvent(new CustomEvent('workflow-created', { detail: template }));
             setShowCreateWorkflowModal(false);
             toast.success('Workflow created successfully');
@@ -3326,11 +3405,10 @@ export default function SettingsTab({
         }}
         onSuccess={() => {
           const deletedId = deletingWorkflow.publicId;
-          setWorkflowTemplates(prev => prev.filter(t => t.publicId !== deletingWorkflow.publicId));
+          void fetchWorkflowTemplates();
           window.dispatchEvent(new CustomEvent('workflow-deleted', { detail: { publicId: deletedId } }));
           if (selectedWorkflow === deletingWorkflow.publicId) {
-            const remainingTemplates = workflowTemplates.filter(t => t.publicId !== deletingWorkflow.publicId);
-            setSelectedWorkflow(remainingTemplates.length > 0 ? remainingTemplates[0].publicId : '');
+            setSelectedWorkflow('');
           }
           setShowDeleteWorkflowModal(false);
           setDeletingWorkflow(null);

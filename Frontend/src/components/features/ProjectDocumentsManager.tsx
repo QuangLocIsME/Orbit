@@ -356,7 +356,10 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
 
     setIsUploading(true);
     const [current, ...rest] = currentQueue;
-    setUploadProgress({ done: currentQueue.length - rest.length, total: currentQueue.length });
+    setUploadProgress((prev) => ({
+      done: prev.done + 1,
+      total: prev.total > 0 ? prev.total : currentQueue.length,
+    }));
 
     try {
       await uploadFile(current);
@@ -365,6 +368,8 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       toast.error(`Upload failed: ${current.name} - ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 
+    // Release processing lock so effect can continue with the remaining queue.
+    setIsUploading(false);
     setUploadQueue(rest);
   };
 
@@ -372,8 +377,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   useEffect(() => {
     if (uploadQueue.length > 0 && !isUploading) {
       processUploadQueue();
-    }
-    if (uploadQueue.length === 0 && isUploading) {
+    } else if (uploadQueue.length === 0 && !isUploading) {
       setIsUploading(false);
       setUploadProgress({ done: 0, total: 0 });
     }
@@ -588,6 +592,10 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
               if (files.length === 0) return;
+              setUploadProgress((prev) => ({
+                done: prev.done,
+                total: prev.total + files.length,
+              }));
               setUploadQueue((prev) => [...prev, ...files]);
               if (fileInputRef.current) fileInputRef.current.value = '';
             }}

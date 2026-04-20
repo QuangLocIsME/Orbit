@@ -720,7 +720,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                 {canManage ? 'Create a team to group members by discipline or role' : 'Teams will appear here once created by an admin'}
               </p>
             </div>
-          ) : (
+          ) : viewMode === 'grid' ? (
             <div className="grid grid-cols-2 gap-4">
               {teams.map((team) => {
                 const teamMembers = members.filter((m) => team.memberIds.includes(m.userId));
@@ -858,6 +858,77 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                 );
               })}
             </div>
+          ) : (
+            <div className="space-y-3">
+              {teams.map((team) => {
+                const teamMembers = members.filter((m) => team.memberIds.includes(m.userId));
+                return (
+                  <div key={team.id} className="rounded-xl border border-[#E5E7EB] bg-white px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0", team.color)}>
+                        <svg className="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[14px] font-medium text-[#101828]">{team.name}</p>
+                        <p className="truncate text-[12px] text-[#6A7282]">{team.description || 'No description'}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[12px] text-[#6A7282]">Members</p>
+                        <p className="text-[14px] font-medium text-[#101828]">{teamMembers.length}</p>
+                      </div>
+                      {canManage && (
+                        <button
+                          onClick={() => setAddMemberToTeamId(team.id)}
+                          className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-[12px] text-[#4A5565] hover:border-[#D1D5DC]"
+                        >
+                          Add member
+                        </button>
+                      )}
+                    </div>
+                    {canManage && addMemberToTeamId === team.id && (
+                      <div className="mt-3 space-y-2 border-t border-[#F3F4F6] pt-3">
+                        <select
+                          className="w-full rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] focus:border-[#2B7FFF] focus:outline-none"
+                          defaultValue=""
+                          onChange={async (e) => {
+                            const userId = e.target.value;
+                            if (!userId) return;
+                            try {
+                              const r = await apiFetch('/api/teams/members/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ teamId: team.id, userId }) });
+                              const d = await r.json();
+                              if (!r.ok) { toast.error(d.message || 'Failed to add member'); return; }
+                              setTeams((prev) => prev.map((t) =>
+                                t.id === team.id && !t.memberIds.includes(userId)
+                                  ? { ...t, memberIds: [...t.memberIds, userId] }
+                                  : t
+                              ));
+                            } catch { toast.error('Failed to add member'); }
+                            setAddMemberToTeamId(null);
+                          }}
+                        >
+                          <option value="" disabled>Select a member…</option>
+                          {members
+                            .filter((m) => !team.memberIds.includes(m.userId))
+                            .map((m) => (
+                              <option key={m.userId} value={m.userId}>
+                                {m.user?.fullName ?? m.user?.email ?? m.userId}
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          onClick={() => setAddMemberToTeamId(null)}
+                          className="text-[12px] text-[#6A7282] hover:text-[#101828]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       ) : (
@@ -875,8 +946,8 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
             <p className="text-[16px] font-medium text-[#101828] mb-1">No pending invites</p>
             <p className="text-[14px] text-[#6A7282]">Sent invitations will appear here</p>
           </div>
-        ) : (
-          <div className="space-y-3">
+        ) : viewMode === 'grid' ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {filteredInvites.map((invite) => {
               const statusStyle = inviteStatusStyles[invite.status] ?? inviteStatusStyles.pending;
               const color = getAvatarColor(invite.email);
@@ -887,8 +958,8 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                       {getInitials(invite.email)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="text-[14px] font-medium text-[#101828] truncate">{invite.email}</p>
+                      <div className="mb-1 flex items-center gap-2">
+                        <p className="truncate text-[14px] font-medium text-[#101828]">{invite.email}</p>
                         <span className={cn("px-2 py-0.5 rounded text-[11px] font-medium capitalize flex-shrink-0", statusStyle.bg, statusStyle.text)}>
                           {statusStyle.label}
                         </span>
@@ -900,7 +971,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                     {invite.status === 'pending' && (
                       <button
                         onClick={() => setRevokeTarget(invite)}
-                        className="px-3 py-1.5 rounded-[8px] border border-[#E5E7EB] text-[13px] text-[#6A7282] hover:border-red-300 hover:text-red-500 transition-colors"
+                        className="rounded-[8px] border border-[#E5E7EB] px-3 py-1.5 text-[13px] text-[#6A7282] hover:border-red-300 hover:text-red-500 transition-colors"
                       >
                         Revoke
                       </button>
@@ -908,7 +979,43 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                   </div>
                 </div>
               );
-        })}
+            })}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white">
+            <div className="grid grid-cols-[2fr_0.8fr_1fr_0.6fr] gap-4 border-b border-[#E5E7EB] bg-[#FAFAFA] px-6 py-3">
+              <span className="text-[12px] font-medium uppercase tracking-wider text-[#6A7282]">Email</span>
+              <span className="text-[12px] font-medium uppercase tracking-wider text-[#6A7282]">Role</span>
+              <span className="text-[12px] font-medium uppercase tracking-wider text-[#6A7282]">Status</span>
+              <span className="text-[12px] font-medium uppercase tracking-wider text-[#6A7282]">Actions</span>
+            </div>
+            <div className="divide-y divide-[#E5E7EB]">
+              {filteredInvites.map((invite) => {
+                const statusStyle = inviteStatusStyles[invite.status] ?? inviteStatusStyles.pending;
+                return (
+                  <div key={invite.publicId} className="grid grid-cols-[2fr_0.8fr_1fr_0.6fr] items-center gap-4 px-6 py-4">
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-medium text-[#101828]">{invite.email}</p>
+                      <p className="text-[12px] text-[#6A7282]">Expires {formatDate(invite.expiresAt)}</p>
+                    </div>
+                    <span className="text-[13px] capitalize text-[#364153]">{invite.role}</span>
+                    <span className={cn("w-fit rounded px-2 py-0.5 text-[11px] font-medium capitalize", statusStyle.bg, statusStyle.text)}>
+                      {statusStyle.label}
+                    </span>
+                    <div>
+                      {invite.status === 'pending' && (
+                        <button
+                          onClick={() => setRevokeTarget(invite)}
+                          className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-[12px] text-[#6A7282] hover:border-red-300 hover:text-red-500 transition-colors"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )
       )}

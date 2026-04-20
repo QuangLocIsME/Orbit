@@ -5,6 +5,7 @@ import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from 'sonner';
+import Sidebar from './Sidebar';
 
 interface OpenProject {
   id: string;
@@ -154,62 +155,9 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
           className="absolute inset-0 bg-black/20" 
           onClick={() => setIsSidebarOpen(false)}
         />
-        {/* Sidebar Panel */}
-        <div className="absolute left-0 top-0 h-full w-64 bg-white shadow-lg border-r border-gray-200 overflow-auto">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <a href="/" className="flex items-center gap-2">
-              <svg width="28" height="24" viewBox="0 0 29 25" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M15.0464 21.9802C20.5435 21.9802 24.9997 17.5239 24.9997 12.0269C24.9997 6.52984 20.5435 2.07361 15.0464 2.07361C9.54937 2.07361 5.09314 6.52984 5.09314 12.0269C5.09314 17.5239 9.54937 21.9802 15.0464 21.9802Z" stroke="#1F4CB1" strokeWidth="4.1472"/>
-                <path d="M16.5772 16.0603C23.718 11.9375 28.4215 6.71548 27.0826 4.39653C25.7438 2.07758 18.8696 3.53988 11.7288 7.66266C4.58789 11.7854 -0.115579 17.0075 1.22327 19.3265C2.56211 21.6454 9.43628 20.1831 16.5772 16.0603Z" stroke="#C1C7CD" strokeWidth="1.99066" strokeLinecap="round"/>
-                <path d="M23.6281 6.98166C21.8976 4.04448 18.7022 2.07361 15.0464 2.07361C9.54938 2.07361 5.09314 6.52984 5.09314 12.0269C5.09314 13.4725 5.40133 14.8461 5.95558 16.0857" stroke="#1F4CB1" strokeWidth="4.1472"/>
-              </svg>
-              <span className="text-[14px] font-medium text-[#111827]">ORBIT Workspace</span>
-            </a>
-            <button 
-              onClick={() => setIsSidebarOpen(false)}
-              className="h-7 w-7 flex items-center justify-center rounded text-gray-400 hover:bg-gray-100"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          
-          {/* Quick Navigation */}
-          <div className="p-4">
-            <div className="space-y-1">
-              <a href="/" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
-                <svg className="h-4 w-4 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                Home
-              </a>
-              <a href="/projects" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
-                <svg className="h-4 w-4 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                Projects
-              </a>
-              <a href="/packages" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
-                <svg className="h-4 w-4 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-                Packages
-              </a>
-              <a href="/templates" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
-                <svg className="h-4 w-4 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
-                </svg>
-                Templates
-              </a>
-              <a href="/trash" className="flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-[#111827] hover:bg-gray-50 transition-colors">
-                <svg className="h-4 w-4 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                Trash
-              </a>
-            </div>
-          </div>
+        {/* Sidebar Panel - reuse same Sidebar component as dashboard */}
+        <div className="absolute left-0 top-0 h-full shadow-lg">
+          <Sidebar currentPath={`/projects/${projectSlug}`} />
         </div>
       </div>
     )}

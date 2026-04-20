@@ -239,7 +239,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F2F4F7]">
-        <div className="px-[300px] py-8">
+        <div className="px-6 lg:px-[80px] xl:px-[160px] py-8">
           <div className="h-8 w-48 rounded-lg bg-gray-200 animate-pulse mb-4" />
           <div className="h-4 w-72 rounded-lg bg-gray-200 animate-pulse" />
         </div>
@@ -326,8 +326,9 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
 
   return (
     <div className="min-h-screen bg-white">
-      <div className="bg-white border-b border-[#E5E7EB]">
-        <div className="px-6 lg:px-[80px] xl:px-[160px] 2xl:px-[300px] pt-6">
+      <div className="bg-white">
+        <div className="px-[300px] py-6">
+        <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
           <div className="flex items-center justify-between mb-4">
             <a href={pkg.projectId ? `/projects/${pkg.projectId}` : '/dashboard'} className="inline-flex items-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
               <ChevronRight className="h-4 w-4 rotate-180" />
@@ -428,9 +429,11 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
             ))}
           </div>
         </div>
+        </div>
       </div>
 
-      <div className="px-6 lg:px-[80px] xl:px-[160px] 2xl:px-[300px] py-6">
+      <div className="px-[300px] py-0">
+        <div className="space-y-4 py-1 px-6 lg:px-[80px] xl:px-[160px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">
             <div className="grid grid-cols-4 gap-4">
@@ -513,18 +516,22 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
         )}
 
         {activeTab === 'tasks' && (
-          <ScopedTasksPanel
-            scope={{ type: 'package', projectId: pkg.projectId, packageId }}
-            projectRole={projectRole}
-          />
+          <div className="-mx-6 lg:-mx-[80px] xl:-mx-[160px]">
+            <ScopedTasksPanel
+              scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+              projectRole={projectRole}
+            />
+          </div>
         )}
 
         {activeTab === 'documents' && (
-          <ProjectDocumentsManager
-            projectId={pkg.projectId}
-            packageId={packageId}
-            canManage={canManagePackageDocuments}
-          />
+          <div className="-mx-6 lg:-mx-[80px] xl:-mx-[160px]">
+            <ProjectDocumentsManager
+              projectId={pkg.projectId}
+              packageId={packageId}
+              canManage={canManagePackageDocuments}
+            />
+          </div>
         )}
 
         {activeTab === 'team' && (
@@ -580,6 +587,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
             title="Activity Feed"
           />
         )}
+        </div>
       </div>
 
       <Dialog open={isAddMemberOpen} onOpenChange={setIsAddMemberOpen}>

@@ -11,7 +11,7 @@ import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
 
-type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 
 export interface ScopedTaskScope {
   type: 'project' | 'package';
@@ -47,6 +47,7 @@ interface TaskItem {
   assigneeId: string;
 }
 type CalendarTaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
+type LinkedSuggestionItem = { label: string; value: string };
 
 const avatarColors = ['bg-pink-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-blue-500', 'bg-teal-500', 'bg-orange-500'];
 
@@ -83,8 +84,23 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedWorkflowStages, setSelectedWorkflowStages] = useState<WorkflowStage[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const [linkedItemSuggestions, setLinkedItemSuggestions] = useState<LinkedSuggestionItem[]>([]);
 
   const canCreateTask = projectRole !== 'viewer';
+  const canManageWorkflow = projectRole === 'owner' || projectRole === 'admin';
+  const hasExistingTasks = tasksData.length > 0;
+  const workflowDisabledReason = hasExistingTasks
+    ? 'Workflow selection is locked because this project already has tasks.'
+    : (!canManageWorkflow ? 'Only project owner/admin can change workflow' : undefined);
+  const currentUserId = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const raw = localStorage.getItem('orbit_user');
+      return raw ? String(JSON.parse(raw).id || '') : '';
+    } catch {
+      return '';
+    }
+  }, []);
   const scopeRequestBody = useMemo(
     () => ({
       projectId: scope.projectId,
@@ -158,8 +174,15 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
 
       const payload = await response.json();
       const rawTasks = Array.isArray(payload?.data) ? payload.data : [];
+      const scopedTasks = rawTasks.filter((task: any) => {
+        const taskPackageId = String(task?.packageId || '').trim();
+        if (scope.type === 'package') {
+          return Boolean(scope.packageId) && taskPackageId === String(scope.packageId);
+        }
+        return taskPackageId.length === 0;
+      });
 
-      const mapped: TaskItem[] = rawTasks.map((t: any) => ({
+      const mapped: TaskItem[] = scopedTasks.map((t: any) => ({
         id: String(t.publicId || t.id || ''),
         title: String(t.title || 'Untitled task'),
         description: String(t.description || ''),
@@ -179,55 +202,58 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
     } finally {
       setIsTasksLoading(false);
     }
-  }, [scopeRequestBody]);
+  }, [scope.packageId, scope.type, scopeRequestBody]);
 
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
 
+  const loadProjectWorkflowData = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/projects/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: scope.projectId }),
+      });
+
+      if (!res.ok) return;
+
+      const payload = await res.json();
+      const data = payload?.data || {};
+      const tags = Array.isArray(data.taskTags) ? data.taskTags : [];
+      setProjectTaskTags(tags.map((t: any) => String(t?.name || '').toLowerCase()).filter(Boolean));
+
+      const stages = Array.isArray(data.stages) ? data.stages : [];
+      if (stages.length > 0) {
+        setSelectedWorkflowStages(stages.map((s: any) => ({
+          id: String(s.id || ''),
+          name: String(s.label || s.name || ''),
+          description: String(s.description || ''),
+        })));
+      }
+      if (data.workflowTemplateId) {
+        setSelectedWorkflowId(data.workflowTemplateId);
+      }
+    } catch {
+      // CreateTaskModal already has fallback stages.
+    }
+  }, [scope.projectId]);
+
   useEffect(() => {
     let cancelled = false;
+    loadProjectWorkflowData();
 
-    const loadProjectWorkflowData = async () => {
-      try {
-        const res = await apiFetch('/api/projects/workflow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ projectId: scope.projectId }),
-        });
-
-        if (!res.ok) return;
-
-        const payload = await res.json();
-        const data = payload?.data || {};
-        const tags = Array.isArray(data.taskTags) ? data.taskTags : [];
-        if (!cancelled) {
-          setProjectTaskTags(tags.map((t: any) => String(t?.name || '').toLowerCase()).filter(Boolean));
-        }
-
-        if (!cancelled) {
-          const stages = Array.isArray(data.stages) ? data.stages : [];
-          if (stages.length > 0) {
-            setSelectedWorkflowStages(stages.map((s: any) => ({
-              id: String(s.id || ''),
-              name: String(s.label || s.name || ''),
-              description: String(s.description || ''),
-            })));
-          }
-          if (data.workflowTemplateId) {
-            setSelectedWorkflowId(data.workflowTemplateId);
-          }
-        }
-      } catch {
-        // CreateTaskModal already has fallback stages.
+    const handleWorkflowApplied = () => {
+      if (!cancelled) {
+        void loadProjectWorkflowData();
       }
     };
-
-    loadProjectWorkflowData();
+    window.addEventListener('workflow-applied', handleWorkflowApplied);
     return () => {
       cancelled = true;
+      window.removeEventListener('workflow-applied', handleWorkflowApplied);
     };
-  }, [scope.projectId]);
+  }, [loadProjectWorkflowData]);
 
   const filteredTasks = useMemo(
     () => tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase())),
@@ -239,9 +265,119 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
       .map((t) => ({ ...t, status: t.status as CalendarTaskStatus })),
     [filteredTasks]
   );
+  useEffect(() => {
+    let cancelled = false;
+
+    const flattenDocumentNodes = (nodes: any[], result: any[] = []): any[] => {
+      for (const node of nodes || []) {
+        if (node?.type === 'file') result.push(node);
+        if (Array.isArray(node?.children) && node.children.length > 0) {
+          flattenDocumentNodes(node.children, result);
+        }
+      }
+      return result;
+    };
+
+    const loadLinkedSuggestions = async () => {
+      try {
+        const documentEndpoint = scope.type === 'package' && scope.packageId
+          ? '/api/projects/packages/documents/package/list'
+          : '/api/projects/packages/documents/list';
+        const documentBody = scope.type === 'package' && scope.packageId
+          ? { projectId: scope.projectId, packageId: scope.packageId }
+          : { projectId: scope.projectId };
+
+        const [documentsRes, changesRes, clashesRes] = await Promise.all([
+          apiFetch(documentEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(documentBody),
+          }),
+          apiFetch(`/api/projects/${scope.projectId}/change-requests`),
+          apiFetch(`/api/projects/${encodeURIComponent(scope.projectId)}/navisworks/clashes`),
+        ]);
+
+        const nextSuggestions: LinkedSuggestionItem[] = [];
+        const baseProjectPath = `/projects/${scope.projectId}`;
+        const scopedPrefix = scope.type === 'package' && scope.packageId
+          ? `${baseProjectPath}/packages/${scope.packageId}`
+          : baseProjectPath;
+
+        if (documentsRes.ok) {
+          const payload = await documentsRes.json();
+          const tree = payload?.data?.tree;
+          const files = flattenDocumentNodes(tree?.children || []);
+          for (const file of files.slice(0, 30)) {
+            const name = String(file?.name || '').trim();
+            if (!name) continue;
+            nextSuggestions.push({
+              label: `[Document] ${name}`,
+              value: file?.s3Url || `${scopedPrefix}?tab=documents`,
+            });
+          }
+        }
+
+        if (changesRes.ok) {
+          const payload = await changesRes.json();
+          const changes = Array.isArray(payload?.data) ? payload.data : [];
+          for (const cr of changes.slice(0, 30)) {
+            const crId = String(cr?.publicId || '');
+            const title = String(cr?.title || '').trim();
+            if (!crId || !title) continue;
+            nextSuggestions.push({
+              label: `[Change Request] ${title}`,
+              value: `${scopedPrefix}?tab=changes&crId=${encodeURIComponent(crId)}`,
+            });
+          }
+        }
+
+        if (clashesRes.ok) {
+          const payload = await clashesRes.json();
+          const clashes = Array.isArray(payload?.clashes) ? payload.clashes : [];
+          for (const clash of clashes.slice(0, 30)) {
+            const clashId = String(clash?.id || '');
+            const title = String(clash?.title || '').trim();
+            if (!clashId || !title) continue;
+            nextSuggestions.push({
+              label: `[Clash] ${title}`,
+              value: `${scopedPrefix}?tab=clashes&clashId=${encodeURIComponent(clashId)}`,
+            });
+          }
+        }
+
+        const deduped = Array.from(
+          new Map(nextSuggestions.map((item) => [`${item.label}::${item.value}`, item])).values()
+        );
+
+        if (!cancelled) {
+          setLinkedItemSuggestions(deduped);
+        }
+      } catch {
+        if (!cancelled) {
+          setLinkedItemSuggestions([]);
+        }
+      }
+    };
+
+    loadLinkedSuggestions();
+    return () => {
+      cancelled = true;
+    };
+  }, [scope.packageId, scope.projectId, scope.type]);
 
   const handleTaskStatusChange = useCallback(async (taskId: string, newStatus: string) => {
     if (!canCreateTask) return;
+    const targetTask = tasksData.find((t) => t.id === taskId);
+    if (!targetTask) return;
+    const canMoveStage =
+      projectRole === 'owner' ||
+      projectRole === 'admin' ||
+      projectRole === 'manager' ||
+      (projectRole === 'member' && Boolean(targetTask.assigneeId) && targetTask.assigneeId === currentUserId);
+    if (!canMoveStage) {
+      toast.error('Members can only update the status of tasks assigned to them.');
+      return;
+    }
 
     const previousTasks = tasksData;
     setTasksData((prev) => prev.map((t) => t.id === taskId ? { ...t, status: newStatus } : t));
@@ -265,7 +401,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
       setTasksData(previousTasks);
       toast.error('Failed to update task status');
     }
-  }, [canCreateTask, scopeRequestBody, tasksData]);
+  }, [canCreateTask, currentUserId, projectRole, scopeRequestBody, tasksData]);
 
   const isPackageScope = scope.type === 'package';
   const resolveStageName = useCallback((status: string) => {
@@ -417,6 +553,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           }}
           assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
+          linkedItemSuggestions={linkedItemSuggestions}
           workflowStages={selectedWorkflowStages}
           defaultStageId={pendingTaskStageId}
           onSubmit={async (task) => {
@@ -466,6 +603,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           <WorkflowTemplatesDropdown
             selectedWorkflow={selectedWorkflowId}
             projectId={scope.projectId}
+            canApply={canManageWorkflow}
+            disabledReason={workflowDisabledReason}
             onSelect={(workflowId, stages) => {
               setSelectedWorkflowId(workflowId);
               setSelectedWorkflowStages(stages);
@@ -663,6 +802,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
         }}
         assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
         tagOptions={projectTaskTags}
+        linkedItemSuggestions={linkedItemSuggestions}
         workflowStages={selectedWorkflowStages}
         defaultStageId={pendingTaskStageId}
         onSubmit={async (task) => {
