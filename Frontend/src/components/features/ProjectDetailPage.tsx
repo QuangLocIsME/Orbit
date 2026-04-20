@@ -2748,7 +2748,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Clashes Tab */}
         {activeTab === 'clashes' && (
-          <ClashesTab projectPublicId={project.publicId} projectDisplayName={project.name} />
+          <ClashesTab
+            projectPublicId={project.publicId}
+            projectDisplayName={project.name}
+            currentUserRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
+          />
         )}
 
         {/* Teams Tab */}

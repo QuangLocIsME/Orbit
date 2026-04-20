@@ -460,8 +460,8 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
         <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-14 text-center">
           <p className="text-sm text-gray-600">
             {selectedProjectId
-              ? `Project "${selectedProjectName}" chưa có package nào.`
-              : 'Bạn chưa có project nào để quản lý package.'}
+              ? `Project "${selectedProjectName}" does not have any packages yet.`
+              : 'You do not have any projects to manage packages.'}
           </p>
         </div>
       ) : viewMode === 'grid' ? (

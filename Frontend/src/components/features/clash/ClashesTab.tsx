@@ -11,6 +11,7 @@ import { clashesOverviewKey } from './hooks/useNavisworksWorkspace';
 interface ClashesTabProps {
   projectPublicId: string;
   projectDisplayName?: string;
+  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
 }
 
 // ─── API types ────────────────────────────────────────────────────────────────
@@ -87,10 +88,12 @@ function ClashOverview({
   projectPublicId,
   onRunDetection,
   onView3D,
+  canManageClash,
 }: {
   projectPublicId: string;
   onRunDetection: () => void;
   onView3D: (clash: ClashResult) => void;
+  canManageClash: boolean;
 }) {
   const PAGE_SIZE = 10;
   const [searchQuery, setSearchQuery] = useState('');
@@ -137,6 +140,7 @@ function ClashOverview({
         <h2 className="text-[24px] font-normal text-[#101828]">Clash Detection</h2>
         <button
           onClick={onRunDetection}
+          disabled={!canManageClash}
           className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 transition-colors"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -249,6 +253,7 @@ function ClashOverview({
             {clashes.length === 0 && (
               <button
                 onClick={onRunDetection}
+                disabled={!canManageClash}
                 className="mt-1 inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-sm text-white hover:bg-blue-700 transition-colors"
               >
                 Run Detection
@@ -391,9 +396,10 @@ function ClashOverview({
 
 // ─── Main ClashesTab ──────────────────────────────────────────────────────────
 
-export default function ClashesTab({ projectPublicId, projectDisplayName }: ClashesTabProps) {
+export default function ClashesTab({ projectPublicId, projectDisplayName, currentUserRole }: ClashesTabProps) {
   const [showWorkspace, setShowWorkspace] = useState(false);
   const [workspaceFocus, setWorkspaceFocus] = useState<{ testId: string; clashId: string } | null>(null);
+  const canManageClash = currentUserRole !== 'viewer';
 
   if (!projectPublicId.trim()) {
     return (
@@ -413,6 +419,7 @@ export default function ClashesTab({ projectPublicId, projectDisplayName }: Clas
     return (
       <NavisworksClashWorkspace
         projectSlug={projectPublicId}
+        currentUserRole={currentUserRole}
         initialTestId={workspaceFocus?.testId ?? null}
         initialClashId={workspaceFocus?.clashId ?? null}
         onBack={() => {
@@ -426,7 +433,9 @@ export default function ClashesTab({ projectPublicId, projectDisplayName }: Clas
   return (
     <ClashOverview
       projectPublicId={projectPublicId}
+      canManageClash={canManageClash}
       onRunDetection={() => {
+        if (!canManageClash) return;
         setWorkspaceFocus(null);
         setShowWorkspace(true);
       }}

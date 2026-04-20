@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEv
 import { flushSync } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Eye,
   FileText,
   FlaskConical,
   FolderTree,
@@ -193,6 +194,7 @@ function SidebarActionBanner({ banner, className }: { banner: ActionBanner | nul
 interface NavisworksClashWorkspaceProps {
   projectSlug: string;
   onBack?: () => void;
+  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
   /** From landing "View 3D" — selects this clash test and row in Results */
   initialTestId?: string | null;
   initialClashId?: string | null;
@@ -215,6 +217,7 @@ const triggerDownload = async (url: string, filename?: string) => {
 export default function NavisworksClashWorkspace({
   projectSlug,
   onBack,
+  currentUserRole,
   initialTestId = null,
   initialClashId = null,
 }: NavisworksClashWorkspaceProps) {
@@ -304,6 +307,12 @@ export default function NavisworksClashWorkspace({
 
   /** When false, main viewer shows federated overview only. When true, show clash geometry for the selected test (first last-run result if any). Set true when picking a test, after Run, or when choosing a row in Results. */
   const [showClashInMainViewer, setShowClashInMainViewer] = useState(() => openFromLanding);
+  const canManageClash = currentUserRole !== 'viewer';
+  const denyViewerEdits = () => {
+    const msg = 'Viewer can only view clash data.';
+    setError(msg);
+    toast.warning(msg);
+  };
 
   const { data: projectMembers = [], isFetching: projectMembersLoading } = useProjectMembers(projectSlug);
 
@@ -668,6 +677,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const saveSelectionSetDraft = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!validateSelectionSetDraft()) return;
     try {
       setError(null);
@@ -753,6 +763,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const saveClashTestDraft = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!validateClashTestDraft()) return;
     try {
       setError(null);
@@ -794,6 +805,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const importModelFiles = async (files: File[], openSidebarAfter = true) => {
+    if (!canManageClash) return denyViewerEdits();
     if (files.length === 0) return;
     try {
       setError(null);
@@ -849,6 +861,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const executeRunTest = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!selectedTestId) return;
     setRunTestDialogOpen(false);
     try {
@@ -873,6 +886,7 @@ export default function NavisworksClashWorkspace({
 
   /** Marks resolved (only manual workflow action left). */
   const markSelectedClashResolved = () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!selectedResult) return;
     setError(null);
     updateClashStatus.mutate(
@@ -897,6 +911,7 @@ export default function NavisworksClashWorkspace({
 
   /** After a short delay, opening a New clash in the inspector promotes it to Reviewed (no toast). Uses quietUpdateClashStatus so the Save button is not stuck on "Saving…" from shared isPending. */
   useEffect(() => {
+    if (!canManageClash) return;
     if (!showClashInMainViewer || !selectedResult || selectedResult.status !== 'new') return;
     const { clashId } = selectedResult;
     const sourceTestId = selectedResult.sourceTestId;
@@ -909,6 +924,7 @@ export default function NavisworksClashWorkspace({
     }, 750);
     return () => window.clearTimeout(timer);
   }, [
+    canManageClash,
     selectedResult?.clashId,
     selectedResult?.sourceTestId,
     selectedResult?.status,
@@ -918,6 +934,7 @@ export default function NavisworksClashWorkspace({
 
   /** Persist note & assignee; also sets Reviewed when not resolved (keeps workflow in sync). */
   const saveClashInspectorDetails = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!selectedResult) {
       const msg = 'Select a clash in the list before saving.';
       toast.error(msg);
@@ -960,6 +977,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const hideObject = (objectId: string) => {
+    if (!canManageClash) return denyViewerEdits();
     setError(null);
     applyObjectActions.mutate(
       { action: 'hide', objectIds: [objectId] },
@@ -975,6 +993,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const showObjects = (objectIds: string[]) => {
+    if (!canManageClash) return denyViewerEdits();
     if (objectIds.length === 0) return;
     setError(null);
     applyObjectActions.mutate(
@@ -992,6 +1011,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const resetHiddenObjects = async () => {
+    if (!canManageClash) return denyViewerEdits();
     const ids = persistedHiddenObjects.map((object) => object.id);
     if (ids.length === 0) return;
     await showObjects(ids);
@@ -1044,6 +1064,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const confirmDeleteClashTest = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!pendingDeleteTestId) return;
     const id = pendingDeleteTestId;
     setPendingDeleteTestId(null);
@@ -1077,6 +1098,7 @@ export default function NavisworksClashWorkspace({
   };
 
   const confirmDeleteSelectionSet = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!pendingDeleteSetId) return;
     const id = pendingDeleteSetId;
     setPendingDeleteSetId(null);
@@ -1113,10 +1135,15 @@ export default function NavisworksClashWorkspace({
       <div
         className={cn(
           'flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col',
-          '[&_button]:transition-[transform,filter] [&_button]:duration-100',
+          '[&_button]:transition-[transform,filter,box-shadow] [&_button]:duration-150',
+          '[&_button:not(:disabled)]:cursor-pointer',
           '[&_button]:active:scale-[0.98] [&_button]:active:brightness-[0.93]',
-          '[&_button:disabled]:pointer-events-none [&_button:disabled]:active:scale-100 [&_button:disabled]:active:brightness-100',
-          'motion-reduce:[&_button]:active:scale-100'
+          '[&_button:disabled]:pointer-events-none [&_button:disabled]:cursor-not-allowed [&_button:disabled]:active:scale-100 [&_button:disabled]:active:brightness-100',
+          '[&_button:focus-visible]:outline-none [&_button:focus-visible]:ring-2 [&_button:focus-visible]:ring-[#155DFC]/30 [&_button:focus-visible]:ring-offset-2 [&_button:focus-visible]:ring-offset-white',
+          '[&_input]:transition-colors [&_input]:duration-150 [&_input:focus-visible]:outline-none [&_input:focus-visible]:ring-2 [&_input:focus-visible]:ring-[#155DFC]/20 [&_input:disabled]:cursor-not-allowed [&_input:disabled]:bg-[#F3F4F6]',
+          '[&_select]:transition-colors [&_select]:duration-150 [&_select:focus-visible]:outline-none [&_select:focus-visible]:ring-2 [&_select:focus-visible]:ring-[#155DFC]/20 [&_select:disabled]:cursor-not-allowed [&_select:disabled]:bg-[#F3F4F6]',
+          '[&_textarea]:transition-colors [&_textarea]:duration-150 [&_textarea:focus-visible]:outline-none [&_textarea:focus-visible]:ring-2 [&_textarea:focus-visible]:ring-[#155DFC]/20 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-[#F3F4F6]',
+          'motion-reduce:[&_button]:active:scale-100 motion-reduce:[&_button]:transition-none'
         )}
       >
         {/* ── Top header bar ── */}
@@ -1135,6 +1162,22 @@ export default function NavisworksClashWorkspace({
               </button>
             )}
             <h2 className="text-base font-semibold text-[#101828]">Clash Detection</h2>
+            {!canManageClash && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    tabIndex={0}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700"
+                  >
+                    <Eye className="size-3.5" aria-hidden />
+                    Read-only mode (Viewer)
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-xs">
+                  Viewer can only view clash data. Editing actions such as note/assign/resolve/run test/hide/show/delete/import are disabled.
+                </TooltipContent>
+              </Tooltip>
+            )}
             {error && (
               <span className="inline-flex items-center gap-1 rounded-full bg-[#FEF2F2] px-2.5 py-1 text-xs font-medium text-[#B91C1C]">
                 <svg className="size-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
@@ -1144,12 +1187,20 @@ export default function NavisworksClashWorkspace({
             {persistedHiddenObjects.length > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
                 {persistedHiddenObjects.length} hidden
-                <button type="button" onClick={() => void resetHiddenObjects()} className="ml-0.5 underline underline-offset-1">Reset</button>
+                <button
+                  type="button"
+                  disabled={!canManageClash}
+                  onClick={() => void resetHiddenObjects()}
+                  className="ml-0.5 underline underline-offset-1"
+                >
+                  Reset
+                </button>
               </span>
             )}
           </div>
           <button
             type="button"
+            disabled={!canManageClash}
             onClick={() => { setSelectedDocIds(new Set()); setImportModalOpen(true); }}
             className="inline-flex items-center gap-2 rounded-lg bg-[#155DFC] px-3.5 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
           >
@@ -1305,7 +1356,7 @@ export default function NavisworksClashWorkspace({
                     <button
                       type="button"
                       onClick={() => setRunTestDialogOpen(true)}
-                      disabled={!selectedTestId || runClashTest.isPending}
+                      disabled={!canManageClash || !selectedTestId || runClashTest.isPending}
                       className={cn(
                         'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors',
                         !selectedTestId || runClashTest.isPending ? 'cursor-not-allowed bg-[#93C5FD]' : 'bg-[#155DFC] hover:bg-blue-700'
@@ -1356,6 +1407,7 @@ export default function NavisworksClashWorkspace({
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
+                                if (!canManageClash) return denyViewerEdits();
                                 setPendingDeleteTestId(test.id);
                               }}
                               className="shrink-0 text-xs text-[#DC2626]"
@@ -1534,7 +1586,7 @@ export default function NavisworksClashWorkspace({
                       <SidebarActionBanner banner={clashTestActionBanner} />
                       <button
                         type="button"
-                        disabled={saveClashTest.isPending}
+                        disabled={!canManageClash || saveClashTest.isPending}
                         onClick={() => void saveClashTestDraft()}
                         className={cn(
                           'mt-3 w-full rounded-lg px-3 py-2 text-sm font-medium text-white',
@@ -1551,6 +1603,7 @@ export default function NavisworksClashWorkspace({
                   <div className="space-y-5">
                     <button
                       type="button"
+                      disabled={!canManageClash}
                       onClick={() => setImportModalOpen(true)}
                       className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#D1D5DC] bg-white py-2.5 text-sm text-[#364153] hover:bg-gray-50"
                     >
@@ -1615,7 +1668,14 @@ export default function NavisworksClashWorkspace({
                           <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-2.5">
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#6A7282]">Persisted hidden</p>
-                              <button type="button" onClick={() => void resetHiddenObjects()} className="text-xs font-medium text-[#155DFC]">Show all</button>
+                              <button
+                                type="button"
+                                disabled={!canManageClash}
+                                onClick={() => void resetHiddenObjects()}
+                                className="text-xs font-medium text-[#155DFC]"
+                              >
+                                Show all
+                              </button>
                             </div>
                             <div className="mt-2 space-y-1.5">
                               {persistedHiddenObjects.map((object) => (
@@ -1624,7 +1684,14 @@ export default function NavisworksClashWorkspace({
                                     <p className="truncate text-xs font-medium text-[#101828]">{object.id}</p>
                                     <p className="truncate text-[11px] text-[#6A7282]">{object.type} · {object.sourceModel}</p>
                                   </div>
-                                  <button type="button" onClick={() => void showObjects([object.id])} className="shrink-0 rounded border border-[#D1D5DC] px-2 py-1 text-[11px] text-[#364153]">Show</button>
+                                  <button
+                                    type="button"
+                                    disabled={!canManageClash}
+                                    onClick={() => void showObjects([object.id])}
+                                    className="shrink-0 rounded border border-[#D1D5DC] px-2 py-1 text-[11px] text-[#364153]"
+                                  >
+                                    Show
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -1645,7 +1712,14 @@ export default function NavisworksClashWorkspace({
                                   {selectionSet.filters.modelIds.length} models · {selectionSet.filters.categories.length} categories · {selectionSet.manualIncludeIds.length} manual
                                 </p>
                               </div>
-                              <button type="button" onClick={() => setPendingDeleteSetId(selectionSet.id)} className="shrink-0 text-xs text-[#DC2626]">Delete</button>
+                              <button
+                                type="button"
+                                disabled={!canManageClash}
+                                onClick={() => setPendingDeleteSetId(selectionSet.id)}
+                                className="shrink-0 text-xs text-[#DC2626]"
+                              >
+                                Delete
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -1807,7 +1881,7 @@ export default function NavisworksClashWorkspace({
                           <SidebarActionBanner banner={selectionSetActionBanner} />
                           <button
                             type="button"
-                            disabled={saveSelectionSet.isPending}
+                            disabled={!canManageClash || saveSelectionSet.isPending}
                             onClick={() => void saveSelectionSetDraft()}
                             className={cn(
                               'mt-3 w-full rounded-lg px-3 py-2 text-sm font-medium text-white',
@@ -2010,6 +2084,7 @@ export default function NavisworksClashWorkspace({
                                     </div>
                                     <button
                                       type="button"
+                                      disabled={!canManageClash}
                                       onClick={() => void (aHidden ? showObjects([selectedResult.objectA]) : hideObject(selectedResult.objectA))}
                                       className={cn(
                                         'shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150',
@@ -2037,6 +2112,7 @@ export default function NavisworksClashWorkspace({
                                     </div>
                                     <button
                                       type="button"
+                                      disabled={!canManageClash}
                                       onClick={() => void (bHidden ? showObjects([selectedResult.objectB]) : hideObject(selectedResult.objectB))}
                                       className={cn(
                                         'shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150',
@@ -2064,6 +2140,7 @@ export default function NavisworksClashWorkspace({
                               className="w-full resize-none rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none transition-colors focus:border-[#155DFC] focus:ring-2 focus:ring-blue-500/10"
                               placeholder="Add coordination notes..."
                               value={noteDraft}
+                              disabled={!canManageClash}
                               maxLength={INSPECTOR_NOTE_MAX_LEN}
                               onChange={(event) => {
                                 clearInspectorActionBanner();
@@ -2082,6 +2159,7 @@ export default function NavisworksClashWorkspace({
                             <select
                               className="w-full cursor-pointer rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm outline-none transition-colors focus:border-[#155DFC] focus:ring-2 focus:ring-blue-500/10"
                               value={assigneeDraft}
+                              disabled={!canManageClash}
                               onChange={(event) => {
                                 clearInspectorActionBanner();
                                 setAssigneeDraft(event.target.value);
@@ -2112,7 +2190,7 @@ export default function NavisworksClashWorkspace({
                           <button
                             type="button"
                             onClick={() => void saveClashInspectorDetails()}
-                            disabled={updateClashStatus.isPending}
+                            disabled={!canManageClash || updateClashStatus.isPending}
                             className={cn(
                               'flex w-full items-center justify-center gap-2 rounded-xl border border-[#155DFC] px-4 py-3 text-sm font-semibold text-[#155DFC] transition-all duration-150 hover:bg-[#EFF6FF] active:scale-[0.98]',
                               updateClashStatus.isPending && 'cursor-wait opacity-70'
@@ -2126,7 +2204,7 @@ export default function NavisworksClashWorkspace({
                           <button
                             type="button"
                             onClick={() => setResolveDialogOpen(true)}
-                            disabled={selectedResult.status === 'resolved'}
+                            disabled={!canManageClash || selectedResult.status === 'resolved'}
                             className={cn(
                               'flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#009966] to-[#059669] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-500/20 transition-all duration-150 hover:shadow-lg hover:shadow-emerald-500/30 active:scale-[0.98]',
                               selectedResult.status === 'resolved' && 'cursor-not-allowed bg-emerald-300 hover:bg-emerald-300 hover:shadow-none'
@@ -2252,6 +2330,7 @@ export default function NavisworksClashWorkspace({
                 <p className="max-w-sm text-xs text-[#6A7282]">Import IFC files from this project's Documents to start detecting clashes.</p>
                 <button
                   type="button"
+                  disabled={!canManageClash}
                   onClick={() => setImportModalOpen(true)}
                   className="rounded-lg bg-[#155DFC] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
@@ -2485,7 +2564,7 @@ export default function NavisworksClashWorkspace({
                 </button>
                 <button
                   type="button"
-                  disabled={selectedDocIds.size === 0 || importFromDocuments.isPending}
+                  disabled={!canManageClash || selectedDocIds.size === 0 || importFromDocuments.isPending}
                   onClick={async () => {
                     try {
                       setError(null);

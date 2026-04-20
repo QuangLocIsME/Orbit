@@ -610,8 +610,8 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                   <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
                     <FileText className="h-6 w-6 text-gray-400" />
                   </div>
-                  <p className="text-sm font-medium text-gray-700">Chưa có dữ liệu documents</p>
-                  <p className="text-xs text-gray-400 mt-1">Tải lên file hoặc tạo thư mục mới</p>
+                  <p className="text-sm font-medium text-gray-700">No documents data yet</p>
+                  <p className="text-xs text-gray-400 mt-1">Upload files or create a new folder</p>
                 </div>
               ) : (
                 <ul>{renderNode(documentsTree)}</ul>
