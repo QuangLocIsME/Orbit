@@ -40,6 +40,7 @@ interface WorkflowStage {
 interface TaskDetailPageProps {
   projectPublicId: string;
   taskId: string;
+  packageId?: string | null;
 }
 
 const statusToneById: Record<string, string> = {
@@ -84,7 +85,7 @@ const toDisplayTime = (iso: string) => {
   return d.toLocaleString();
 };
 
-export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPageProps) {
+export default function TaskDetailPage({ projectPublicId, taskId, packageId = null }: TaskDetailPageProps) {
   const [loading, setLoading] = useState(true);
   const [task, setTask] = useState<TaskDetailData | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -119,12 +120,12 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
           apiFetch('/api/tasks/detail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ projectId: projectPublicId, taskId }),
+            body: JSON.stringify({ projectId: projectPublicId, packageId, taskId }),
           }),
           apiFetch('/api/tasks/comments/list', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ projectId: projectPublicId, taskId }),
+            body: JSON.stringify({ projectId: projectPublicId, packageId, taskId }),
           }),
           apiFetch('/api/projects/me', {
             method: 'GET',
@@ -208,7 +209,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
     return () => {
       cancelled = true;
     };
-  }, [projectPublicId, taskId]);
+  }, [projectPublicId, packageId, taskId]);
 
   const dueDateLabel = useMemo(() => {
     if (!task?.dueDate) return 'No due date';
@@ -232,7 +233,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
       const res = await apiFetch('/api/tasks/comments/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ projectId: projectPublicId, taskId, content }),
+        body: JSON.stringify({ projectId: projectPublicId, packageId, taskId, content }),
       });
 
       if (!res.ok) {
@@ -319,6 +320,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           projectId: projectPublicId,
+          packageId,
           taskId,
           status: nextStageId,
         }),

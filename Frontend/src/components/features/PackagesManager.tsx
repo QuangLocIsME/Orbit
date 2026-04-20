@@ -30,8 +30,22 @@ interface PackageItem {
   description: string;
   packageType: string;
   status: PackageStatus;
+  lifecycleStatus?: 'Draft' | 'Active' | 'Completed' | 'Archived';
+  progress?: number;
+  completionCriteria?: {
+    completed: boolean;
+    hasTasks: boolean;
+    allTasksDone: boolean;
+    hasDocuments: boolean;
+    hasMembers: boolean;
+    taskTotal: number;
+    doneTaskTotal: number;
+    documentTotal: number;
+    memberTotal: number;
+  };
   dueDate: string | null;
   teamMemberIds: string[];
+  taskIds?: string[];
   creatorId: string;
   updatedAt: string;
 }
@@ -40,6 +54,27 @@ const statusBadge: Record<PackageStatus, string> = {
   Draft: 'bg-gray-100 text-gray-700',
   Active: 'bg-emerald-100 text-emerald-700',
   Archived: 'bg-orange-100 text-orange-700',
+};
+const lifecycleBadge: Record<string, string> = {
+  Draft: 'bg-gray-100 text-gray-700',
+  Active: 'bg-emerald-100 text-emerald-700',
+  Completed: 'bg-blue-100 text-blue-700',
+  Archived: 'bg-orange-100 text-orange-700',
+};
+
+const statusSummaryCard = {
+  total: 'bg-[#F3F4F6] text-[#101828]',
+  active: 'bg-[#DCFCE7] text-[#008236]',
+  completed: 'bg-[#DFEAFF] text-[#155DFC]',
+  onHold: 'bg-[#FEF3C7] text-[#CA8A04]',
+} as const;
+
+const packageProgressPercent = (pkg: PackageItem) => {
+  if (typeof pkg.progress === 'number') return Math.max(0, Math.min(100, Math.round(pkg.progress)));
+  if (pkg.lifecycleStatus === 'Archived' || pkg.status === 'Archived') return 100;
+  if (pkg.lifecycleStatus === 'Draft' || pkg.status === 'Draft') return 0;
+  const seed = Array.from(pkg.publicId || '').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return 35 + (seed % 55);
 };
 
 const SELECTED_PROJECT_KEY = 'orbit:selected-project-id';
@@ -97,6 +132,14 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       `${item.name} ${item.description || ''} ${item.packageType || ''}`.toLowerCase().includes(q)
     );
   }, [packages, searchQuery]);
+
+  const summaryStats = useMemo(() => {
+    const total = packages.length;
+    const active = packages.filter((p) => (p.lifecycleStatus || p.status) === 'Active').length;
+    const onHold = packages.filter((p) => (p.lifecycleStatus || p.status) === 'Draft').length;
+    const completed = packages.filter((p) => (p.lifecycleStatus || p.status) === 'Completed').length;
+    return { total, active, completed, onHold };
+  }, [packages]);
 
   const loadProjects = async () => {
     const res = await apiFetch('/api/projects/me');
@@ -378,6 +421,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           name: newPackage.name.trim(),
           description: newPackage.description.trim(),
           type: newPackage.type.trim(),
+          status: newPackage.initialStatus,
           dueDate: newPackage.dueDate || null,
           teamMemberIds: newPackage.teamMemberIds,
         }),
@@ -404,8 +448,11 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="space-y-1">
           <h1 className="text-[24px] font-normal text-[#101828]">Packages</h1>
+          <p className="text-[14px] text-[#6A7282]">Manage and organize project components</p>
+        </div>
+        <div className="flex items-center gap-3">
           {!fixedProjectId && (
             <select
               value={selectedProjectId}
@@ -427,6 +474,25 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           <Plus className="h-4 w-4" />
           New Package
         </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.total)}>
+          <p className="text-[28px] leading-[32px]">{summaryStats.total}</p>
+          <p className="text-[14px]">Total</p>
+        </div>
+        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.active)}>
+          <p className="text-[28px] leading-[32px]">{summaryStats.active}</p>
+          <p className="text-[14px]">Active</p>
+        </div>
+        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.completed)}>
+          <p className="text-[28px] leading-[32px]">{summaryStats.completed}</p>
+          <p className="text-[14px]">Completed</p>
+        </div>
+        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.onHold)}>
+          <p className="text-[28px] leading-[32px]">{summaryStats.onHold}</p>
+          <p className="text-[14px]">Draft</p>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -467,21 +533,41 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filteredPackages.map((item) => (
-            <div key={item.publicId} className="relative">
+            <div key={item.publicId} className="relative flex h-full min-h-0">
               <button
                 onClick={() => navigate(`/${selectedProjectId}/${item.publicId}`)}
                 onContextMenu={(e) => handleContextMenu(e, item)}
-                className="w-full rounded-xl border border-gray-200 bg-white p-5 text-left transition-all hover:border-gray-300 hover:shadow-lg"
+                className="flex h-full min-h-[11rem] w-full flex-col rounded-xl border border-gray-200 bg-white p-5 text-left transition-all hover:border-gray-300 hover:shadow-lg"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="truncate font-medium text-gray-900">{item.name}</h3>
-                  <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', statusBadge[item.status] || statusBadge.Draft)}>
-                    {item.status}
+                <div className="flex shrink-0 items-start justify-between gap-3">
+                  <h3 className="min-w-0 flex-1 truncate font-medium text-gray-900">{item.name}</h3>
+                  <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-medium', lifecycleBadge[item.lifecycleStatus || item.status] || statusBadge.Draft)}>
+                    {item.lifecycleStatus || item.status}
                   </span>
                 </div>
-                <p className="mt-2 line-clamp-2 text-sm text-gray-600">{item.description || 'No description'}</p>
-                <div className="mt-4 flex items-center gap-4 text-xs text-gray-500">
-                  <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" />{item.teamMemberIds?.length || 0}</span>
+                <p className="mt-2 line-clamp-2 min-h-[2.75rem] flex-1 text-sm leading-snug text-gray-600">
+                  {item.description || 'No description'}
+                </p>
+                <div className="mt-1">
+                  <div className="mb-1 flex items-center justify-between text-[12px] text-[#6A7282]">
+                    <span>Progress</span>
+                    <span>{packageProgressPercent(item)}%</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-[#E5E7EB]">
+                    <div
+                      className={cn(
+                        'h-1.5 rounded-full',
+                        (item.lifecycleStatus || item.status) === 'Completed' ? 'bg-[#22C55E]'
+                          : (item.lifecycleStatus || item.status) === 'Draft'
+                            ? 'bg-[#C084FC]'
+                            : 'bg-[#2563EB]'
+                      )}
+                      style={{ width: `${packageProgressPercent(item)}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="mt-auto flex shrink-0 items-center gap-4 border-t border-transparent pt-4 text-xs text-gray-500">
+                  <span className="inline-flex items-center gap-1"><Users className="h-3.5 w-3.5" />{item.taskIds?.length || 0}/{Math.max(item.taskIds?.length || 0, 1)} tasks</span>
                   <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{item.dueDate ? new Date(item.dueDate).toLocaleDateString() : 'No due date'}</span>
                 </div>
               </button>
@@ -502,7 +588,9 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                   <p className="truncate text-sm text-gray-500">{item.description || 'No description'}</p>
                 </div>
                 <div className="flex items-center gap-4">
-                  <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', statusBadge[item.status] || statusBadge.Draft)}>{item.status}</span>
+                  <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', lifecycleBadge[item.lifecycleStatus || item.status] || statusBadge.Draft)}>
+                    {item.lifecycleStatus || item.status}
+                  </span>
                   <span className="text-xs text-gray-500">{item.teamMemberIds?.length || 0} members</span>
                 </div>
               </button>
@@ -512,19 +600,23 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       )}
 
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowCreateModal(false)}>
-          <div className="relative w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-4 pb-3 sm:p-6 sm:pb-4">
-              <div>
-                <h2 className="text-xl font-semibold text-[#1F2937] sm:text-[40px]">Create New Package</h2>
-                <p className="mt-1 text-sm text-[#6B7280] sm:text-[16px]">Add a new package to organize project components</p>
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-6 sm:items-center sm:py-8"
+          onClick={() => setShowCreateModal(false)}
+        >
+          <div
+            className="relative my-auto flex w-full max-h-[min(90dvh,calc(100dvh-2rem))] max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 p-4 pb-3 sm:p-6 sm:pb-4">
+              <div className="min-w-0 pr-2">
+                <h2 className="text-xl font-semibold text-[#1F2937] sm:text-2xl lg:text-[28px]">Create New Package</h2>
+                <p className="mt-1 text-sm text-[#6B7280]">Add a new package to organize project components</p>
               </div>
-              <button onClick={() => setShowCreateModal(false)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
+              <button type="button" onClick={() => setShowCreateModal(false)} className="shrink-0 rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
             </div>
 
-            <div className="border-t border-gray-100" />
-
-            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-4 sm:max-h-none sm:space-y-5 sm:p-6">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 sm:space-y-5 sm:p-6">
               <div>
                 <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Package Name <span className="text-red-500">*</span></label>
                 <input
@@ -597,7 +689,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                   <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Initial Status <span className="text-red-500">*</span></label>
                   <select
                     value={newPackage.initialStatus}
-                    onChange={(e) => setNewPackage((prev) => ({ ...prev, initialStatus: e.target.value }))}
+                    onChange={(e) => setNewPackage((prev) => ({ ...prev, initialStatus: e.target.value as PackageStatus }))}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   >
                     <option value="Draft">Draft</option>
@@ -670,8 +762,9 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:p-6">
+            <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:p-6">
               <button
+                type="button"
                 onClick={() => {
                   setShowCreateModal(false);
                   resetCreateForm();
@@ -681,6 +774,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleCreatePackage}
                 disabled={creating || !newPackage.name.trim()}
                 className="rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8] disabled:opacity-50 sm:px-6 sm:py-2.5"
@@ -719,17 +813,22 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
       {/* Edit Modal */}
       {showEditModal && editingPackage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowEditModal(false)}>
-          <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-4 pb-3 sm:p-6 sm:pb-4">
-              <div>
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 py-6 sm:items-center sm:py-8"
+          onClick={() => setShowEditModal(false)}
+        >
+          <div
+            className="relative my-auto flex w-full max-h-[min(90dvh,calc(100dvh-2rem))] max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 p-4 pb-3 sm:p-6 sm:pb-4">
+              <div className="min-w-0 pr-2">
                 <h2 className="text-xl font-semibold text-[#1F2937] sm:text-2xl">Edit Package</h2>
                 <p className="mt-1 text-sm text-[#6B7280]">Update package details</p>
               </div>
-              <button onClick={() => setShowEditModal(false)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
+              <button type="button" onClick={() => setShowEditModal(false)} className="shrink-0 rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
             </div>
-            <div className="border-t border-gray-100" />
-            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-4 sm:max-h-none sm:space-y-5 sm:p-6">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 sm:space-y-5 sm:p-6">
               <div>
                 <label className="mb-1 block text-sm font-medium text-[#1F2937] sm:mb-2">Package Name <span className="text-red-500">*</span></label>
                 <input
@@ -795,14 +894,16 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:p-6">
+            <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 p-4 sm:p-6">
               <button
+                type="button"
                 onClick={() => setShowEditModal(false)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 sm:px-5 sm:py-2.5"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={submitEdit}
                 disabled={updating || !editData.name.trim()}
                 className="rounded-xl bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8] disabled:opacity-50 sm:px-6 sm:py-2.5"

@@ -418,6 +418,15 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
               <button
                 key={tab.id}
                 onClick={() => {
+                  if (packageName) {
+                    try {
+                      sessionStorage.setItem('projectActiveTab', tab.id);
+                    } catch {
+                      // ignore storage errors and continue navigation
+                    }
+                    navigate(`/projects/${projectSlug}`);
+                    return;
+                  }
                   setInternalActiveTab(tab.id);
                   onTabChange?.(tab.id);
                   window.dispatchEvent(new CustomEvent('orbit:topbar-tab-change', { detail: { tabId: tab.id } }));

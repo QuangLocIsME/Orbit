@@ -42,6 +42,19 @@ const {
       projectName={projectName}
       projectSlug={projectSlug}
       packageName={packageName}
+      activeTab="packages"
+      tabs={[
+        { id: 'overview', label: 'Overview' },
+        { id: 'packages', label: 'Packages' },
+        { id: 'documents', label: 'Documents' },
+        { id: 'versions', label: 'Versions' },
+        { id: 'changes', label: 'Changes' },
+        { id: 'tasks', label: 'Tasks' },
+        { id: 'clashes', label: 'Clashes' },
+        { id: 'teams', label: 'Teams' },
+        { id: 'activity', label: 'Activity' },
+        { id: 'settings', label: 'Settings' },
+      ]}
       client:load
     />
     <main class="min-h-[calc(100vh-130px)] bg-[#F2F4F7] pt-[130px]">

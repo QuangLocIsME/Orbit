@@ -1418,7 +1418,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
         apiFetch(`/api/projects/packages/documents/list`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: projectPublicId }),
+          body: JSON.stringify({ projectId: projectPublicId, includePackages: true }),
         }),
         apiFetch(`/api/projects/member-list`, {
           method: 'POST',

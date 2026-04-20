@@ -13,6 +13,10 @@ class DocumentFolderRepository {
         return await DocumentFolder.find({ projectId }).sort({ packageId: 1, folderType: 1, folderPath: 1 });
     }
 
+    async listByProjectAndPackage(projectId, packageId) {
+        return await DocumentFolder.find({ projectId, packageId }).sort({ folderType: 1, folderPath: 1 });
+    }
+
     async findByPublicId(publicId) {
         return await DocumentFolder.findOne({ publicId });
     }

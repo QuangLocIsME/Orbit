@@ -40,6 +40,8 @@ const handleDownloadFile = async (url: string, filename: string) => {
 
 interface ProjectDocumentsManagerProps {
   projectId: string;
+  packageId?: string | null;
+  canManage?: boolean;
 }
 
 interface TreeNode {
@@ -48,6 +50,9 @@ interface TreeNode {
   type: 'folder' | 'file';
   children?: TreeNode[];
   category?: string;
+  size?: string;
+  author?: string;
+  updatedAt?: string;
   s3Url?: string;
   mimeType?: string;
   folderPath?: string;
@@ -92,6 +97,19 @@ function isInPackageFolder(nodeId: string): boolean {
   return nodeId.includes('/pkg/');
 }
 
+function formatRelativeTime(value?: string) {
+  if (!value) return 'recently';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'recently';
+  const diffMs = Date.now() - date.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(diffMs / 86400000);
+  if (mins < 60) return `${Math.max(mins, 1)} minutes ago`;
+  if (hours < 24) return `${hours} hours ago`;
+  return `${days} days ago`;
+}
+
 function deriveLocation(
   currentFolder: TreeNode | null,
   packageNode: TreeNode | null
@@ -118,10 +136,11 @@ function deriveLocation(
   return { packageId: '', folderType: 'files', folderPath };
 }
 
-export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsManagerProps) {
+export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true }: ProjectDocumentsManagerProps) {
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
+  const [memberNameMap, setMemberNameMap] = useState<Record<string, string>>({});
 
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState('');
@@ -135,6 +154,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   const [renameError, setRenameError] = useState<string>('');
   const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [contextMenu, setContextMenu] = useState<{
     node: TreeNode;
@@ -175,11 +195,14 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   }, [contextMenu]);
 
   const loadDocuments = async () => {
-    const res = await fetch('/api/projects/packages/documents/list', {
+    const endpoint = packageId
+      ? '/api/projects/packages/documents/package/list'
+      : '/api/projects/packages/documents/list';
+    const res = await fetch(endpoint, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ projectId }),
+      body: JSON.stringify(packageId ? { projectId, packageId } : { projectId }),
     });
     if (!res.ok) throw new Error('Failed to load documents');
 
@@ -202,6 +225,38 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
 
   useEffect(() => {
     refresh();
+  }, [projectId, packageId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMemberNames = async () => {
+      try {
+        const res = await fetch('/api/projects/member-list', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId }),
+        });
+        if (!res.ok) return;
+        const payload = await res.json();
+        const members = Array.isArray(payload?.data) ? payload.data : [];
+        const map: Record<string, string> = {};
+        for (const member of members) {
+          const userId = String(member?.userId || '');
+          const displayName = String(member?.user?.fullName || member?.user?.name || member?.user?.email || '').trim();
+          if (userId && displayName) {
+            map[userId] = displayName;
+          }
+        }
+        if (!cancelled) setMemberNameMap(map);
+      } catch {
+        if (!cancelled) setMemberNameMap({});
+      }
+    };
+    loadMemberNames();
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
 
   const packageNode = useMemo(() => {
@@ -226,6 +281,10 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   }, [packageNode, currentFolder]);
 
   const createFolder = async () => {
+    if (!canManage) {
+      toast.error('You do not have permission to create folders');
+      return;
+    }
     if (!folderName.trim()) {
       toast.error('Please enter a folder name');
       return;
@@ -258,6 +317,9 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   };
 
   const uploadFile = async (file: File): Promise<void> => {
+    if (!canManage) {
+      throw new Error('You do not have permission to upload files');
+    }
     const location = deriveLocation(currentFolder, packageNode);
     const packageId = location.packageId;
     const folderType = location.folderType;
@@ -318,6 +380,10 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   }, [uploadQueue, isUploading]);
 
   const handleDelete = async (node: TreeNode) => {
+    if (!canManage) {
+      toast.error('You do not have permission to delete');
+      return;
+    }
     const endpoint = node.type === 'folder'
       ? '/api/projects/packages/documents/folder/delete'
       : '/api/projects/packages/documents/file/delete';
@@ -349,6 +415,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   };
 
   const handleDoubleClickName = (node: TreeNode) => {
+    if (!canManage) return;
     if (packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
     startRename(node);
   };
@@ -358,8 +425,23 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   };
 
   const isInPackageContext = packageNode?.isPackage || isInPackageFolder(currentFolderId);
+  const isPackageMode = Boolean(packageId);
+  const resolveAuthorName = (authorId?: string) => {
+    if (!authorId) return '';
+    return memberNameMap[authorId] || authorId;
+  };
+  const visibleChildren = useMemo(() => {
+    const nodes = currentFolder?.children || [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return nodes;
+    return nodes.filter((node) => String(node.name || '').toLowerCase().includes(q));
+  }, [currentFolder?.children, searchQuery]);
 
   const submitRename = async (node: TreeNode) => {
+    if (!canManage) {
+      toast.error('You do not have permission to rename');
+      return;
+    }
     if (!renameValue.trim()) {
       setRenamingNodeId('');
       setRenameError('');
@@ -454,28 +536,48 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-[24px] font-normal text-[#101828]">Documents & Drawings</h2>
+        {!isPackageMode && <h2 className="text-[24px] font-normal text-[#101828]">Documents & Drawings</h2>}
+
+        {isPackageMode && (
+          <div className="relative flex-1 max-w-md">
+            <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search documents..."
+              className="h-10 w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] pl-9 pr-3 text-sm text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        )}
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsCreateFolderOpen(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            <FolderPlus className="h-4 w-4" />
-            Create Folder
-          </button>
+          {!isPackageMode && (
+            <button
+              onClick={() => setIsCreateFolderOpen(true)}
+              disabled={!canManage}
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <FolderPlus className="h-4 w-4" />
+              Create Folder
+            </button>
+          )}
 
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            disabled={isUploading || !canManage}
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Upload className="h-4 w-4" />
             {isUploading
               ? `Uploading ${uploadProgress.done + 1}/${uploadProgress.total}...`
               : uploadQueue.length > 0
                 ? `${uploadQueue.length} queued...`
-                : 'Upload Files'}
+                : isPackageMode
+                  ? 'Upload'
+                  : 'Upload Files'}
           </button>
 
           <input
@@ -493,32 +595,43 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
         </div>
       </div>
 
-      {breadcrumbs.length > 0 && (
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          {breadcrumbs.map((node, idx) => (
-            <div key={node.id} className="inline-flex items-center gap-2">
-              {idx > 0 && <ChevronRight className="h-4 w-4 text-gray-400" />}
-              <button
-                onClick={() => setCurrentFolderId(node.id)}
-                className={idx === breadcrumbs.length - 1 ? 'font-medium text-gray-800' : 'hover:text-gray-800'}
-              >
-                {node.name}
-              </button>
-            </div>
-          ))}
+      {!isPackageMode && breadcrumbs.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+          {breadcrumbs.map((node, idx) => {
+            const isLast = idx === breadcrumbs.length - 1;
+            return (
+              <div key={node.id} className="inline-flex items-center gap-2">
+                {idx > 0 && <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />}
+                <button
+                  type="button"
+                  onClick={() => setCurrentFolderId(node.id)}
+                  className={
+                    isLast
+                      ? 'text-left text-base font-semibold text-[#101828]'
+                      : 'hover:text-gray-800'
+                  }
+                >
+                  {node.name}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
       <div>
-        <h3 className="mb-3 text-[22px] font-medium text-[#101828]">{currentFolder?.name || 'All Files'}</h3>
+        {!isPackageMode && breadcrumbs.length <= 1 && (
+          <h3 className="mb-3 text-[22px] font-medium text-[#101828]">{currentFolder?.name || 'All Files'}</h3>
+        )}
+        {!isPackageMode && (
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
           {!currentFolder ? (
             <p className="p-4 text-sm text-gray-500">No documents in this package yet.</p>
-          ) : (currentFolder.children || []).length === 0 ? (
+          ) : visibleChildren.length === 0 ? (
             <p className="p-4 text-sm text-gray-500">This folder is empty.</p>
           ) : (
             <ul>
-              {(currentFolder.children || []).map((child, idx) => {
+              {visibleChildren.map((child, idx) => {
                 const isLast = idx === (currentFolder.children || []).length - 1;
                 if (child.type === 'folder') {
                   return (
@@ -529,7 +642,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                       onMouseLeave={() => setHoveredId('')}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        if (packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
+                        if (!canManage || packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
                         setContextMenu({ node: child, x: e.clientX, y: e.clientY });
                       }}
                     >
@@ -593,7 +706,7 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
                     onMouseLeave={() => setHoveredId('')}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      if (packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
+                      if (!canManage || packageNode?.isPackage || isInPackageFolder(currentFolderId)) return;
                       setContextMenu({ node: child, x: e.clientX, y: e.clientY });
                     }}
                   >
@@ -680,9 +793,76 @@ export default function ProjectDocumentsManager({ projectId }: ProjectDocumentsM
             </ul>
           )}
         </div>
+        )}
+
+        {isPackageMode && (
+          <div className="space-y-2">
+            {visibleChildren.length === 0 ? (
+              <div className="rounded-[10px] border border-dashed border-[#E5E7EB] bg-white px-4 py-10 text-center text-sm text-[#6A7282]">
+                No documents found.
+              </div>
+            ) : (
+              visibleChildren.map((child) => (
+                <div
+                  key={child.id}
+                  className="flex items-center justify-between rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3"
+                  onMouseEnter={() => setHoveredId(child.id)}
+                  onMouseLeave={() => setHoveredId('')}
+                >
+                  <div className="min-w-0 flex items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#DBEAFE]">
+                      {child.type === 'folder'
+                        ? <Folder className="h-5 w-5 text-[#2563EB]" />
+                        : <FileText className="h-5 w-5 text-[#2563EB]" />}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] text-[#101828]">{child.name}</p>
+                      <p className="truncate text-[12px] text-[#6A7282]">
+                        {[
+                          child.type === 'folder' ? 'Folder' : (child.size || 'File'),
+                          child.author ? `by ${resolveAuthorName(child.author)}` : null,
+                          formatRelativeTime(child.updatedAt),
+                        ].filter(Boolean).join(' • ')}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {hoveredId === child.id && child.type === 'file' && (
+                      <>
+                        <button
+                          onClick={() => handleDownloadFile(child.s3Url || '#', child.name)}
+                          className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                          title="Download original file"
+                        >
+                          <Download className="h-4 w-4" />
+                        </button>
+                        {child.isIfc && (
+                          <button
+                            onClick={() => {
+                              if (child.conversionStatus === 'READY') openIfcViewer(child);
+                            }}
+                            className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                            title={getIfcTooltip(child)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                    <button className="rounded p-1 text-[#99A1AF] hover:bg-gray-100">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
-      {isCreateFolderOpen && (
+      {isCreateFolderOpen && canManage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setIsCreateFolderOpen(false)}>
           <div className="w-full max-w-md rounded-xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900">Create Folder</h3>
