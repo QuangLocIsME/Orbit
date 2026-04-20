@@ -133,10 +133,86 @@ export interface ClashRunPayload {
   results: ClashResult[];
 }
 
+/** Fast PATCH response — no full federated remap (see Backend updateClashStatus). */
+export interface ClashStatusPatchApiResponse {
+  success: boolean;
+  clashPatch: {
+    clashId: string;
+    sourceTestId: string;
+    note: string;
+    assignee: string;
+    status: 'new' | 'reviewed' | 'resolved';
+    updatedAt?: string;
+  };
+  runSummary: ClashRunSummary['summary'];
+}
+
+/** PATCH body + optional client-only `sourceTestId` for optimistic cache updates (not sent to API). */
+export type ClashStatusPatchVariables = {
+  clashId: string;
+  status?: 'new' | 'reviewed' | 'resolved';
+  note?: string;
+  assignee?: string;
+  sourceTestId?: string;
+};
+
+function summaryKeyForStatus(status: 'new' | 'reviewed' | 'resolved'): keyof ClashRunSummary['summary'] | null {
+  if (status === 'new') return 'new';
+  if (status === 'reviewed') return 'reviewed';
+  if (status === 'resolved') return 'resolved';
+  return null;
+}
+
+function applyOptimisticClashPatch(
+  old: ClashRunPayload | undefined,
+  variables: ClashStatusPatchVariables
+): ClashRunPayload | undefined {
+  if (!old?.results?.length) return old;
+  const idx = old.results.findIndex((r) => r.clashId === variables.clashId);
+  if (idx === -1) return old;
+  const prevRow = old.results[idx];
+  const nextRow: ClashResult = {
+    ...prevRow,
+    ...(variables.status !== undefined ? { status: variables.status } : {}),
+    ...(variables.note !== undefined ? { note: variables.note } : {}),
+    ...(variables.assignee !== undefined ? { assignee: variables.assignee } : {}),
+  };
+  const nextResults = [...old.results];
+  nextResults[idx] = nextRow;
+
+  let nextSummary = old.run?.summary;
+  if (
+    variables.status !== undefined &&
+    variables.status !== prevRow.status &&
+    old.run?.summary
+  ) {
+    nextSummary = { ...old.run.summary };
+    const decKey = summaryKeyForStatus(prevRow.status);
+    const incKey = summaryKeyForStatus(variables.status);
+    if (decKey && nextSummary[decKey] !== undefined) {
+      nextSummary[decKey] = Math.max(0, nextSummary[decKey] - 1);
+    }
+    if (incKey && nextSummary[incKey] !== undefined) {
+      nextSummary[incKey] = nextSummary[incKey] + 1;
+    }
+  }
+
+  return {
+    ...old,
+    results: nextResults,
+    run: old.run && nextSummary ? { ...old.run, summary: nextSummary } : old.run,
+  };
+}
+
 const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await apiFetch(url, init);
   if (!response.ok) {
-    throw new Error(`Request failed (${response.status})`);
+    const body = await response.json().catch(() => ({})) as { message?: string };
+    const msg =
+      typeof body?.message === 'string' && body.message.trim()
+        ? body.message
+        : `Request failed (${response.status})`;
+    throw new Error(msg);
   }
   return response.json() as Promise<T>;
 };
@@ -148,6 +224,9 @@ export const workspaceKeys = {
   /** IFC list for Clash "Import from Documents" modal — invalidate after document uploads */
   ifcDocuments: (projectSlug: string) => ['navisworks-ifc-documents', projectSlug] as const,
 };
+
+/** Landing Clash Detection list + summary cards (`GET .../navisworks/clashes`). */
+export const clashesOverviewKey = (projectSlug: string) => ['clashes-overview', projectSlug] as const;
 
 export function useNavisworksClashResults(projectSlug: string, testId: string | null) {
   return useQuery({
@@ -249,8 +328,13 @@ export function useNavisworksWorkspace(projectSlug: string) {
       fetchJson<{ success: true }>(apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/clash-tests/${encodeURIComponent(testId)}`), {
         method: 'DELETE',
       }),
+    onMutate: async (testId: string) => {
+      await queryClient.cancelQueries({ queryKey: workspaceKeys.results(projectSlug, testId) });
+      queryClient.removeQueries({ queryKey: workspaceKeys.results(projectSlug, testId) });
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: clashesOverviewKey(projectSlug) });
     },
   });
 
@@ -263,31 +347,138 @@ export function useNavisworksWorkspace(projectSlug: string) {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.root(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: clashesOverviewKey(projectSlug) });
     },
   });
 
-  const updateClashStatus = useMutation({
-    mutationFn: async (payload: { clashId: string; status?: 'new' | 'reviewed' | 'resolved'; note?: string; assignee?: string }) =>
-      fetchJson<ClashRunPayload>(apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/clashes/${encodeURIComponent(payload.clashId)}`), {
+  const clashStatusPatchFn = async (payload: ClashStatusPatchVariables) => {
+    const { sourceTestId: _omit, ...body } = payload;
+    return fetchJson<ClashStatusPatchApiResponse>(
+      apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/clashes/${encodeURIComponent(payload.clashId)}`),
+      {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }),
-    onSuccess: async () => {
+        body: JSON.stringify(body),
+      }
+    );
+  };
+
+  const optimisticClashStatusOnMutate = async (variables: ClashStatusPatchVariables) => {
+    const testId = variables.sourceTestId;
+    if (!testId) return {};
+    await queryClient.cancelQueries({ queryKey: workspaceKeys.results(projectSlug, testId) });
+    const previousResults = queryClient.getQueryData<ClashRunPayload>(
+      workspaceKeys.results(projectSlug, testId)
+    );
+    queryClient.setQueryData(workspaceKeys.results(projectSlug, testId), (old: ClashRunPayload | undefined) =>
+      applyOptimisticClashPatch(old, variables)
+    );
+    return { previousResults, testId };
+  };
+
+  const optimisticClashStatusOnError = (
+    _err: unknown,
+    variables: ClashStatusPatchVariables,
+    context: { previousResults?: ClashRunPayload; testId?: string } | undefined
+  ) => {
+    const tid = variables.sourceTestId ?? context?.testId;
+    if (tid !== undefined && context?.previousResults !== undefined) {
+      queryClient.setQueryData(workspaceKeys.results(projectSlug, tid), context.previousResults);
+    }
+  };
+
+  const mergeClashPatchIntoResultsCache = (data: ClashStatusPatchApiResponse) => {
+    const patch = data.clashPatch;
+    if (!patch?.sourceTestId || !patch.clashId) return;
+    queryClient.setQueryData(
+      workspaceKeys.results(projectSlug, patch.sourceTestId),
+      (old: ClashRunPayload | undefined): ClashRunPayload | undefined => {
+        if (!old?.results?.length) return old;
+        const nextResults = old.results.map((r) =>
+          r.clashId === patch.clashId
+            ? {
+                ...r,
+                note: patch.note,
+                assignee: patch.assignee,
+                status: patch.status,
+              }
+            : r
+        );
+        return {
+          ...old,
+          results: nextResults,
+          run:
+            old.run && data.runSummary
+              ? { ...old.run, summary: data.runSummary }
+              : old.run,
+        };
+      }
+    );
+  };
+
+  const clashStatusMutationShared = {
+    mutationFn: clashStatusPatchFn,
+    onMutate: optimisticClashStatusOnMutate,
+    onError: optimisticClashStatusOnError,
+    onSuccess: async (data: ClashStatusPatchApiResponse) => {
+      mergeClashPatchIntoResultsCache(data);
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.root(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: clashesOverviewKey(projectSlug) });
     },
-  });
+  };
+
+  const updateClashStatus = useMutation(clashStatusMutationShared);
+
+  /**
+   * Same endpoint as updateClashStatus but a separate mutation instance so background
+   * "promote new → reviewed" does not set updateClashStatus.isPending (fixes Save button stuck).
+   */
+  const quietUpdateClashStatus = useMutation(clashStatusMutationShared);
 
   const applyObjectActions = useMutation({
-    mutationFn: async (payload: { action: 'move' | 'hide' | 'show'; objectIds?: string[]; objects?: { id: string; position: [number, number, number] }[] }) =>
+    mutationFn: async (payload: {
+      action: 'move' | 'hide' | 'show';
+      objectIds?: string[];
+      objects?: { id: string; position: [number, number, number] }[];
+    }) =>
       fetchJson<{ affectedObjectIds: string[] }>(apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/clashes/actions`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       }),
+    onMutate: async (payload) => {
+      if (payload.action !== 'hide' && payload.action !== 'show') return {};
+      const objectIds = payload.objectIds ?? [];
+      if (objectIds.length === 0) return {};
+      await queryClient.cancelQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      const previousWorkspace = queryClient.getQueryData<WorkspacePayload>(
+        workspaceKeys.workspace(projectSlug)
+      );
+      const hidden = payload.action === 'hide';
+      queryClient.setQueryData(workspaceKeys.workspace(projectSlug), (old: WorkspacePayload | undefined) => {
+        if (!old?.federatedModel?.objects) return old;
+        return {
+          ...old,
+          federatedModel: {
+            ...old.federatedModel,
+            objects: old.federatedModel.objects.map((o) =>
+              objectIds.includes(o.id) ? { ...o, hidden } : o
+            ),
+          },
+        };
+      });
+      return { previousWorkspace };
+    },
+    onError: (_err, _payload, context: { previousWorkspace?: WorkspacePayload } | undefined) => {
+      if (context?.previousWorkspace !== undefined) {
+        queryClient.setQueryData(workspaceKeys.workspace(projectSlug), context.previousWorkspace);
+      }
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.root(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: clashesOverviewKey(projectSlug) });
     },
   });
 
@@ -312,6 +503,7 @@ export function useNavisworksWorkspace(projectSlug: string) {
     deleteClashTest,
     runClashTest,
     updateClashStatus,
+    quietUpdateClashStatus,
     applyObjectActions,
   };
 }

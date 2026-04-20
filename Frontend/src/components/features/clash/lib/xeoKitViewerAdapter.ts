@@ -123,6 +123,48 @@ const bboxFromAABB = (aabb?: number[] | null): BBoxData | null => {
   };
 };
 
+/** xeokit AABB: [xmin, ymin, zmin, xmax, ymax, zmax] */
+const unionAABBs = (parts: Array<number[] | undefined | null>): number[] | null => {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const p of parts) {
+    if (!Array.isArray(p) || p.length < 6) continue;
+    minX = Math.min(minX, Number(p[0]));
+    minY = Math.min(minY, Number(p[1]));
+    minZ = Math.min(minZ, Number(p[2]));
+    maxX = Math.max(maxX, Number(p[3]));
+    maxY = Math.max(maxY, Number(p[4]));
+    maxZ = Math.max(maxZ, Number(p[5]));
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+  return [minX, minY, minZ, maxX, maxY, maxZ];
+};
+
+function waitForXktSceneModelLoaded(
+  sceneModel: { once?: (ev: string, fn: () => void) => void; aabb?: number[] },
+  timeoutMs: number
+): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      resolve();
+    };
+    sceneModel.once?.('loaded', finish);
+    timeoutId = window.setTimeout(finish, timeoutMs);
+    requestAnimationFrame(() => {
+      if (Array.isArray(sceneModel.aabb) && sceneModel.aabb.length >= 6) finish();
+    });
+  });
+}
+
 const colorForObject = (object: XeoKitSceneObject): [number, number, number] => {
   if (object.isClashObject) return [0.96, 0.20, 0.18];
   if (object.isDeEmphasized) return [0.50, 0.58, 0.68];
@@ -300,7 +342,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
       this.xktLoader = new XKTLoaderPlugin(this.viewer);
     }
 
-    let flew = false;
+    const loadedIds: string[] = [];
+
     for (const id of modelIds) {
       if (gen !== this.xktSyncGeneration) return;
       const url = apiUrl(
@@ -318,17 +361,39 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
         edges: false,
       }) as { aabb?: number[]; once?: (ev: string, fn: () => void) => void };
 
-      this.loadedXktModelIds.push(id);
+      await waitForXktSceneModelLoaded(sceneModel, 20000);
+      if (gen !== this.xktSyncGeneration) return;
 
-      sceneModel.once?.('loaded', () => {
+      this.loadedXktModelIds.push(id);
+      loadedIds.push(id);
+    }
+
+    if (loadedIds.length === 0) return;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
         if (gen !== this.xktSyncGeneration) return;
-        if (flew) return;
-        const aabb = sceneModel.aabb;
-        if (Array.isArray(aabb) && aabb.length >= 6) {
-          flew = true;
-          this.viewer.cameraFlight?.flyTo?.({ aabb });
-        }
+        this.fitCameraToXktModels(gen, loadedIds);
       });
+    });
+  }
+
+  /** Fit viewer camera to union AABB of loaded XKT models (+ optional bbox overlay SceneModel). */
+  private fitCameraToXktModels(gen: number, xktIds: string[]): void {
+    if (!this.viewer || gen !== this.xktSyncGeneration) return;
+    const scene = this.viewer.scene as { models?: Record<string, { aabb?: number[] }> } | undefined;
+    const pieces: number[][] = [];
+    for (const id of xktIds) {
+      const aabb = scene?.models?.[id]?.aabb;
+      if (Array.isArray(aabb) && aabb.length >= 6) pieces.push(aabb);
+    }
+    const overlayAabb = this.sceneModel?.aabb;
+    if (Array.isArray(overlayAabb) && overlayAabb.length >= 6) {
+      pieces.push(overlayAabb);
+    }
+    const merged = unionAABBs(pieces);
+    if (merged) {
+      this.viewer.cameraFlight?.flyTo?.({ aabb: merged });
     }
   }
 

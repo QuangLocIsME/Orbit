@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   FileText,
@@ -192,6 +193,9 @@ function SidebarActionBanner({ banner, className }: { banner: ActionBanner | nul
 interface NavisworksClashWorkspaceProps {
   projectSlug: string;
   onBack?: () => void;
+  /** From landing "View 3D" — selects this clash test and row in Results */
+  initialTestId?: string | null;
+  initialClashId?: string | null;
 }
 
 const triggerDownload = async (url: string, filename?: string) => {
@@ -208,16 +212,22 @@ const triggerDownload = async (url: string, filename?: string) => {
   URL.revokeObjectURL(objectUrl);
 };
 
-export default function NavisworksClashWorkspace({ projectSlug, onBack }: NavisworksClashWorkspaceProps) {
+export default function NavisworksClashWorkspace({
+  projectSlug,
+  onBack,
+  initialTestId = null,
+  initialClashId = null,
+}: NavisworksClashWorkspaceProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarPanelId = useId();
   const objectIdDatalistId = useId();
-  const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
-  const [selectedClashId, setSelectedClashId] = useState<string | null>(null);
+  const openFromLanding = Boolean(initialTestId ?? initialClashId);
+  const [selectedTestId, setSelectedTestId] = useState<string | null>(() => initialTestId ?? null);
+  const [selectedClashId, setSelectedClashId] = useState<string | null>(() => initialClashId ?? null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [planeView, setPlaneView] = useState<'2d' | '3d'>('3d');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('select');
+  const [sidebarOpen, setSidebarOpen] = useState(() => openFromLanding);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => (openFromLanding ? 'results' : 'select'));
   const [dragActive, setDragActive] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'reviewed' | 'resolved'>('all');
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -293,7 +303,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   );
 
   /** When false, main viewer shows federated overview only. When true, show clash geometry for the selected test (first last-run result if any). Set true when picking a test, after Run, or when choosing a row in Results. */
-  const [showClashInMainViewer, setShowClashInMainViewer] = useState(false);
+  const [showClashInMainViewer, setShowClashInMainViewer] = useState(() => openFromLanding);
 
   const { data: projectMembers = [], isFetching: projectMembersLoading } = useProjectMembers(projectSlug);
 
@@ -307,6 +317,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     deleteClashTest,
     runClashTest,
     updateClashStatus,
+    quietUpdateClashStatus,
     applyObjectActions,
   } = useNavisworksWorkspace(projectSlug);
 
@@ -375,6 +386,15 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     }
   }, [selectedTestId, workspace?.clashTests]);
 
+  useEffect(() => {
+    if (!workspace?.clashTests?.length || !selectedTestId) return;
+    const exists = workspace.clashTests.some((t) => t.id === selectedTestId);
+    if (!exists) {
+      setSelectedTestId(workspace.clashTests[0].id);
+      setSelectedClashId(null);
+    }
+  }, [workspace?.clashTests, selectedTestId]);
+
   const resultsQuery = useNavisworksClashResults(projectSlug, selectedTestId);
   const runPayload = resultsQuery.data;
   const selectedTest = workspace?.clashTests.find((test) => test.id === selectedTestId) ?? null;
@@ -401,7 +421,12 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
       setSelectedClashId(results[0].clashId);
       return;
     }
-    if (selectedClashId && !results.some((result) => result.clashId === selectedClashId)) {
+    /** Empty `results` usually means results query still loading — do not treat as "clash missing" or we wipe deep-link `initialClashId` and fall back to the first row when data arrives. */
+    if (
+      selectedClashId &&
+      results.length > 0 &&
+      !results.some((result) => result.clashId === selectedClashId)
+    ) {
       setSelectedClashId(results[0]?.clashId ?? null);
     }
   }, [results, selectedClashId, showClashInMainViewer]);
@@ -423,20 +448,44 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   const viewerClash =
     showClashInMainViewer && selectedResult ? resultToViewerClash(selectedResult) : null;
 
-  const federatedOverviewScene = useMemo(
+  /** Models served as XKT use xeokit mesh; skip per-element box/mesh overlay in 3D to avoid double geometry. */
+  const modelIdsWithXkt = useMemo(
+    () =>
+      new Set(models.filter((m) => m.sourceFormat === 'xkt' && m.xktFile).map((m) => m.id)),
+    [models]
+  );
+
+  const objectsForOverviewScene3d = useMemo(
+    () => allObjects.filter((o) => !modelIdsWithXkt.has(o.sourceModelId)),
+    [allObjects, modelIdsWithXkt]
+  );
+
+  const federatedOverviewScene3d = useMemo(
+    () =>
+      buildOverviewSceneFromFederated(objectsForOverviewScene3d, {
+        hiddenModelIds,
+        hiddenCategories,
+        maxObjects: objectsForOverviewScene3d.length,
+      }),
+    [objectsForOverviewScene3d, hiddenCategories, hiddenModelIds]
+  );
+
+  /** 2D plan view uses bbox from federated metadata (still stored for IFC→XKT imports); not filtered by XKT. */
+  const federatedOverviewScene2d = useMemo(
     () =>
       buildOverviewSceneFromFederated(allObjects, {
         hiddenModelIds,
         hiddenCategories,
-        // No cap — show all visible objects. Mesh is pre-subsampled (80 tris/object) so
-        // even large federated models stay within xeokit's performance budget.
         maxObjects: allObjects.length,
       }),
     [allObjects, hiddenCategories, hiddenModelIds]
   );
 
   const overviewSceneForViewer =
-    !viewerClash && models.length > 0 ? federatedOverviewScene : undefined;
+    !viewerClash && models.length > 0 ? federatedOverviewScene3d : undefined;
+
+  const overviewSceneForViewer2d =
+    !viewerClash && models.length > 0 ? federatedOverviewScene2d : undefined;
 
   const xktModelsForViewer = useMemo(
     () =>
@@ -449,7 +498,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   const hasXktOnlyOverview = Boolean(
     !viewerClash &&
       models.length > 0 &&
-      federatedOverviewScene.length === 0 &&
+      federatedOverviewScene2d.length === 0 &&
       xktModelsForViewer.length > 0
   );
 
@@ -471,7 +520,14 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     setSelectedObjectId(selectedResult.objectA);
     setNoteDraft(selectedResult.note || '');
     setAssigneeDraft(normalizeAssigneeForDisplay(selectedResult.assignee));
-  }, [clearInspectorActionBanner, normalizeAssigneeForDisplay, selectedResult?.assignee, selectedResult?.clashId]);
+  }, [
+    clearInspectorActionBanner,
+    normalizeAssigneeForDisplay,
+    selectedResult?.assignee,
+    selectedResult?.clashId,
+    selectedResult?.note,
+    selectedResult?.status,
+  ]);
 
   useEffect(() => {
     if (!selectedResult) clearInspectorActionBanner();
@@ -816,36 +872,49 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   /** Marks resolved (only manual workflow action left). */
-  const markSelectedClashResolved = async () => {
+  const markSelectedClashResolved = () => {
     if (!selectedResult) return;
-    try {
-      setError(null);
-      await updateClashStatus.mutateAsync({
+    setError(null);
+    updateClashStatus.mutate(
+      {
         clashId: selectedResult.clashId,
+        sourceTestId: selectedResult.sourceTestId,
         status: 'resolved',
         note: noteDraft,
         assignee: assigneeDraft,
-      });
-      await resultsQuery.refetch();
-      toast.success('Clash marked as resolved.');
-    } catch (statusError) {
-      const msg = statusError instanceof Error ? statusError.message : 'Failed to update clash status';
-      setError(msg);
-      toast.error(msg);
-    }
+      },
+      {
+        onSuccess: () => toast.success('Clash marked as resolved.'),
+        onError: (statusError) => {
+          const msg =
+            statusError instanceof Error ? statusError.message : 'Failed to update clash status';
+          setError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   };
 
-  /** After a short delay, opening a New clash in the inspector promotes it to Reviewed (no toast). Cache refresh via mutation onSuccess. */
+  /** After a short delay, opening a New clash in the inspector promotes it to Reviewed (no toast). Uses quietUpdateClashStatus so the Save button is not stuck on "Saving…" from shared isPending. */
   useEffect(() => {
     if (!showClashInMainViewer || !selectedResult || selectedResult.status !== 'new') return;
     const { clashId } = selectedResult;
+    const sourceTestId = selectedResult.sourceTestId;
     const timer = window.setTimeout(() => {
-      void updateClashStatus.mutateAsync({ clashId, status: 'reviewed' }).catch(() => {
-        /* ignore — e.g. permission */
-      });
+      void quietUpdateClashStatus
+        .mutateAsync({ clashId, status: 'reviewed', sourceTestId })
+        .catch(() => {
+          /* ignore — e.g. permission */
+        });
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [selectedResult?.clashId, selectedResult?.status, showClashInMainViewer, updateClashStatus]);
+  }, [
+    selectedResult?.clashId,
+    selectedResult?.sourceTestId,
+    selectedResult?.status,
+    showClashInMainViewer,
+    quietUpdateClashStatus,
+  ]);
 
   /** Persist note & assignee; also sets Reviewed when not resolved (keeps workflow in sync). */
   const saveClashInspectorDetails = async () => {
@@ -867,11 +936,11 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
       setError(null);
       await updateClashStatus.mutateAsync({
         clashId: selectedResult.clashId,
+        sourceTestId: selectedResult.sourceTestId,
         note: noteTrim,
         assignee: assigneeTrim,
         ...(selectedResult.status !== 'resolved' ? { status: 'reviewed' as const } : {}),
       });
-      await resultsQuery.refetch();
       setNoteDraft(noteTrim);
       setAssigneeDraft(assigneeTrim);
       toast.success('Note and assignee saved.');
@@ -890,31 +959,36 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     }
   };
 
-  const hideObject = async (objectId: string) => {
-    try {
-      setError(null);
-      await applyObjectActions.mutateAsync({ action: 'hide', objectIds: [objectId] });
-      await resultsQuery.refetch();
-      toast.success('Object hidden for clash tests.');
-    } catch (hideError) {
-      const msg = hideError instanceof Error ? hideError.message : 'Failed to hide object';
-      setError(msg);
-      toast.error(msg);
-    }
+  const hideObject = (objectId: string) => {
+    setError(null);
+    applyObjectActions.mutate(
+      { action: 'hide', objectIds: [objectId] },
+      {
+        onSuccess: () => toast.success('Object hidden for clash tests.'),
+        onError: (hideError) => {
+          const msg = hideError instanceof Error ? hideError.message : 'Failed to hide object';
+          setError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   };
 
-  const showObjects = async (objectIds: string[]) => {
+  const showObjects = (objectIds: string[]) => {
     if (objectIds.length === 0) return;
-    try {
-      setError(null);
-      await applyObjectActions.mutateAsync({ action: 'show', objectIds });
-      await resultsQuery.refetch();
-      toast.success(`${objectIds.length} object${objectIds.length === 1 ? '' : 's'} shown again.`);
-    } catch (showError) {
-      const msg = showError instanceof Error ? showError.message : 'Failed to show objects';
-      setError(msg);
-      toast.error(msg);
-    }
+    setError(null);
+    applyObjectActions.mutate(
+      { action: 'show', objectIds },
+      {
+        onSuccess: () =>
+          toast.success(`${objectIds.length} object${objectIds.length === 1 ? '' : 's'} shown again.`),
+        onError: (showError) => {
+          const msg = showError instanceof Error ? showError.message : 'Failed to show objects';
+          setError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   };
 
   const resetHiddenObjects = async () => {
@@ -973,16 +1047,29 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     if (!pendingDeleteTestId) return;
     const id = pendingDeleteTestId;
     setPendingDeleteTestId(null);
+    const hadSelection = selectedTestId === id;
+    const prevClashId = selectedClashId;
+    const prevShowViewer = showClashInMainViewer;
     try {
       setError(null);
+      /** Unsubscribe from results query before DELETE + workspace invalidation, or GET /results for this id races and returns "Clash test not found". */
+      flushSync(() => {
+        if (hadSelection) {
+          setSelectedTestId(null);
+          setSelectedClashId(null);
+          setShowClashInMainViewer(false);
+        }
+      });
       await deleteClashTest.mutateAsync(id);
-      if (selectedTestId === id) {
-        setSelectedTestId(null);
-        setSelectedClashId(null);
-        setShowClashInMainViewer(false);
-      }
       toast.success('Clash test deleted.');
     } catch (deleteError) {
+      if (hadSelection) {
+        flushSync(() => {
+          setSelectedTestId(id);
+          setSelectedClashId(prevClashId);
+          setShowClashInMainViewer(prevShowViewer);
+        });
+      }
       const msg = deleteError instanceof Error ? deleteError.message : 'Failed to delete clash test';
       setError(msg);
       toast.error(msg);
@@ -2207,7 +2294,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                       selectedObjectId={selectedObjectId}
                       onSelectObject={setSelectedObjectId}
                       hiddenObjectIds={viewerHiddenObjectIds}
-                      overviewScene={overviewSceneForViewer}
+                      overviewScene={overviewSceneForViewer2d}
                       allowObjectMove={false}
                       objectMeshPositions={objectMeshPositions}
                       testScopeObjectIds={activeTestScopeObjectIds}
