@@ -85,12 +85,33 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
     return stages[0]?.id || 'backlog';
   })();
 
-  // Sync status when modal opens with a new defaultStageId or edit task
+  // Sync full form when modal opens — fill from editTask in edit mode, reset in create mode
   useEffect(() => {
-    if (isOpen) {
-      setFormData(prev => ({ ...prev, status: resolvedInitialStageId }));
+    if (!isOpen) return;
+    if (editTask) {
+      setFormData({
+        title: editTask.title,
+        status: editTask.status || resolvedInitialStageId,
+        priority: editTask.priority || 'medium',
+        description: editTask.description || '',
+        assignee: editTask.assigneeId || '',
+        dueDate: editTask.dueDate ? new Date(editTask.dueDate).toISOString().slice(0, 10) : '',
+        tags: editTask.tags || [],
+        linkedItems: editTask.linkedItems || '',
+      });
+    } else {
+      setFormData({
+        title: '',
+        status: resolvedInitialStageId,
+        priority: 'medium',
+        description: '',
+        assignee: '',
+        dueDate: '',
+        tags: [],
+        linkedItems: '',
+      });
     }
-  }, [isOpen, resolvedInitialStageId]);
+  }, [isOpen, editTask, resolvedInitialStageId]);
 
   const [formData, setFormData] = useState<TaskFormData>(() => {
     if (editTask) {
