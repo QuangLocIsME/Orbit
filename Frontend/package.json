@@ -31,7 +31,7 @@
     "@xeokit/xeokit-bim-viewer": "^2.7.1",
     "@xeokit/xeokit-sdk": "^2.6.108",
     "@xyflow/react": "^12.5.0",
-    "astro": "^6.1.3",
+    "astro": "^6.1.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
