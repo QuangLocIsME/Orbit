@@ -17,6 +17,9 @@ const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 const { broadcastProject } = require('../services/socketService');
+const ActivityService = require('../services/activityService');
+const DiscordService = require('../services/discordService');
+const User = require('../models/User');
 const Task = require('../models/Task');
 const Document = require('../models/Document');
 const {
@@ -24,6 +27,25 @@ const {
     evaluatePackageLifecycle,
     normalizeTaskStatus,
 } = require('../utils/packageLifecycle');
+
+const sendDiscordForDoc = async (projectId, userId, type, targetName, metadata = {}) => {
+    try {
+        const Project = require('../models/Project');
+        const project = await Project.findOne({ publicId: projectId }).select('name integrations').lean();
+        if (!project || !project.integrations?.discordEnabled || !project.integrations?.discordWebhook) return;
+
+        const actor = userId ? await User.findById(userId).select('fullName email').lean() : null;
+        const userName = actor?.fullName || actor?.email || 'System';
+
+        await DiscordService.sendWebhook(project.integrations.discordWebhook, {
+            projectName: project.name,
+            userName,
+            type,
+            targetName,
+            metadata,
+        });
+    } catch { /* silent */ }
+};
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
@@ -1006,6 +1028,20 @@ class PackageController {
                 packageId: created.packageId,
             });
 
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId: targetPackageId,
+                userId,
+                type: 'folder_created',
+                targetId: created.publicId,
+                targetName: folderPath,
+                metadata: {},
+            });
+
+            await sendDiscordForDoc(normalizedProjectId, userId, 'folder_created', folderPath, {
+                packageName: targetPackageId,
+            });
+
             return res.status(201).json({
                 success: true,
                 message: 'Folder created',
@@ -1126,6 +1162,22 @@ class PackageController {
                     );
                 }
 
+                // Log activity + Discord notification
+                await ActivityService.log({
+                    projectId: normalizedProjectId,
+                    packageId: targetPackageId,
+                    userId,
+                    type: 'file_uploaded',
+                    targetId: document.publicId,
+                    targetName: file.originalname,
+                    metadata: { size: file.size, mimeType: file.mimetype },
+                });
+
+                await sendDiscordForDoc(normalizedProjectId, userId, 'file_uploaded', file.originalname, {
+                    size: file.size,
+                    mimeType: file.mimetype,
+                });
+
                 if (isIfcFile) {
                     // Upload IFC lên Supabase để clash detection dùng (không cần MinIO)
                     try {
@@ -1220,22 +1272,7 @@ class PackageController {
                 }
             }
 
-            return res.status(200).json({
-                success: true,
-                data: {
-                    jobId: job.publicId,
-                    status: job.status,
-                    progress: job.progress,
-                    errorMessage: job.errorMessage,
-                    documentPublicId: job.documentPublicId,
-                    folderType: job.folderType,
-                    folderPath: job.folderPath,
-                    size: job.size,
-                    createdAt: job.createdAt,
-                    startedAt: job.startedAt,
-                    finishedAt: job.finishedAt,
-                },
-            });
+            return res.status(200).json({ success: true, data: responseData });
         } catch (error) {
             return serverError(res, error.message || 'Failed to get upload job status');
         }
@@ -1264,6 +1301,20 @@ class PackageController {
             if (!updated || updated.projectId !== normalizedProjectId) {
                 return notFound(res, 'File not found');
             }
+
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId: updated.packageId,
+                userId,
+                type: 'file_renamed',
+                targetId: normalizedFileId,
+                targetName: normalizedName,
+                metadata: { oldName: updated.originalName },
+            });
+
+            await sendDiscordForDoc(normalizedProjectId, userId, 'file_renamed', normalizedName, {
+                oldName: updated.originalName,
+            });
 
             return res.status(200).json({ success: true, data: updated });
         } catch (error) {
@@ -1294,7 +1345,22 @@ class PackageController {
                 return notFound(res, 'File not found');
             }
 
+            const deletedName = doc.originalName;
+            const deletedPackageId = doc.packageId;
+
             await DocumentRepository.deleteByPublicId(normalizedFileId);
+
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId: deletedPackageId,
+                userId,
+                type: 'file_deleted',
+                targetId: normalizedFileId,
+                targetName: deletedName,
+                metadata: {},
+            });
+
+            await sendDiscordForDoc(normalizedProjectId, userId, 'file_deleted', deletedName, {});
 
             return res.status(200).json({ success: true, message: 'File deleted' });
         } catch (error) {
@@ -1386,6 +1452,21 @@ class PackageController {
                 newPrefix: newPath,
             });
 
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId: folder.packageId || null,
+                userId,
+                type: 'folder_renamed',
+                targetId: folder.publicId,
+                targetName: newPath,
+                metadata: { oldPath, newPath },
+            });
+
+            await sendDiscordForDoc(normalizedProjectId, userId, 'folder_renamed', newPath, {
+                oldPath,
+                newPath,
+            });
+
             return res.status(200).json({ success: true, message: 'Folder renamed' });
         } catch (error) {
             return serverError(res, error.message || 'Rename folder failed');
@@ -1447,6 +1528,8 @@ class PackageController {
                 return notFound(res, 'Folder not found');
             }
 
+            const deletedPath = existing.folderPath;
+
             await DocumentFolderRepository.deleteByPathPrefix({
                 projectId: normalizedProjectId,
                 packageId,
@@ -1458,6 +1541,18 @@ class PackageController {
                 packageId,
                 pathPrefix: folderPath,
             });
+
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId,
+                userId,
+                type: 'folder_deleted',
+                targetId: existing.publicId,
+                targetName: deletedPath,
+                metadata: {},
+            });
+
+            await sendDiscordForDoc(normalizedProjectId, userId, 'folder_deleted', deletedPath, {});
 
             return res.status(200).json({ success: true, message: 'Folder deleted' });
         } catch (error) {

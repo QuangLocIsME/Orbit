@@ -18,6 +18,7 @@ router.post('/members/remove', authenticate, (req, res) => ProjectController.rem
 router.post('/workflow', authenticate, (req, res) => ProjectController.getWorkflow(req, res));
 router.post('/workflow/update', authenticate, (req, res) => ProjectController.updateWorkflow(req, res));
 router.post('/workflow/apply-template', authenticate, (req, res) => ProjectController.applyWorkflowTemplate(req, res));
+router.post('/integrations/update', authenticate, (req, res) => ProjectController.updateIntegrations(req, res));
 router.post('/touch', authenticate, (req, res) => ProjectController.touchProject(req, res));
 router.post('/favorite/toggle', authenticate, (req, res) => ProjectController.toggleFavorite(req, res));
 router.get('/favorites', authenticate, (req, res) => ProjectController.getFavoriteProjects(req, res));

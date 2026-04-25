@@ -1267,6 +1267,51 @@ class ProjectController {
             return handleServerError(res, 'Failed to load favorite projects');
         }
     }
+
+    async updateIntegrations(req, res) {
+        try {
+            const normalizedProjectId = normalizeString(req.body?.projectId);
+            if (!normalizedProjectId) return badRequest(res, 'projectId is required');
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin'].includes(member.role)) {
+                return forbidden(res, 'Only owner or admin can update integrations');
+            }
+
+            const { discordWebhook, discordEnabled, slackWebhook, slackEnabled, teamsWebhook, teamsEnabled } = req.body || {};
+
+            const updateFields = {};
+            if (discordWebhook !== undefined) updateFields['integrations.discordWebhook'] = discordWebhook || '';
+            if (discordEnabled !== undefined) updateFields['integrations.discordEnabled'] = Boolean(discordEnabled);
+            if (slackWebhook !== undefined) updateFields['integrations.slackWebhook'] = slackWebhook || '';
+            if (slackEnabled !== undefined) updateFields['integrations.slackEnabled'] = Boolean(slackEnabled);
+            if (teamsWebhook !== undefined) updateFields['integrations.teamsWebhook'] = teamsWebhook || '';
+            if (teamsEnabled !== undefined) updateFields['integrations.teamsEnabled'] = Boolean(teamsEnabled);
+
+            updateFields.updatedAt = new Date();
+
+            const updated = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                { $set: updateFields },
+                { returnDocument: 'after', lean: true }
+            );
+            if (!updated) return notFound(res, 'Project not found');
+
+            return res.status(200).json({
+                success: true,
+                message: 'Integrations updated',
+                data: {
+                    integrations: updated.integrations,
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to update integrations');
+        }
+    }
 }
 
 module.exports = new ProjectController();

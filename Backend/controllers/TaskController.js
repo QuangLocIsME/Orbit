@@ -4,9 +4,30 @@ const User = require('../models/User');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const PackageRepository = require('../repositories/PackageRepository');
 const NotificationRepository = require('../repositories/NotificationRepository');
+const ActivityService = require('../services/activityService');
+const DiscordService = require('../services/discordService');
 const socketService = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
+
+const sendDiscordNotification = async (projectId, userId, type, targetName, metadata = {}) => {
+    try {
+        const Project = require('../models/Project');
+        const project = await Project.findOne({ publicId: projectId }).select('name integrations').lean();
+        if (!project || !project.integrations?.discordEnabled || !project.integrations?.discordWebhook) return;
+
+        const actor = userId ? await User.findById(userId).select('fullName email').lean() : null;
+        const userName = actor?.fullName || actor?.email || 'System';
+
+        await DiscordService.sendWebhook(project.integrations.discordWebhook, {
+            projectName: project.name,
+            userName,
+            type,
+            targetName,
+            metadata,
+        });
+    } catch { /* silent */ }
+};
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
@@ -221,6 +242,27 @@ class TaskController {
                 });
             }
 
+            // Log activity
+            await ActivityService.log({
+                projectId,
+                packageId,
+                userId,
+                type: 'task_created',
+                targetId: task.publicId,
+                targetName: title,
+                metadata: { status: task.status, priority: task.priority },
+            });
+
+            // Send Discord notification
+            const assigneeNames = assigneeIds.length
+                ? (await User.find({ _id: { $in: assigneeIds } }).select('fullName').lean()).map((u) => u.fullName).join(', ')
+                : '';
+            await sendDiscordNotification(projectId, userId, 'task_created', title, {
+                status: task.status,
+                priority: task.priority,
+                assignees: assigneeNames,
+            });
+
             return res.status(201).json({ success: true, data: task });
         } catch {
             return serverError(res, 'Create task failed');
@@ -408,6 +450,27 @@ class TaskController {
                     }
                 }
             }
+
+            // Log activity + Discord notification for stage move
+            const project = await require('../models/Project').findOne({ publicId: projectId }).select('workflow.settings workflow.stages name integrations').lean();
+            const stageLabel = project?.workflow?.stages?.find((s) => s.id === status)?.label || status;
+            const oldStageLabel = project?.workflow?.stages?.find((s) => s.id === currentTask.status)?.label || currentTask.status;
+
+            await ActivityService.log({
+                projectId,
+                packageId,
+                userId,
+                type: 'task_moved',
+                targetId: taskId,
+                targetName: updated.title || currentTask.title,
+                metadata: { stageFrom: oldStageLabel, stageTo: stageLabel, status },
+            });
+
+            await sendDiscordNotification(projectId, userId, 'task_moved', updated.title || currentTask.title, {
+                stageFrom: oldStageLabel,
+                stageTo: stageLabel,
+                taskStatus: stageLabel,
+            });
 
             return res.status(200).json({ success: true, data: updated });
         } catch {
@@ -661,6 +724,27 @@ class TaskController {
 
             await task.save();
 
+            // Log activity for field updates
+            if (title !== undefined || priority !== undefined || assigneeIds !== undefined) {
+                await ActivityService.log({
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    userId,
+                    type: 'task_updated',
+                    targetId: task.publicId,
+                    targetName: task.title,
+                    metadata: {
+                        priority: task.priority,
+                        status: task.status,
+                    },
+                });
+
+                await sendDiscordNotification(task.projectId, userId, 'task_updated', task.title, {
+                    priority: task.priority,
+                    taskStatus: task.status,
+                });
+            }
+
             return res.status(200).json({ success: true, message: 'Task updated', data: { publicId: task.publicId } });
         } catch {
             return serverError(res, 'Update task failed');
@@ -682,7 +766,23 @@ class TaskController {
             if (!member || member.status !== 'accepted') return forbidden(res);
             if (!['owner', 'admin', 'manager'].includes(member.role)) return forbidden(res);
 
+            const deletedTitle = task.title;
+            const deletedProjectId = task.projectId;
+            const deletedPackageId = task.packageId;
+
             await Task.deleteOne({ publicId: taskId });
+
+            await ActivityService.log({
+                projectId: deletedProjectId,
+                packageId: deletedPackageId,
+                userId,
+                type: 'task_deleted',
+                targetId: taskId,
+                targetName: deletedTitle,
+                metadata: {},
+            });
+
+            await sendDiscordNotification(deletedProjectId, userId, 'task_deleted', deletedTitle, {});
 
             return res.status(200).json({ success: true, message: 'Task deleted' });
         } catch {

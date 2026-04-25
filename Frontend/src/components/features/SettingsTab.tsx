@@ -199,9 +199,10 @@ const defaultIntegrations: Integration[] = [
   { id: '1', name: 'Google Drive', description: 'Sync files and documents with Google Drive', icon: 'drive', connected: true, category: 'storage' },
   { id: '2', name: 'Dropbox', description: 'Connect your Dropbox account for file storage', icon: 'dropbox', connected: false, category: 'storage' },
   { id: '3', name: 'OneDrive', description: 'Microsoft OneDrive integration', icon: 'onedrive', connected: false, category: 'storage' },
-  { id: '4', name: 'Slack', description: 'Send notifications to Slack channels', icon: 'slack', connected: true, category: 'communication' },
-  { id: '5', name: 'Microsoft Teams', description: 'Integrate with Microsoft Teams', icon: 'teams', connected: false, category: 'communication' },
-  { id: '6', name: 'Jira', description: 'Sync tasks with Jira projects', icon: 'jira', connected: false, category: 'project' },
+  { id: '4', name: 'Slack', description: 'Send notifications to Slack channels', icon: 'slack', connected: false, category: 'communication' },
+  { id: '5', name: 'Discord', description: 'Get real-time activity notifications with rich embeds', icon: 'discord', connected: false, category: 'communication' },
+  { id: '6', name: 'Microsoft Teams', description: 'Integrate with Microsoft Teams', icon: 'teams', connected: false, category: 'communication' },
+  { id: '7', name: 'Jira', description: 'Sync tasks with Jira projects', icon: 'jira', connected: false, category: 'project' },
   { id: '7', name: 'Autodesk BIM 360', description: 'Connect to Autodesk BIM 360', icon: 'autodesk', connected: true, category: 'cad' },
   { id: '8', name: 'Revit Cloud', description: 'Sync Revit models from cloud', icon: 'revit', connected: false, category: 'cad' },
 ];
@@ -309,6 +310,8 @@ export default function SettingsTab({
   const [selectedRole, setSelectedRole] = useState('Admin');
   const [notifications, setNotifications] = useState<NotificationSetting[]>(defaultNotifications);
   const [integrations, setIntegrations] = useState<Integration[]>(defaultIntegrations);
+  const [discordWebhook, setDiscordWebhook] = useState('');
+  const [discordEnabled, setDiscordEnabled] = useState(false);
   const [permissionMatrix, setPermissionMatrix] = useState<Record<string, Record<string, string>>>({
     'Owner': { documents: 'manage', versions: 'manage', tasks: 'manage', packages: 'manage', clashes: 'manage', viewer: 'manage', settings: 'manage', members: 'manage' },
     'Admin': { documents: 'manage', versions: 'manage', tasks: 'manage', packages: 'manage', clashes: 'edit', viewer: 'manage', settings: 'edit', members: 'edit' },
@@ -2454,6 +2457,11 @@ export default function SettingsTab({
                         <div className="h-12 w-12 rounded-[10px] bg-[#F3F4F6] flex items-center justify-center">
                           {integration.icon === 'drive' && <Globe className="h-6 w-6 text-[#4285F4]" />}
                           {integration.icon === 'slack' && <MessageSquare className="h-6 w-6 text-[#E01E5A]" />}
+                          {integration.icon === 'discord' && (
+                            <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057c.002.022.015.043.03.057a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/>
+                            </svg>
+                          )}
                           {integration.icon === 'autodesk' && <Box className="h-6 w-6 text-[#0696D7]" />}
                         </div>
                         <div>
@@ -2530,6 +2538,99 @@ export default function SettingsTab({
                 </div>
               );
             })}
+
+            {/* Discord Webhook */}
+            <div className="rounded-[12px] border border-[#5865F2] bg-white p-5 mt-6">
+              <div className="flex items-start gap-4 mb-4">
+                <div className="h-12 w-12 rounded-[10px] bg-[#5865F2]/10 flex items-center justify-center shrink-0">
+                  <svg className="h-7 w-7 text-[#5865F2]" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057c.002.022.015.043.03.057a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/>
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-[16px] font-semibold text-[#101828]">Discord Webhook</h3>
+                    {discordEnabled && discordWebhook && (
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-[11px] font-medium text-green-600">
+                        <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[14px] text-[#6A7282]">Send real-time activity notifications to your Discord channel with rich embeds</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={discordEnabled}
+                    onChange={(e) => {
+                      setDiscordEnabled(e.target.checked);
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[#5865F2] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#5865F2]"></div>
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
+                    Webhook URL
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      placeholder="https://discord.com/api/webhooks/..."
+                      value={discordWebhook}
+                      onChange={(e) => setDiscordWebhook(e.target.value)}
+                      className="flex-1 px-3 py-2 rounded-[8px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] placeholder:text-[#99A1AF] focus:border-[#5865F2] focus:outline-none focus:ring-1 focus:ring-[#5865F2]"
+                    />
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await apiFetch('/api/projects/integrations/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              projectId: projectPublicId,
+                              discordWebhook,
+                              discordEnabled,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            setIntegrations(prev => prev.map(i =>
+                              i.id === '5' ? { ...i, connected: discordEnabled && Boolean(discordWebhook) } : i
+                            ));
+                          }
+                        } catch { /* ignore */ }
+                      }}
+                      className="inline-flex items-center gap-2 rounded-[8px] bg-[#5865F2] px-4 py-2 text-[14px] font-medium text-white hover:bg-[#4752C4] transition-colors shrink-0"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-[8px] bg-[#F9FAFB] border border-[#E5E7EB] p-3">
+                  <p className="text-[12px] font-medium text-[#374151] mb-2">Events that will be sent:</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { label: 'Task created/updated/deleted/moved', icon: 'T' },
+                      { label: 'Folder created/renamed/deleted', icon: 'F' },
+                      { label: 'File uploaded/renamed/deleted', icon: 'f' },
+                    ].map((event) => (
+                      <div key={event.label} className="flex items-center gap-2 text-[12px] text-[#6A7282]">
+                        <div className="h-5 w-5 rounded bg-[#5865F2]/10 text-[#5865F2] flex items-center justify-center text-[10px] font-bold shrink-0">
+                          {event.icon}
+                        </div>
+                        {event.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* API Access */}
             <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-5">

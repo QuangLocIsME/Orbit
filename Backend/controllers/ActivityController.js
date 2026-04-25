@@ -1,5 +1,6 @@
 const ChangeRequest = require('../models/ChangeRequest');
 const Document = require('../models/Document');
+const Activity = require('../models/Activity');
 const Task = require('../models/Task');
 const TaskComment = require('../models/TaskComment');
 const User = require('../models/User');
@@ -9,36 +10,47 @@ const { errorResponse } = require('../utils/response');
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-const buildScopeFilter = (projectId, packageId = null) => {
-    if (packageId) {
-        return { projectId, packageId };
+const TYPE_CONFIG = {
+    task_created:      { icon: 'check',   color: 'bg-emerald-100 text-emerald-600', label: 'created task' },
+    task_updated:      { icon: 'edit',    color: 'bg-blue-100 text-blue-600',       label: 'updated task' },
+    task_deleted:      { icon: 'alert',   color: 'bg-red-100 text-red-600',        label: 'deleted task' },
+    task_moved:        { icon: 'edit',    color: 'bg-purple-100 text-purple-600',   label: 'moved task' },
+    task_commented:    { icon: 'edit',    color: 'bg-amber-100 text-amber-600',     label: 'commented on task' },
+    folder_created:    { icon: 'upload',  color: 'bg-orange-100 text-orange-600',    label: 'created folder' },
+    folder_renamed:    { icon: 'edit',   color: 'bg-yellow-100 text-yellow-700',   label: 'renamed folder' },
+    folder_deleted:    { icon: 'alert',   color: 'bg-red-100 text-red-600',        label: 'deleted folder' },
+    file_uploaded:     { icon: 'upload',  color: 'bg-blue-100 text-blue-600',       label: 'uploaded file' },
+    file_renamed:      { icon: 'edit',   color: 'bg-yellow-100 text-yellow-700',   label: 'renamed file' },
+    file_deleted:      { icon: 'alert',   color: 'bg-red-100 text-red-600',        label: 'deleted file' },
+    change_request:    { icon: 'edit',   color: 'bg-purple-100 text-purple-600',   label: 'submitted change request' },
+    document:          { icon: 'upload',  color: 'bg-blue-100 text-blue-600',       label: 'uploaded document' },
+    task:              { icon: 'check',   color: 'bg-emerald-100 text-emerald-600', label: 'created task' },
+    task_comment:      { icon: 'edit',   color: 'bg-amber-100 text-amber-600',     label: 'commented on task' },
+    project_update:     { icon: 'settings', color: 'bg-green-100 text-green-600',  label: 'updated project settings' },
+};
+
+const buildActivityItem = (item) => {
+    const config = TYPE_CONFIG[item.type] || { icon: 'settings', color: 'bg-gray-100 text-gray-600' };
+    let action = item.action || '';
+
+    if (!action && item.targetName) {
+        const label = config.label || item.type;
+        action = `"${item.targetName}" ${label}`;
+    }
+    if (item.metadata?.stageFrom && item.metadata?.stageTo) {
+        action = `moved "${item.targetName}" from ${item.metadata.stageFrom} to ${item.metadata.stageTo}`;
     }
 
     return {
-        projectId,
-        $or: [
-            { packageId: null },
-            { packageId: '' },
-            { packageId: { $exists: false } },
-        ],
+        id: item.publicId || item.id,
+        type: item.type,
+        icon: config.icon,
+        color: config.color,
+        action,
+        user: item.userName || item.user || 'System',
+        createdAt: item.createdAt,
+        metadata: item.metadata || {},
     };
-};
-
-const loadUserMap = async (ids) => {
-    const mongoose = require('mongoose');
-    const validIds = [...new Set((ids || []).filter(Boolean))]
-        .filter((id) => {
-            try {
-                return mongoose.Types.ObjectId.isValid(id);
-            } catch {
-                return false;
-            }
-        });
-
-    if (validIds.length === 0) return {};
-
-    const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1 }).lean();
-    return Object.fromEntries(users.map((u) => [u._id.toString(), u.fullName]));
 };
 
 class ActivityController {
@@ -73,53 +85,60 @@ class ActivityController {
                 }
             }
 
-            const LIMIT = 8;
+            const LIMIT = 20;
             const since = new Date(Date.now() - THIRTY_DAYS_MS);
-            const taskScope = buildScopeFilter(projectId, packageId);
 
-            const queries = [
-                Document.find({ ...buildScopeFilter(projectId, packageId), createdAt: { $gte: since } })
-                    .sort({ createdAt: -1 })
-                    .limit(LIMIT)
-                    .lean(),
-                Task.find({ ...taskScope, createdAt: { $gte: since } })
-                    .sort({ createdAt: -1 })
-                    .limit(LIMIT)
-                    .lean(),
-                TaskComment.find({ ...taskScope, createdAt: { $gte: since } })
-                    .sort({ createdAt: -1 })
-                    .limit(LIMIT)
-                    .lean(),
-            ];
+            const scopeFilter = { projectId };
+            if (packageId) {
+                scopeFilter.packageId = packageId;
+            } else {
+                scopeFilter.$or = [
+                    { packageId: null },
+                    { packageId: '' },
+                    { packageId: { $exists: false } },
+                ];
+            }
 
-            if (!packageId) {
-                queries.push(
-                    ChangeRequest.find({ projectId, createdAt: { $gte: since } })
+            // Fetch new Activity logs + legacy data in parallel
+            const [activities, documents, changeRequests] = await Promise.all([
+                Activity.find({ ...scopeFilter, createdAt: { $gte: since } })
+                    .sort({ createdAt: -1 })
+                    .limit(LIMIT)
+                    .lean(),
+                Document.find({ ...scopeFilter, createdAt: { $gte: since } })
+                    .sort({ createdAt: -1 })
+                    .limit(LIMIT)
+                    .lean(),
+                !packageId
+                    ? ChangeRequest.find({ projectId, createdAt: { $gte: since } })
                         .sort({ createdAt: -1 })
                         .limit(LIMIT)
                         .lean()
-                );
-            }
-
-            const [documents, tasks, taskComments, changeRequests = []] = await Promise.all(queries);
-
-            const userMap = await loadUserMap([
-                ...documents.map((d) => d.uploadedBy),
-                ...tasks.map((t) => t.createdBy),
-                ...taskComments.map((c) => c.authorId),
-                ...changeRequests.map((cr) => cr.createdBy),
+                    : Promise.resolve([]),
             ]);
 
-            const activities = [
-                ...changeRequests.map((cr) => ({
-                    id: `cr-${cr.publicId}`,
-                    type: 'change_request',
-                    icon: 'edit',
-                    color: 'bg-purple-100 text-purple-600',
-                    action: `Change request "${cr.title}" submitted`,
-                    user: userMap[cr.createdBy] || 'Unknown',
-                    createdAt: cr.createdAt,
-                })),
+            // Load user names for legacy entries
+            const allUserIds = [
+                ...activities.map((a) => a.userId),
+                ...documents.map((d) => d.uploadedBy),
+                ...changeRequests.map((cr) => cr.createdBy),
+            ].filter(Boolean);
+            const uniqueIds = [...new Set(allUserIds)];
+            const userMap = {};
+            if (uniqueIds.length > 0) {
+                const mongoose = require('mongoose');
+                const validIds = uniqueIds.filter((id) => {
+                    try { return mongoose.Types.ObjectId.isValid(id); } catch { return false; }
+                });
+                if (validIds.length > 0) {
+                    const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1 }).lean();
+                    for (const u of users) userMap[u._id.toString()] = u.fullName;
+                }
+            }
+
+            // Merge all activities
+            const merged = [
+                ...activities.map((a) => buildActivityItem(a)),
                 ...documents.map((doc) => ({
                     id: `doc-${doc.publicId}`,
                     type: 'document',
@@ -128,52 +147,43 @@ class ActivityController {
                     action: `"${doc.originalName}" uploaded`,
                     user: userMap[doc.uploadedBy] || 'Unknown',
                     createdAt: doc.createdAt,
+                    metadata: {},
                 })),
-                ...tasks.map((task) => ({
-                    id: `task-${task.publicId}`,
-                    type: 'task',
-                    icon: 'check',
-                    color: 'bg-emerald-100 text-emerald-600',
-                    action: `Task "${task.title}" created`,
-                    user: userMap[task.createdBy] || 'Unknown',
-                    createdAt: task.createdAt,
-                })),
-                ...taskComments.map((comment) => ({
-                    id: `task-comment-${comment.publicId}`,
-                    type: 'task_comment',
+                ...changeRequests.map((cr) => ({
+                    id: `cr-${cr.publicId}`,
+                    type: 'change_request',
                     icon: 'edit',
-                    color: 'bg-amber-100 text-amber-600',
-                    action: 'Comment added to a task',
-                    user: userMap[comment.authorId] || 'Unknown',
-                    createdAt: comment.createdAt,
+                    color: 'bg-purple-100 text-purple-600',
+                    action: `Change request "${cr.title}" submitted`,
+                    user: userMap[cr.createdBy] || 'Unknown',
+                    createdAt: cr.createdAt,
+                    metadata: {},
                 })),
             ];
 
-            activities.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-            const topActivities = activities.slice(0, LIMIT);
+            merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
+            // Add project update if relevant (only for project-level)
             if (!packageId) {
                 const Project = require('../models/Project');
                 const project = await Project.findOne({ publicId: projectId }, { updatedAt: 1 }).lean();
-                const projectUpdateTime = project?.updatedAt ? new Date(project.updatedAt).getTime() : 0;
-                const latestActivityTime = topActivities[0]?.createdAt ? new Date(topActivities[0].createdAt).getTime() : 0;
-
-                if (projectUpdateTime > latestActivityTime) {
-                    topActivities.unshift({
+                if (project?.updatedAt && new Date(project.updatedAt) >= since) {
+                    merged.unshift({
                         id: 'project-update',
                         type: 'project_update',
                         icon: 'settings',
                         color: 'bg-green-100 text-green-600',
                         action: 'Project settings updated',
-                        user: userMap[userId] || 'System',
+                        user: 'System',
                         createdAt: project.updatedAt,
+                        metadata: {},
                     });
                 }
             }
 
             return res.status(200).json({
                 success: true,
-                data: topActivities.slice(0, LIMIT),
+                data: merged.slice(0, LIMIT),
             });
         } catch (error) {
             return errorResponse(res, 500, error.message || 'Failed to fetch activities');
