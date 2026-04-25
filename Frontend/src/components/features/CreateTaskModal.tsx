@@ -1,7 +1,136 @@
 'use client';
 
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+
+// ─── MemberMultiSelect ─────────────────────────────────────────────────────────
+
+interface MemberOption {
+  id: string;
+  name: string;
+}
+
+interface MemberMultiSelectProps {
+  options: MemberOption[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+  badgeClass: string;
+}
+
+function MemberMultiSelect({ options, selected, onChange, badgeClass }: MemberMultiSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  const selectedMembers = options.filter((m) => selected.includes(m.id));
+  const filtered = options.filter((m) =>
+    m.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggleMember = (id: string) => {
+    if (selected.includes(id)) {
+      onChange(selected.filter((x) => x !== id));
+    } else {
+      onChange([...selected, id]);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] text-left hover:border-[#D0D5DD] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF] min-h-[40px]"
+      >
+        <svg className="h-4 w-4 text-[#99A1AF] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
+        {selectedMembers.length === 0 ? (
+          <span className="text-[#99A1AF]">Select members...</span>
+        ) : (
+          <div className="flex flex-wrap gap-1 flex-1">
+            {selectedMembers.map((m) => (
+              <span
+                key={m.id}
+                className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border', badgeClass)}
+              >
+                {m.name}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggleMember(m.id); }}
+                  className="hover:opacity-70"
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <svg className="h-4 w-4 text-[#99A1AF] shrink-0 ml-auto pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-[10px] border border-[#E5E7EB] shadow-lg z-50 py-1 max-h-[200px] overflow-y-auto">
+          <div className="px-2 pb-2">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search members..."
+              autoFocus
+              className="w-full px-3 py-1.5 rounded-[8px] border border-[#E5E7EB] text-[13px] text-[#101828] placeholder:text-[#99A1AF] focus:border-[#2B7FFF] focus:outline-none"
+            />
+          </div>
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-[13px] text-[#6A7282]">No members found</div>
+          ) : (
+            filtered.map((m) => {
+              const isSelected = selected.includes(m.id);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => toggleMember(m.id)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-[#101828] hover:bg-gray-50 text-left"
+                >
+                  <div className={cn(
+                    'h-4 w-4 rounded border flex items-center justify-center shrink-0',
+                    isSelected ? 'bg-[#2B7FFF] border-[#2B7FFF]' : 'border-[#D1D5DC]'
+                  )}>
+                    {isSelected && (
+                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </div>
+                  {m.name}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface WorkflowStage {
   id: string;
@@ -20,6 +149,8 @@ interface CreateTaskModalProps {
     priority: string;
     description: string;
     assigneeId: string;
+    assigneeIds?: string[];
+    reviewerIds?: string[];
     dueDate: string;
     tags: string[];
     linkedItems?: string;
@@ -36,7 +167,8 @@ interface TaskFormData {
   status: string;
   priority: string;
   description: string;
-  assignee: string;
+  assigneeIds: string[];
+  reviewerIds: string[];
   dueDate: string;
   tags: string[];
   linkedItems: string;
@@ -58,10 +190,6 @@ const priorityOptions = [
 ];
 
 export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, editTask, assigneeOptions, tagOptions, linkedItemSuggestions, workflowStages, defaultStageId }: CreateTaskModalProps) {
-  const teamMembers = assigneeOptions && assigneeOptions.length > 0
-    ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
-    : [{ id: '', name: 'Unassigned' }];
-
   const isEditMode = Boolean(editTask);
 
   const resolvedTagOptions = Array.isArray(tagOptions)
@@ -94,7 +222,8 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
         status: editTask.status || resolvedInitialStageId,
         priority: editTask.priority || 'medium',
         description: editTask.description || '',
-        assignee: editTask.assigneeId || '',
+        assigneeIds: editTask.assigneeIds || (editTask.assigneeId ? [editTask.assigneeId] : []),
+        reviewerIds: editTask.reviewerIds || [],
         dueDate: editTask.dueDate ? new Date(editTask.dueDate).toISOString().slice(0, 10) : '',
         tags: editTask.tags || [],
         linkedItems: editTask.linkedItems || '',
@@ -105,7 +234,8 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
         status: resolvedInitialStageId,
         priority: 'medium',
         description: '',
-        assignee: '',
+        assigneeIds: [],
+        reviewerIds: [],
         dueDate: '',
         tags: [],
         linkedItems: '',
@@ -120,7 +250,8 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
         status: editTask.status || resolvedInitialStageId,
         priority: editTask.priority || 'medium',
         description: editTask.description || '',
-        assignee: editTask.assigneeId || '',
+        assigneeIds: editTask.assigneeIds || (editTask.assigneeId ? [editTask.assigneeId] : []),
+        reviewerIds: editTask.reviewerIds || [],
         dueDate: editTask.dueDate ? new Date(editTask.dueDate).toISOString().slice(0, 10) : '',
         tags: editTask.tags || [],
         linkedItems: editTask.linkedItems || '',
@@ -131,7 +262,8 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
       status: resolvedInitialStageId,
       priority: 'medium',
       description: '',
-      assignee: '',
+      assigneeIds: [],
+      reviewerIds: [],
       dueDate: '',
       tags: [],
       linkedItems: '',
@@ -161,7 +293,8 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
       status: resolvedInitialStageId,
       priority: 'medium',
       description: '',
-      assignee: '',
+      assigneeIds: [],
+      reviewerIds: [],
       dueDate: '',
       tags: [],
       linkedItems: '',
@@ -296,44 +429,44 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
             />
           </div>
 
-          {/* Assignee and Due Date */}
+          {/* Assignees and Reviewers */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Assignee */}
+            {/* Assignees */}
             <div className="space-y-2">
-              <label className="text-[14px] text-[#101828]">Assignee</label>
-              <div className="relative">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-                <select
-                  value={formData.assignee}
-                  onChange={(e) => setFormData(prev => ({ ...prev, assignee: e.target.value }))}
-                  className="w-full pl-10 pr-10 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] appearance-none focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
-                >
-                  {teamMembers.map((member) => (
-                    <option key={member.id} value={member.id}>{member.name}</option>
-                  ))}
-                </select>
-                <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
+              <label className="text-[14px] text-[#101828]">Assignees</label>
+              <MemberMultiSelect
+                options={assigneeOptions || []}
+                selected={formData.assigneeIds}
+                onChange={(ids) => setFormData(prev => ({ ...prev, assigneeIds: ids }))}
+                badgeClass="bg-[#EFF6FF] border-[#2B7FFF] text-[#1447E6]"
+              />
             </div>
 
-            {/* Due Date */}
+            {/* Reviewers */}
             <div className="space-y-2">
-              <label className="text-[14px] text-[#101828]">Due Date</label>
-              <div className="relative">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <input
-                  type="date"
-                  value={formData.dueDate}
-                  onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))}
-                  className="w-full pl-10 pr-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
-                />
-              </div>
+              <label className="text-[14px] text-[#101828]">Reviewers</label>
+              <MemberMultiSelect
+                options={assigneeOptions || []}
+                selected={formData.reviewerIds}
+                onChange={(ids) => setFormData(prev => ({ ...prev, reviewerIds: ids }))}
+                badgeClass="bg-[#FEF9C3] border-[#CA8A04] text-[#A16207]"
+              />
+            </div>
+          </div>
+
+          {/* Due Date */}
+          <div className="space-y-2">
+            <label className="text-[14px] text-[#101828]">Due Date</label>
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <input
+                type="date"
+                value={formData.dueDate}
+                onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))}
+                className="w-full pl-10 pr-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+              />
             </div>
           </div>
 
@@ -419,7 +552,7 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
           <button
             onClick={handleSubmit}
             disabled={!formData.title.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#7C9EF8] text-[14px] text-white hover:bg-[#6B8EE8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#155DFC] text-[14px] text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               {isEditMode ? (

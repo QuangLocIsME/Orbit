@@ -18,7 +18,12 @@ const TaskSchema = new mongoose.Schema({
         enum: ['low', 'medium', 'high', 'urgent'],
         default: 'medium',
     },
+    // Single assignee (backward-compatible)
     assigneeId: { type: String, default: '', index: true },
+    // Multi assignee
+    assigneeIds: { type: [String], default: [], index: true },
+    // Reviewers (can move task stage)
+    reviewerIds: { type: [String], default: [], index: true },
     dueDate: { type: Date, default: null },
     linkedUrl: { type: String, default: '', trim: true },
     tags: { type: [String], default: [] },

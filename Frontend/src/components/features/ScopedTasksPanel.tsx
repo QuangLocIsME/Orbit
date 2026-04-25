@@ -45,6 +45,8 @@ interface TaskItem {
   attachments: number;
   dueDate: string;
   assigneeId: string;
+  assigneeIds?: string[];
+  reviewerIds?: string[];
 }
 
 interface EditTaskData {
@@ -54,6 +56,8 @@ interface EditTaskData {
   priority: string;
   description: string;
   assigneeId: string;
+  assigneeIds?: string[];
+  reviewerIds?: string[];
   dueDate: string;
   tags: string[];
   linkedItems: string;
@@ -394,13 +398,16 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
     if (!canCreateTask) return;
     const targetTask = tasksData.find((t) => t.id === taskId);
     if (!targetTask) return;
+    const assigneeIds = targetTask.assigneeIds || [];
+    const reviewerIds = targetTask.reviewerIds || [];
+    const allIds = [targetTask.assigneeId, ...assigneeIds, ...reviewerIds].filter(Boolean);
     const canMoveStage =
       projectRole === 'owner' ||
       projectRole === 'admin' ||
       projectRole === 'manager' ||
-      (projectRole === 'member' && Boolean(targetTask.assigneeId) && targetTask.assigneeId === currentUserId);
+      (projectRole === 'member' && allIds.includes(currentUserId));
     if (!canMoveStage) {
-      toast.error('Members can only update the status of tasks assigned to them.');
+      toast.error('Only owner/admin/manager, assignees, or reviewers can move this task.');
       return;
     }
 
@@ -627,7 +634,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                   status: task.status,
                   priority: task.priority,
                   description: task.description,
-                  assigneeId: task.assignee || undefined,
+                  assigneeIds: task.assigneeIds,
+                  reviewerIds: task.reviewerIds,
                   dueDate: task.dueDate || undefined,
                   linkedUrl: task.linkedItems || undefined,
                   tags: task.tags,
@@ -661,7 +669,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                   status: task.status,
                   priority: task.priority,
                   description: task.description,
-                  assigneeId: task.assignee || undefined,
+                  assigneeIds: task.assigneeIds,
+                  reviewerIds: task.reviewerIds,
                   dueDate: task.dueDate || undefined,
                   linkedUrl: task.linkedItems || undefined,
                   tags: task.tags,
@@ -799,6 +808,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                   priority: fullTask.priority,
                   description: fullTask.description,
                   assigneeId: fullTask.assigneeId,
+                  assigneeIds: fullTask.assigneeIds,
+                  reviewerIds: fullTask.reviewerIds,
                   dueDate: fullTask.dueDate,
                   tags: fullTask.tags,
                   linkedItems: fullTask.linkedItem?.name || '',
@@ -970,7 +981,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                 status: task.status,
                 priority: task.priority,
                 description: task.description,
-                assigneeId: task.assignee || undefined,
+                assigneeIds: task.assigneeIds,
+                reviewerIds: task.reviewerIds,
                 dueDate: task.dueDate || undefined,
                 linkedUrl: task.linkedItems || undefined,
                 tags: task.tags,
@@ -1004,7 +1016,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                 status: task.status,
                 priority: task.priority,
                 description: task.description,
-                assigneeId: task.assignee || undefined,
+                assigneeIds: task.assigneeIds,
+                reviewerIds: task.reviewerIds,
                 dueDate: task.dueDate || undefined,
                 linkedUrl: task.linkedItems || undefined,
                 tags: task.tags,

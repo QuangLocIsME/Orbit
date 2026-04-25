@@ -11,12 +11,51 @@
 import { useEffect, useState, useCallback } from 'react';
 import { getSocket, type Notification, type InviteNotification } from '@/lib/socket';
 import { isAuthenticated } from '@/lib/auth';
-import { toast } from '@/components/ui/sonner';
+import { toast } from 'sonner';
 import { useAppStore } from '@/stores/appStore';
 import { apiFetch } from '@/lib/api-client';
 
 const STORAGE_KEY = 'orbit_notifications';
 const MAX_NOTIFICATIONS = 50;
+const SOUND_ENABLED_KEY = 'orbit_notification_sound_enabled';
+
+// Shared Audio instance (singleton) — created lazily on first play
+let notificationAudio: HTMLAudioElement | null = null;
+
+function getAudioSrc(): string {
+    const base = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${base}/sounds/notification.mp3`;
+}
+
+function playNotificationSound(): void {
+    try {
+        if (!notificationAudio) {
+            notificationAudio = new Audio(getAudioSrc());
+            notificationAudio.preload = 'auto';
+        }
+        notificationAudio.currentTime = 0;
+        notificationAudio.volume = 0.6;
+        notificationAudio.play().catch(() => {
+            // Autoplay blocked by browser — silently ignore
+        });
+    } catch {
+        // Audio not supported or file missing
+    }
+}
+
+function isSoundEnabled(): boolean {
+    try {
+        const stored = localStorage.getItem(SOUND_ENABLED_KEY);
+        if (stored !== null) return stored === 'true';
+    } catch { /* localStorage unavailable */ }
+    return true; // default: enabled
+}
+
+function setSoundEnabled(enabled: boolean): void {
+    try {
+        localStorage.setItem(SOUND_ENABLED_KEY, String(enabled));
+    } catch { /* ignore */ }
+}
 
 // Backend API response type
 interface ApiNotification {
@@ -96,6 +135,8 @@ export interface UseNotificationsReturn {
     clearAll: () => void;
     deleteNotification: (id: string) => void;
     isLoading: boolean;
+    soundEnabled: boolean;
+    toggleSound: (enabled: boolean) => void;
 }
 
 export function useNotifications(): UseNotificationsReturn {
@@ -105,7 +146,13 @@ export function useNotifications(): UseNotificationsReturn {
     });
     const [unseenCount, setUnseenCount] = useState(0);
     const [isLoading, setIsLoading] = useState(false);
+    const [soundEnabled, setSoundEnabledState] = useState(() => isSoundEnabled());
     const projects = useAppStore((s) => s.projects);
+
+    const toggleSound = useCallback((enabled: boolean) => {
+        setSoundEnabled(enabled);
+        setSoundEnabledState(enabled);
+    }, []);
 
     // Fetch notifications from API on mount (for offline persistence)
     useEffect(() => {
@@ -228,6 +275,20 @@ export function useNotifications(): UseNotificationsReturn {
 
         const handler = (n: Notification) => {
             push(n);
+
+            // Play notification sound for online users
+            if (soundEnabled) {
+                playNotificationSound();
+            }
+
+            // Show toast for real-time notifications (skip invites which have their own toast)
+            if (n.inviteData) return;
+            const title = n.title || 'New notification';
+            const message = n.message || '';
+            toast(title, {
+                description: message || undefined,
+                duration: 5000,
+            });
         };
 
         const inviteHandler = (data: InviteNotification) => {
@@ -383,5 +444,5 @@ export function useNotifications(): UseNotificationsReturn {
     const unreadCount = notifications.filter((n) => !n.read).length;
     const inviteUnreadCount = notifications.filter((n) => n.id.startsWith('invite:') && !n.read).length;
 
-    return { notifications, unreadCount, unseenCount, inviteUnreadCount, markRead, markSeen, markAllRead, markAllSeen, clearAll, deleteNotification, isLoading };
+    return { notifications, unreadCount, unseenCount, inviteUnreadCount, markRead, markSeen, markAllRead, markAllSeen, clearAll, deleteNotification, isLoading, soundEnabled, toggleSound };
 }

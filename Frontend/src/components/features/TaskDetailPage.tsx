@@ -26,7 +26,11 @@ interface TaskDetailData {
   status: string;
   priority: TaskPriority;
   assigneeId?: string;
+  assigneeIds?: string[];
   assigneeName?: string;
+  assigneeNames?: string[];
+  reviewerIds?: string[];
+  reviewerNames?: string[];
   dueDate?: string;
   tags: string[];
   linkedUrl?: string;
@@ -161,7 +165,11 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
               status: normalizeStageId(String(t.status || 'backlog')),
               priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as TaskPriority,
               assigneeId: String(t.assigneeId || ''),
-              assigneeName: t.assigneeName || t.assignee?.fullName || '',
+              assigneeIds: Array.isArray(t.assigneeIds) ? t.assigneeIds : [],
+              assigneeName: t.assigneeName || '',
+              assigneeNames: Array.isArray(t.assigneeNames) ? t.assigneeNames : [],
+              reviewerIds: Array.isArray(t.reviewerIds) ? t.reviewerIds : [],
+              reviewerNames: Array.isArray(t.reviewerNames) ? t.reviewerNames : [],
               dueDate: t.dueDate || '',
               tags: Array.isArray(t.tags) ? t.tags : [],
               linkedUrl: t.linkedUrl || '',
@@ -233,10 +241,15 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
 
   const canReviewAndMoveStage = useMemo(() => {
     if (!task) return false;
+    const allIds = [
+      task.assigneeId,
+      ...(task.assigneeIds || []),
+      ...(task.reviewerIds || []),
+    ].filter(Boolean);
     return projectRole === 'owner'
       || projectRole === 'admin'
       || projectRole === 'manager'
-      || (projectRole === 'member' && Boolean(task.assigneeId) && task.assigneeId === currentUserId);
+      || (projectRole === 'member' && allIds.includes(currentUserId));
   }, [currentUserId, projectRole, task]);
 
   const currentStage = useMemo(
@@ -401,10 +414,26 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
             <User className="h-3.5 w-3.5 text-muted-foreground" />
           </div>
           <div>
-            <p className="text-[11px] text-muted-foreground">Assignee</p>
-            <p className="text-sm font-medium">{task.assigneeName || 'Unassigned'}</p>
+            <p className="text-[11px] text-muted-foreground">Assignees</p>
+            {(task.assigneeNames && task.assigneeNames.length > 0) ? (
+              <p className="text-sm font-medium">{task.assigneeNames.join(', ')}</p>
+            ) : (
+              <p className="text-sm font-medium text-muted-foreground">Unassigned</p>
+            )}
           </div>
         </div>
+
+        {(task.reviewerNames && task.reviewerNames.length > 0) && (
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background shadow-sm">
+              <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="text-[11px] text-muted-foreground">Reviewers</p>
+              <p className="text-sm font-medium">{task.reviewerNames.join(', ')}</p>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background shadow-sm">

@@ -47,6 +47,8 @@ interface Task {
   attachments: number;
   dueDate: string;
   assigneeId: string;
+  assigneeIds?: string[];
+  reviewerIds?: string[];
 }
 
 interface TaskMember {
@@ -71,14 +73,14 @@ const PRIORITY_STYLE: Record<string, string> = {
 
 function SortableTaskCard({
   task,
-  assignee,
+  teamMembers,
   onClick,
   canManage,
   onEditRequest,
   onDeleteRequest,
 }: {
   task: Task;
-  assignee?: TaskMember;
+  teamMembers: TaskMember[];
   onClick: () => void;
   canManage: boolean;
   onEditRequest: (task: Task) => void;
@@ -97,6 +99,12 @@ function SortableTaskCard({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
+
+  const assigneeIds = task.assigneeIds || [];
+  const allAssigneeIds = [...new Set([task.assigneeId, ...assigneeIds].filter(Boolean))];
+  const assignees = allAssigneeIds
+    .map((id) => teamMembers.find((m) => m.id === id))
+    .filter(Boolean) as TaskMember[];
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -251,9 +259,20 @@ function SortableTaskCard({
         </AlertDialog>
       </div>
 
-      {assignee && (
-        <div className={cn('h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white mt-2', assignee.color)}>
-          {assignee.avatar}
+      {assignees.length > 0 && (
+        <div className="flex -space-x-1.5 mt-2">
+          {assignees.map((a) => (
+            <div
+              key={a.id}
+              className={cn(
+                'h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white ring-2 ring-white',
+                a.color
+              )}
+              title={a.name}
+            >
+              {a.avatar}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -432,12 +451,16 @@ export default function TaskBoard({
               <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
                 <div className="flex flex-col gap-2 min-h-[80px]">
                   {stageTasks.map((task) => {
-                    const assignee = teamMembers.find((m) => m.id === task.assigneeId);
+                    const assigneeIds = task.assigneeIds || [];
+                    const allIds = [...new Set([task.assigneeId, ...assigneeIds].filter(Boolean))];
+                    const assignees = allIds
+                      .map((id) => teamMembers.find((m) => m.id === id))
+                      .filter(Boolean) as TaskMember[];
                     return (
                       <SortableTaskCard
                         key={task.id}
                         task={task}
-                        assignee={assignee}
+                        teamMembers={assignees}
                         canManage={manageTask}
                         onClick={() => onTaskClick(task.id)}
                         onEditRequest={onEditRequest}

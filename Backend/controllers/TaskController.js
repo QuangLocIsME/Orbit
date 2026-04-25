@@ -47,8 +47,11 @@ const canMutateProjectTasks = (member) => {
 const canChangeTaskStatus = ({ member, userId, task }) => {
     if (!member || member.status !== 'accepted' || !task) return false;
     if (['owner', 'admin', 'manager'].includes(member.role)) return true;
-    if (member.role !== 'member') return false;
-    return Boolean(task.assigneeId) && String(task.assigneeId) === String(userId);
+    const assigneeIds = task.assigneeIds || [];
+    const reviewerIds = task.reviewerIds || [];
+    const assigneeId = task.assigneeId;
+    const allUserIds = [...assigneeIds, ...reviewerIds, assigneeId].filter(Boolean);
+    return allUserIds.includes(userId);
 };
 
 const buildScopeFilter = (projectId, packageId = null) => {
@@ -124,9 +127,24 @@ class TaskController {
             }
 
             const assigneeId = normalizeString(req.body?.assigneeId);
-            if (assigneeId) {
-                const assigneeMember = await ProjectMemberRepository.findMember(projectId, assigneeId);
-                if (!assigneeMember) return badRequest(res, 'Assignee is not a project member');
+            const assigneeIdsRaw = req.body?.assigneeIds;
+            const reviewerIdsRaw = req.body?.reviewerIds;
+
+            const assigneeIds = Array.isArray(assigneeIdsRaw)
+                ? assigneeIdsRaw.map((id) => normalizeString(id)).filter(Boolean)
+                : (assigneeId ? [assigneeId] : []);
+
+            const reviewerIds = Array.isArray(reviewerIdsRaw)
+                ? reviewerIdsRaw.map((id) => normalizeString(id)).filter(Boolean)
+                : [];
+
+            for (const id of assigneeIds) {
+                const m = await ProjectMemberRepository.findMember(projectId, id);
+                if (!m) return badRequest(res, `Assignee ${id} is not a project member`);
+            }
+            for (const id of reviewerIds) {
+                const m = await ProjectMemberRepository.findMember(projectId, id);
+                if (!m) return badRequest(res, `Reviewer ${id} is not a project member`);
             }
 
             const task = await Task.create({
@@ -136,7 +154,9 @@ class TaskController {
                 description: normalizeString(req.body?.description),
                 status: normalizeStatus(req.body?.status),
                 priority: normalizePriority(req.body?.priority),
-                assigneeId: assigneeId || '',
+                assigneeId: assigneeIds[0] || '',
+                assigneeIds,
+                reviewerIds,
                 dueDate: req.body?.dueDate ? new Date(req.body.dueDate) : null,
                 linkedUrl: normalizeString(req.body?.linkedUrl),
                 tags: Array.isArray(req.body?.tags) ? req.body.tags.map((t) => normalizeString(t)).filter(Boolean) : [],
@@ -148,12 +168,13 @@ class TaskController {
                 await PackageRepository.addTaskIdToPackage(packageId, projectId, task.publicId);
             }
 
-            if (assigneeId) {
-                const taskLink = getTaskLink(projectId, packageId, task.publicId);
+            const taskLink = getTaskLink(projectId, packageId, task.publicId);
 
-                // Always save to DB first (so it's available when user comes online)
+            // Notify all assignees
+            for (const assignee of assigneeIds) {
+                if (assignee === userId) continue;
                 const notification = await NotificationRepository.create({
-                    userId: assigneeId,
+                    userId: assignee,
                     type: 'info',
                     title: 'New task assigned',
                     message: title,
@@ -163,11 +184,36 @@ class TaskController {
                     refId: task.publicId,
                 });
 
-                // Also push via WebSocket for online users — use the same _id as the DB record
-                socketService.notifyUser(assigneeId, 'notification:new', {
+                socketService.notifyUser(assignee, 'notification:new', {
                     id: String(notification._id),
                     type: 'info',
                     title: 'New task assigned',
+                    message: title,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
+
+            // Notify all reviewers
+            for (const reviewer of reviewerIds) {
+                if (reviewer === userId) continue;
+                if (assigneeIds.includes(reviewer)) continue; // already notified as assignee
+                const notification = await NotificationRepository.create({
+                    userId: reviewer,
+                    type: 'info',
+                    title: 'You are a reviewer',
+                    message: title,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                socketService.notifyUser(reviewer, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'You are a reviewer',
                     message: title,
                     link: taskLink,
                     read: false,
@@ -238,16 +284,36 @@ class TaskController {
             const task = await Task.findOne({ publicId: taskId, ...buildScopeFilter(projectId, packageId) }).lean();
             if (!task) return notFound(res, 'Task not found');
 
-            let assignee = null;
-            if (task.assigneeId) {
-                assignee = await User.findById(task.assigneeId).select('_id fullName email').lean();
-            }
+            const allUserIds = [
+                ...(task.assigneeIds || []),
+                task.assigneeId,
+                ...(task.reviewerIds || []),
+            ].filter(Boolean);
+            const uniqueUserIds = [...new Set(allUserIds)];
+            const users = uniqueUserIds.length
+                ? await User.find({ _id: { $in: uniqueUserIds } }).select('_id fullName email').lean()
+                : [];
+            const userMap = new Map(users.map((u) => [String(u._id), u]));
+
+            const assigneeIds = task.assigneeIds || [];
+            const reviewerIds = task.reviewerIds || [];
+            const assigneeName = userMap.get(String(task.assigneeId || ''))?.fullName
+                || userMap.get(String(task.assigneeId || ''))?.email
+                || '';
+            const assigneeNames = assigneeIds
+                .map((id) => userMap.get(String(id))?.fullName || userMap.get(String(id))?.email || '')
+                .filter(Boolean);
+            const reviewerNames = reviewerIds
+                .map((id) => userMap.get(String(id))?.fullName || userMap.get(String(id))?.email || '')
+                .filter(Boolean);
 
             return res.status(200).json({
                 success: true,
                 data: {
                     ...task,
-                    assigneeName: assignee?.fullName || assignee?.email || '',
+                    assigneeName,
+                    assigneeNames,
+                    reviewerNames,
                 },
             });
         } catch {
@@ -284,7 +350,7 @@ class TaskController {
             const currentTask = await Task.findOne({ publicId: taskId, ...buildScopeFilter(projectId, packageId) }).lean();
             if (!currentTask) return notFound(res, 'Task not found');
             if (!canChangeTaskStatus({ member, userId, task: currentTask })) {
-                return forbidden(res, 'Only owner/admin/manager or the assigned member can update task status');
+                return forbidden(res, 'Only owner/admin/manager, assignee, or reviewer can update task status');
             }
 
             const updated = await Task.findOneAndUpdate(
@@ -300,6 +366,48 @@ class TaskController {
                 taskId,
                 status,
             });
+
+            // Notify all assignees and reviewers when task stage changes
+            const assigneeIds = currentTask.assigneeIds || [];
+            const reviewerIds = currentTask.reviewerIds || [];
+            const assigneeId = currentTask.assigneeId;
+            const allRecipients = [...new Set([...assigneeIds, assigneeId, ...reviewerIds].filter(Boolean))];
+            const recipientsToNotify = allRecipients.filter((r) => r !== userId);
+
+            if (recipientsToNotify.length > 0) {
+                const project = await require('../models/Project').findOne({ publicId: projectId }).select('workflow.settings workflow.stages').lean();
+                const notifyEnabled = !project || project.workflow?.settings?.notifyOnStatusChange !== false;
+                if (notifyEnabled) {
+                    const taskLink = getTaskLink(projectId, packageId, taskId);
+                    const changerMember = await ProjectMemberRepository.findMember(projectId, userId);
+                    const changerName = changerMember?.name || 'Someone';
+                    const stageLabel = project?.workflow?.stages?.find((s) => s.id === status)?.label || status;
+                    const message = `${changerName} moved "${currentTask.title}" to ${stageLabel}`;
+
+                    for (const recipient of recipientsToNotify) {
+                        const notification = await NotificationRepository.create({
+                            userId: recipient,
+                            type: 'info',
+                            title: 'Task moved',
+                            message,
+                            link: taskLink,
+                            read: false,
+                            refType: 'task',
+                            refId: taskId,
+                        });
+
+                        socketService.notifyUser(recipient, 'notification:new', {
+                            id: String(notification._id),
+                            type: 'info',
+                            title: 'Task moved',
+                            message,
+                            link: taskLink,
+                            read: false,
+                            createdAt: notification.createdAt.toISOString(),
+                        });
+                    }
+                }
+            }
 
             return res.status(200).json({ success: true, data: updated });
         } catch {
@@ -400,7 +508,40 @@ class TaskController {
                 commentId: comment.publicId,
             });
 
+            // Notify all assignees and reviewers when someone comments on their task
             const author = await User.findById(userId).select('_id fullName email').lean();
+            const authorName = author?.fullName || author?.email || 'Someone';
+            const taskLink = getTaskLink(projectId, task.packageId, taskId);
+            const message = `${authorName} commented: "${content.substring(0, 80)}${content.length > 80 ? '...' : ''}"`;
+
+            const assigneeIds = task.assigneeIds || [];
+            const reviewerIds = task.reviewerIds || [];
+            const assigneeId = task.assigneeId;
+            const allRecipients = [...new Set([...assigneeIds, assigneeId, ...reviewerIds].filter(Boolean))];
+            const recipientsToNotify = allRecipients.filter((r) => r !== userId);
+
+            for (const recipient of recipientsToNotify) {
+                const notification = await NotificationRepository.create({
+                    userId: recipient,
+                    type: 'info',
+                    title: 'New comment on your task',
+                    message,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                socketService.notifyUser(recipient, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'New comment on your task',
+                    message,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
 
             return res.status(201).json({
                 success: true,
@@ -500,12 +641,20 @@ class TaskController {
             if (!member || member.status !== 'accepted') return forbidden(res);
             if (!['owner', 'admin', 'manager'].includes(member.role)) return forbidden(res);
 
-            const { title, description, priority, assigneeId, dueDate, tags } = req.body || {};
+            const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags } = req.body || {};
 
             if (title !== undefined) task.title = title.trim();
             if (description !== undefined) task.description = description.trim();
             if (priority !== undefined) task.priority = normalizePriority(priority);
-            if (assigneeId !== undefined) task.assigneeId = assigneeId || null;
+            if (assigneeIds !== undefined) {
+                task.assigneeIds = Array.isArray(assigneeIds) ? assigneeIds.map(id => normalizeString(id)).filter(Boolean) : [];
+                task.assigneeId = task.assigneeIds[0] || assigneeId || '';
+            } else if (assigneeId !== undefined) {
+                task.assigneeId = assigneeId || null;
+            }
+            if (reviewerIds !== undefined) {
+                task.reviewerIds = Array.isArray(reviewerIds) ? reviewerIds.map(id => normalizeString(id)).filter(Boolean) : [];
+            }
             if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
             if (tags !== undefined) task.tags = Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [];
             task.updatedAt = new Date();
