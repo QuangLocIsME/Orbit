@@ -17,6 +17,13 @@ const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 const { broadcastProject } = require('../services/socketService');
+const Task = require('../models/Task');
+const Document = require('../models/Document');
+const {
+    DONE_TASK_STATUSES,
+    evaluatePackageLifecycle,
+    normalizeTaskStatus,
+} = require('../utils/packageLifecycle');
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
@@ -34,6 +41,89 @@ function parseDueDate(dueDate) {
 
 const SYNC_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const IFC_EXTENSION = '.ifc';
+
+async function buildPackageLifecycleMap(projectId, packageIds = [], packageRows = []) {
+    const normalizedIds = [...new Set((packageIds || []).filter(Boolean))];
+    if (normalizedIds.length === 0) return new Map();
+
+    const [taskAgg, docAgg] = await Promise.all([
+        Task.aggregate([
+            { $match: { projectId, packageId: { $in: normalizedIds } } },
+            {
+                $group: {
+                    _id: '$packageId',
+                    taskTotal: { $sum: 1 },
+                    doneTaskTotal: {
+                        $sum: {
+                            $cond: [
+                                { $in: [{ $toLower: '$status' }, [...DONE_TASK_STATUSES]] },
+                                1,
+                                0,
+                            ],
+                        },
+                    },
+                },
+            },
+        ]),
+        Document.aggregate([
+            { $match: { projectId, packageId: { $in: normalizedIds } } },
+            { $group: { _id: '$packageId', documentTotal: { $sum: 1 } } },
+        ]),
+    ]);
+
+    const taskMap = new Map(taskAgg.map((row) => [String(row._id), row]));
+    const docMap = new Map(docAgg.map((row) => [String(row._id), row]));
+    const lifecycleMap = new Map();
+
+    for (const pkg of packageRows || []) {
+        const pid = String(pkg.publicId || '');
+        if (!pid) continue;
+        const taskStat = taskMap.get(pid);
+        const docStat = docMap.get(pid);
+        const memberSet = new Set([
+            ...(Array.isArray(pkg.teamMemberIds) ? pkg.teamMemberIds : []),
+            ...(pkg.creatorId ? [pkg.creatorId] : []),
+        ]);
+        lifecycleMap.set(
+            pid,
+            evaluatePackageLifecycle({
+                dbStatus: pkg.status,
+                taskTotal: Number(taskStat?.taskTotal || 0),
+                doneTaskTotal: Number(taskStat?.doneTaskTotal || 0),
+                documentTotal: Number(docStat?.documentTotal || 0),
+                memberTotal: memberSet.size,
+            })
+        );
+    }
+
+    return lifecycleMap;
+}
+
+async function evaluateSinglePackageLifecycle(projectId, pkg) {
+    const packageId = pkg?.publicId;
+    if (!packageId) {
+        return evaluatePackageLifecycle({ dbStatus: pkg?.status || 'Draft' });
+    }
+    const [tasks, docs] = await Promise.all([
+        Task.find({ projectId, packageId }, { status: 1 }).lean(),
+        DocumentRepository.listByProjectAndPackage(projectId, packageId),
+    ]);
+    const doneTaskTotal = tasks.reduce(
+        (acc, task) => acc + (DONE_TASK_STATUSES.has(normalizeTaskStatus(task?.status)) ? 1 : 0),
+        0
+    );
+    const memberSet = new Set([
+        ...(Array.isArray(pkg.teamMemberIds) ? pkg.teamMemberIds : []),
+        ...(pkg.creatorId ? [pkg.creatorId] : []),
+    ]);
+    return evaluatePackageLifecycle({
+        dbStatus: pkg.status,
+        taskTotal: tasks.length,
+        doneTaskTotal,
+        documentTotal: docs.length,
+        memberTotal: memberSet.size,
+    });
+}
 
 function normalizeFolderType(folderType) {
     const value = normalizeString(folderType)?.toLowerCase();
@@ -144,6 +234,123 @@ function buildStorageKey({ projectId, packageId, folderType, folderPath, origina
     return `projects/${projectId}/${safePackageName}-${packageId}/${folderType}/${prefix}${filename}`;
 }
 
+async function validatePackageDocumentAccess({ projectId, packageId, userId, allowViewer = true }) {
+    const member = await ProjectMemberRepository.findMember(projectId, userId);
+    if (!member || member.status !== 'accepted') {
+        return { ok: false, status: 403, message: 'Only project members can access package documents' };
+    }
+
+    if (!allowViewer && member.role === 'viewer') {
+        return { ok: false, status: 403, message: 'Viewers do not have document management permission' };
+    }
+
+    if (!packageId) {
+        return { ok: true, member, pkg: null };
+    }
+
+    const pkg = await PackageRepository.findByPublicIdInProject(packageId, projectId);
+    if (!pkg || pkg.status === 'Archived') {
+        return { ok: false, status: 404, message: 'Package not found or is archived' };
+    }
+
+    const canAccessPackage = member.role === 'admin'
+        || pkg.creatorId === userId
+        || (pkg.teamMemberIds || []).includes(userId);
+
+    if (!canAccessPackage) {
+        return { ok: false, status: 403, message: 'You do not have access to this package' };
+    }
+
+    return { ok: true, member, pkg };
+}
+
+function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'root' }) {
+    const treeMap = new Map();
+    treeMap.set(rootId, {
+        id: rootId,
+        name: rootName,
+        type: 'folder',
+        children: [],
+    });
+
+    const ensureFolderNode = (parentKey, name, fullKey) => {
+        if (treeMap.has(fullKey)) return treeMap.get(fullKey);
+
+        const node = {
+            id: fullKey,
+            name,
+            type: 'folder',
+            icon: 'folder',
+            children: [],
+        };
+
+        treeMap.set(fullKey, node);
+        treeMap.get(parentKey).children.push(node);
+        return node;
+    };
+
+    const resolveFolderChain = (folderPath = '') => {
+        if (!folderPath) return rootId;
+
+        const segments = String(folderPath)
+            .split('/')
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+        let parentKey = rootId;
+        let currentPath = rootId;
+
+        for (const segment of segments) {
+            currentPath = `${currentPath}/${segment}`;
+            ensureFolderNode(parentKey, segment, currentPath);
+            parentKey = currentPath;
+        }
+
+        return parentKey;
+    };
+
+    for (const folder of folders || []) {
+        resolveFolderChain(folder.folderPath || '');
+    }
+
+    for (const doc of docs || []) {
+        const parentKey = resolveFolderChain(doc.folderPath || '');
+        treeMap.get(parentKey).children.push({
+            id: doc.publicId,
+            name: doc.originalName,
+            type: 'file',
+            category: doc.mimeType?.startsWith('image/') ? 'Image' : 'File',
+            size: `${Math.round((doc.size || 0) / 1024)} KB`,
+            updatedAt: doc.updatedAt,
+            author: doc.uploadedBy,
+            mimeType: doc.mimeType || '',
+            folderPath: doc.folderPath || '',
+            s3Key: doc.s3Key,
+            s3Url: doc.s3Url,
+            versionNumber: doc.versionNumber || 1,
+            versionId: doc.publicId,
+            conversionStatus: doc.conversionStatus || 'NOT_SUPPORTED',
+            conversionError: doc.conversionError || '',
+            isIfc: path.extname(doc.originalName || '').toLowerCase() === IFC_EXTENSION,
+        });
+    }
+
+    const sortNode = (node) => {
+        node.children.sort((a, b) => {
+            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+            return String(a.name).localeCompare(String(b.name));
+        });
+
+        for (const child of node.children) {
+            if (child.type === 'folder') sortNode(child);
+        }
+    };
+
+    const root = treeMap.get(rootId);
+    sortNode(root);
+    return root;
+}
+
 class PackageController {
     /**
      * UC-PKG-001: Create New Package
@@ -157,6 +364,8 @@ class PackageController {
                 type,
                 dueDate,
                 teamMemberIds,
+                status: statusBody,
+                initialStatus,
             } = req.body || {};
 
             const normalizedProjectId = normalizeString(projectId);
@@ -198,12 +407,21 @@ class PackageController {
                 ? teamMemberIds.map((id) => normalizeString(id)).filter(Boolean)
                 : [];
 
+            const rawInitialStatus = normalizeString(statusBody || initialStatus);
+            const titleCaseStatus = rawInitialStatus
+                ? `${rawInitialStatus.charAt(0).toUpperCase()}${rawInitialStatus.slice(1).toLowerCase()}`
+                : '';
+            const allowedCreateStatuses = ['Draft', 'Active'];
+            const resolvedStatus = allowedCreateStatuses.includes(titleCaseStatus)
+                ? titleCaseStatus
+                : 'Draft';
+
             const packageDoc = await PackageRepository.create({
                 projectId: normalizedProjectId,
                 name: normalizedName,
                 description: description != null ? normalizeString(description) : '',
                 packageType: type != null ? normalizeString(type) : '',
-                status: 'Draft',
+                status: resolvedStatus,
                 dueDate: parseDueDate(dueDate),
                 creatorId: userId,
                 teamMemberIds: normalizedTeamMemberIds,
@@ -272,10 +490,27 @@ class PackageController {
                 ? await PackageRepository.listByProjectIdSorted(normalizedProjectId, scope)
                 : await PackageRepository.listByProjectAndMember(normalizedProjectId, userId, scope);
 
+            const lifecycleMap = await buildPackageLifecycleMap(
+                normalizedProjectId,
+                (packages || []).map((pkg) => pkg.publicId),
+                packages
+            );
+            const enriched = (packages || []).map((pkg) => {
+                const plain = typeof pkg.toObject === 'function' ? pkg.toObject() : pkg;
+                const lifecycle = lifecycleMap.get(String(pkg.publicId))
+                    || evaluatePackageLifecycle({ dbStatus: pkg.status });
+                return {
+                    ...plain,
+                    lifecycleStatus: lifecycle.lifecycleStatus,
+                    progress: lifecycle.progress,
+                    completionCriteria: lifecycle.completionCriteria,
+                };
+            });
+
             return res.status(200).json({
                 success: true,
                 listType: scope,
-                data: packages,
+                data: enriched,
             });
         } catch (error) {
             return serverError(res, error.message || 'Failed to load packages');
@@ -284,7 +519,7 @@ class PackageController {
 
     async listProjectDocuments(req, res) {
         try {
-            const { projectId } = req.body || {};
+            const { projectId, includePackages } = req.body || {};
             const normalizedProjectId = normalizeString(projectId);
             if (!normalizedProjectId) return badRequest(res, 'projectId is required');
 
@@ -296,9 +531,14 @@ class PackageController {
                 return forbidden(res, 'Only project members can view documents');
             }
 
-            const visiblePackages = member.role === 'admin'
-                ? await PackageRepository.listByProjectIdSorted(normalizedProjectId, 'all')
-                : await PackageRepository.listByProjectAndMember(normalizedProjectId, userId, 'all');
+            /** Project Documents tab: only files/folders without packageId. Pass includePackages: true for full tree (e.g. change requests / IFC pickers). */
+            const wantAllPackages = includePackages === true || includePackages === 'true';
+
+            const visiblePackages = wantAllPackages
+                ? (member.role === 'admin'
+                    ? await PackageRepository.listByProjectIdSorted(normalizedProjectId, 'all')
+                    : await PackageRepository.listByProjectAndMember(normalizedProjectId, userId, 'all'))
+                : [];
 
             const visiblePackageIds = new Set((visiblePackages || []).map((pkg) => pkg.publicId));
 
@@ -307,12 +547,24 @@ class PackageController {
                 DocumentFolderRepository.listByProject(normalizedProjectId),
             ]);
 
-            const filteredDocs = (docs || []).filter(
-                (doc) => !doc.packageId || visiblePackageIds.has(doc.packageId)
-            );
-            const filteredFolders = (emptyFolders || []).filter(
-                (folder) => !folder.packageId || visiblePackageIds.has(folder.packageId)
-            );
+            const isProjectRootScope = (row) => {
+                const pid = row?.packageId;
+                return pid == null || pid === '';
+            };
+
+            let filteredDocs;
+            let filteredFolders;
+            if (wantAllPackages) {
+                filteredDocs = (docs || []).filter(
+                    (doc) => !doc.packageId || visiblePackageIds.has(doc.packageId)
+                );
+                filteredFolders = (emptyFolders || []).filter(
+                    (folder) => !folder.packageId || visiblePackageIds.has(folder.packageId)
+                );
+            } else {
+                filteredDocs = (docs || []).filter(isProjectRootScope);
+                filteredFolders = (emptyFolders || []).filter(isProjectRootScope);
+            }
 
             // Only create package nodes for packages that have at least one document or folder.
             // This prevents "phantom folders" from appearing every time a package is created.
@@ -384,9 +636,11 @@ class PackageController {
 
             // Only create package nodes for packages that have actual content (docs or folders).
             // Empty packages won't show up in the Documents tab until user uploads a file/creates a folder.
-            for (const pkg of visiblePackages) {
-                if (packagesWithContent.has(pkg.publicId)) {
-                    resolveScopeNode(pkg.publicId);
+            if (wantAllPackages) {
+                for (const pkg of visiblePackages) {
+                    if (packagesWithContent.has(pkg.publicId)) {
+                        resolveScopeNode(pkg.publicId);
+                    }
                 }
             }
 
@@ -441,6 +695,57 @@ class PackageController {
             return serverError(res, error.message || 'Failed to load project documents');
         }
     }
+
+    async listPackageDocuments(req, res) {
+        try {
+            const { projectId, packageId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedPackageId = normalizeString(packageId);
+
+            if (!normalizedProjectId || !normalizedPackageId) {
+                return badRequest(res, 'projectId and packageId are required');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const access = await validatePackageDocumentAccess({
+                projectId: normalizedProjectId,
+                packageId: normalizedPackageId,
+                userId,
+                allowViewer: true,
+            });
+
+            if (!access.ok) {
+                if (access.status === 404) return notFound(res, access.message);
+                return forbidden(res, access.message);
+            }
+
+            const [docs, folders] = await Promise.all([
+                DocumentRepository.listByProjectAndPackage(normalizedProjectId, normalizedPackageId),
+                DocumentFolderRepository.listByProjectAndPackage(normalizedProjectId, normalizedPackageId),
+            ]);
+
+            const rootId = `root/pkg/${normalizedPackageId}`;
+            const root = buildDocumentsTree({
+                docs,
+                folders,
+                rootId,
+                rootName: access.pkg?.name || 'Package Files',
+            });
+            root.icon = 'package';
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    tree: root,
+                    total: docs.length,
+                },
+            });
+        } catch (error) {
+            return serverError(res, error.message || 'Failed to load package documents');
+        }
+    }
     /**
      * UC-PKG-003: Update Package metadata (name, description, type, dueDate, teamMemberIds)
      */
@@ -492,9 +797,25 @@ class PackageController {
             if (Array.isArray(teamMemberIds)) updateFields.teamMemberIds = teamMemberIds;
 
             if (status !== undefined) {
+                if (String(status).toLowerCase() === 'completed') {
+                    return badRequest(res, 'Completed is a derived status and cannot be set manually');
+                }
                 const validStatuses = ['Draft', 'Active', 'Archived'];
                 if (!validStatuses.includes(status)) {
                     return badRequest(res, `Invalid status. Allowed values: ${validStatuses.join(', ')}`);
+                }
+                const currentStatus = pkg.status;
+                if (currentStatus === 'Active' && status === 'Draft') {
+                    return badRequest(res, 'Cannot move package backward from Active to Draft');
+                }
+                if (currentStatus === 'Draft' && status === 'Archived') {
+                    return badRequest(res, 'Cannot archive package directly from Draft');
+                }
+                if (status === 'Archived' && currentStatus === 'Active') {
+                    const lifecycle = await evaluateSinglePackageLifecycle(normalizedProjectId, pkg);
+                    if (lifecycle.lifecycleStatus !== 'Completed') {
+                        return badRequest(res, 'Only completed packages can be archived');
+                    }
                 }
                 if (status !== pkg.status) {
                     updateFields.status = status;
@@ -510,6 +831,7 @@ class PackageController {
                 normalizedProjectId,
                 updateFields
             );
+            const lifecycle = await evaluateSinglePackageLifecycle(normalizedProjectId, updated);
 
             return res.status(200).json({
                 success: true,
@@ -521,6 +843,9 @@ class PackageController {
                     description: updated.description,
                     packageType: updated.packageType,
                     status: updated.status,
+                    lifecycleStatus: lifecycle.lifecycleStatus,
+                    progress: lifecycle.progress,
+                    completionCriteria: lifecycle.completionCriteria,
                     dueDate: updated.dueDate,
                     teamMemberIds: updated.teamMemberIds,
                     updatedAt: updated.updatedAt,
@@ -573,6 +898,13 @@ class PackageController {
             }
             if (pkg.status !== 'Draft' && pkg.status !== 'Active') {
                 return badRequest(res, 'Only Draft or Active packages can be archived');
+            }
+            if (pkg.status === 'Draft') {
+                return badRequest(res, 'Cannot archive package directly from Draft');
+            }
+            const lifecycle = await evaluateSinglePackageLifecycle(normalizedProjectId, pkg);
+            if (lifecycle.lifecycleStatus !== 'Completed') {
+                return badRequest(res, 'Only completed packages can be archived');
             }
 
             const updated = await PackageRepository.archiveByPublicIdInProject(

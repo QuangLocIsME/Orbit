@@ -6,10 +6,12 @@ import { cn } from '@/lib/utils';
 import { apiUrl } from '@/config/api';
 import { apiFetch } from '@/lib/api-client';
 import NavisworksClashWorkspace from './NavisworksClashWorkspace';
+import { clashesOverviewKey } from './hooks/useNavisworksWorkspace';
 
 interface ClashesTabProps {
   projectPublicId: string;
   projectDisplayName?: string;
+  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
 }
 
 // ─── API types ────────────────────────────────────────────────────────────────
@@ -57,14 +59,41 @@ const iconColors = {
   resolved: 'text-[#10B981] bg-[#D1FAE5]',
 } as const;
 
+/** Page numbers with gaps as ellipsis — avoids rendering dozens of buttons (e.g. 1 2 … 9 10 11 … 17). */
+function compactPaginationPages(currentPage: number, totalPages: number): Array<number | 'ellipsis'> {
+  if (totalPages <= 9) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const delta = 1;
+  const set = new Set<number>();
+  set.add(1);
+  set.add(totalPages);
+  for (let p = currentPage - delta; p <= currentPage + delta; p++) {
+    if (p >= 1 && p <= totalPages) set.add(p);
+  }
+  const sorted = [...set].sort((a, b) => a - b);
+  const out: Array<number | 'ellipsis'> = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+      out.push('ellipsis');
+    }
+    out.push(sorted[i]);
+  }
+  return out;
+}
+
 // ─── Overview UI ──────────────────────────────────────────────────────────────
 
 function ClashOverview({
   projectPublicId,
   onRunDetection,
+  onView3D,
+  canManageClash,
 }: {
   projectPublicId: string;
   onRunDetection: () => void;
+  onView3D: (clash: ClashResult) => void;
+  canManageClash: boolean;
 }) {
   const PAGE_SIZE = 10;
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,7 +101,7 @@ function ClashOverview({
   const [currentPage, setCurrentPage] = useState(1);
 
   const { data, isLoading, isError, refetch } = useQuery<{ clashes: ClashResult[]; summary: ClashSummary }>({
-    queryKey: ['clashes-overview', projectPublicId],
+    queryKey: clashesOverviewKey(projectPublicId),
     queryFn: async () => {
       const res = await apiFetch(apiUrl(`/projects/${encodeURIComponent(projectPublicId)}/navisworks/clashes`));
       if (!res.ok) throw new Error(`Failed to load clashes (${res.status})`);
@@ -111,6 +140,7 @@ function ClashOverview({
         <h2 className="text-[24px] font-normal text-[#101828]">Clash Detection</h2>
         <button
           onClick={onRunDetection}
+          disabled={!canManageClash}
           className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 transition-colors"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -223,6 +253,7 @@ function ClashOverview({
             {clashes.length === 0 && (
               <button
                 onClick={onRunDetection}
+                disabled={!canManageClash}
                 className="mt-1 inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-sm text-white hover:bg-blue-700 transition-colors"
               >
                 Run Detection
@@ -275,7 +306,8 @@ function ClashOverview({
                     </span>
                   </span>
                   <button
-                    onClick={onRunDetection}
+                    type="button"
+                    onClick={() => onView3D(clash)}
                     className="inline-flex items-center gap-1.5 rounded-[10px] bg-[#F3F4F6] px-3 py-1.5 text-xs text-[#364153] hover:bg-gray-200 transition-colors"
                   >
                     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -313,20 +345,31 @@ function ClashOverview({
                 Prev
               </button>
 
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                <button
-                  key={page}
-                  onClick={() => setCurrentPage(page)}
-                  className={cn(
-                    'h-8 w-8 rounded-[10px] text-xs transition-colors',
-                    page === safePage
-                      ? 'bg-[#155DFC] text-white'
-                      : 'border border-[#E5E7EB] bg-white text-[#364153] hover:bg-gray-50'
-                  )}
-                >
-                  {page}
-                </button>
-              ))}
+              {compactPaginationPages(safePage, totalPages).map((item, idx) =>
+                item === 'ellipsis' ? (
+                  <span
+                    key={`ellipsis-${idx}`}
+                    className="flex min-w-[1.25rem] items-center justify-center px-0.5 text-xs font-medium text-[#99A1AF] select-none"
+                    aria-hidden
+                  >
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setCurrentPage(item)}
+                    className={cn(
+                      'h-8 min-w-8 shrink-0 rounded-[10px] px-2 text-xs transition-colors',
+                      item === safePage
+                        ? 'bg-[#155DFC] text-white'
+                        : 'border border-[#E5E7EB] bg-white text-[#364153] hover:bg-gray-50'
+                    )}
+                  >
+                    {item}
+                  </button>
+                )
+              )}
 
               <button
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
@@ -353,8 +396,10 @@ function ClashOverview({
 
 // ─── Main ClashesTab ──────────────────────────────────────────────────────────
 
-export default function ClashesTab({ projectPublicId, projectDisplayName }: ClashesTabProps) {
+export default function ClashesTab({ projectPublicId, projectDisplayName, currentUserRole }: ClashesTabProps) {
   const [showWorkspace, setShowWorkspace] = useState(false);
+  const [workspaceFocus, setWorkspaceFocus] = useState<{ testId: string; clashId: string } | null>(null);
+  const canManageClash = currentUserRole !== 'viewer';
 
   if (!projectPublicId.trim()) {
     return (
@@ -374,7 +419,13 @@ export default function ClashesTab({ projectPublicId, projectDisplayName }: Clas
     return (
       <NavisworksClashWorkspace
         projectSlug={projectPublicId}
-        onBack={() => setShowWorkspace(false)}
+        currentUserRole={currentUserRole}
+        initialTestId={workspaceFocus?.testId ?? null}
+        initialClashId={workspaceFocus?.clashId ?? null}
+        onBack={() => {
+          setShowWorkspace(false);
+          setWorkspaceFocus(null);
+        }}
       />
     );
   }
@@ -382,7 +433,16 @@ export default function ClashesTab({ projectPublicId, projectDisplayName }: Clas
   return (
     <ClashOverview
       projectPublicId={projectPublicId}
-      onRunDetection={() => setShowWorkspace(true)}
+      canManageClash={canManageClash}
+      onRunDetection={() => {
+        if (!canManageClash) return;
+        setWorkspaceFocus(null);
+        setShowWorkspace(true);
+      }}
+      onView3D={(clash) => {
+        setWorkspaceFocus({ testId: clash.testId, clashId: clash.clashId });
+        setShowWorkspace(true);
+      }}
     />
   );
 }

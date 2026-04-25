@@ -1,5 +1,7 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const WebIFC = require('web-ifc');
 const {
     createId,
@@ -211,6 +213,12 @@ const IFC_MEMORY_LIMIT = 512 * 1024 * 1024;
 const MAX_CLASH_TRIANGLES_PER_OBJECT = Number(process.env.ORBIT_CLASH_MESH_MAX_TRIS || '80');
 const ORBIT_DISABLE_CLASH_MESH = process.env.ORBIT_DISABLE_CLASH_MESH === '1';
 const ORBIT_MAX_OBJECTS_WITH_MESH = Number(process.env.ORBIT_MAX_OBJECTS_WITH_MESH || '1200');
+/** When not "0", skip heavy per-triangle clash mesh extraction during IFC parse and rely on XKT + xeokit for overview (default: on). Set to 0 to restore legacy triangle extraction (still stripped before Mongo if XKT succeeds). */
+const ORBIT_NAVISWORKS_IFC_USE_XKT_FOR_VIEWER = process.env.ORBIT_NAVISWORKS_IFC_USE_XKT_FOR_VIEWER !== '0';
+const IFC_CONVERT_COMMAND = process.env.IFC_CONVERT_COMMAND || 'npx xeokit-convert';
+
+const shouldSkipIfcClashMeshWork = () =>
+    ORBIT_DISABLE_CLASH_MESH || ORBIT_NAVISWORKS_IFC_USE_XKT_FOR_VIEWER;
 
 const triCentroid9 = (flat, o) => [
     (flat[o] + flat[o + 3] + flat[o + 6]) / 3,
@@ -377,6 +385,68 @@ const bboxFromVertices = (vertices, matrix, scale = 1) => {
     };
 };
 
+const stripClashMeshesFromObjects = (objects) => {
+    if (!Array.isArray(objects)) return;
+    objects.forEach((object) => {
+        if (object?.clashMesh !== undefined) delete object.clashMesh;
+    });
+};
+
+async function runIfcToXktCli(inputIfcPath, outputXktPath) {
+    await new Promise((resolve, reject) => {
+        const command = `${IFC_CONVERT_COMMAND} -s "${inputIfcPath}" -o "${outputXktPath}"`;
+        const child = spawn(command, { shell: true, stdio: 'pipe' });
+        let stderr = '';
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk?.toString?.() || '';
+        });
+        child.on('close', (code) => {
+            if (code === 0) return resolve();
+            reject(new Error(stderr || `IFC convert exited with code ${code}`));
+        });
+        child.on('error', reject);
+    });
+}
+
+/**
+ * Persists a sidecar .xkt for xeokit overview, strips clashMesh from objects (Mongo 16MB / performance),
+ * and flags the model as sourceFormat xkt when conversion succeeds.
+ */
+async function finalizeNavisworksIfcImport(projectSlug, ifcBuffer, parsed) {
+    if (!parsed?.model?.id || !Buffer.isBuffer(ifcBuffer)) return parsed;
+
+    stripClashMeshesFromObjects(parsed.objects);
+
+    const safeSlug = projectSlug || 'default-project';
+    const xktDir = path.join(LEGACY_PROJECTS_DIR, safeSlug, 'xkt');
+    const xktFile = `${parsed.model.id}.xkt`;
+    const outputXktPath = path.join(xktDir, xktFile);
+    const tempIfc = path.join(os.tmpdir(), `orbit-navis-ifc-${parsed.model.id}-${Date.now()}.ifc`);
+
+    try {
+        fs.mkdirSync(xktDir, { recursive: true });
+        fs.writeFileSync(tempIfc, ifcBuffer);
+        await runIfcToXktCli(tempIfc, outputXktPath);
+        parsed.model.sourceFormat = 'xkt';
+        parsed.model.xktFile = xktFile;
+        console.info(`[importModels] IFC → XKT OK: ${xktFile} (${safeSlug})`);
+    } catch (err) {
+        console.warn(
+            `[importModels] IFC → XKT failed (${safeSlug}, model ${parsed.model.id}): ${err.message}`
+        );
+        parsed.model.sourceFormat = 'ifc';
+        if (parsed.model.xktFile) delete parsed.model.xktFile;
+    } finally {
+        try {
+            if (fs.existsSync(tempIfc)) fs.unlinkSync(tempIfc);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    return parsed;
+}
+
 const parseIfcModel = async (buffer, meta) => {
     const api = await createIfcApi();
     const sourceModelId = meta.sourceModelId || createId('model');
@@ -405,7 +475,7 @@ const parseIfcModel = async (buffer, meta) => {
                     if (vtxPtr >= 0 && vtxSize > 0) {
                         vertices = api.GetVertexArray(vtxPtr, vtxSize);
                     }
-                    if (!ORBIT_DISABLE_CLASH_MESH && vertices) {
+                    if (!shouldSkipIfcClashMeshWork() && vertices) {
                         const idxSize = geometry.GetIndexDataSize();
                         if (idxSize > 0) {
                             const idxPtr = geometry.GetIndexData();
@@ -423,7 +493,7 @@ const parseIfcModel = async (buffer, meta) => {
                 const geometryTransform = mergeMatrices(importTransform, placedGeometry.flatTransformation);
                 const geometryBBox = vertices ? bboxFromVertices(vertices, geometryTransform, unitScale) : null;
 
-                if (!ORBIT_DISABLE_CLASH_MESH && geometryBBox && vertices) {
+                if (!shouldSkipIfcClashMeshWork() && geometryBBox && vertices) {
                     try {
                         appendIfcGeometryTriangles(clashTriangleBuffer, vertices, indices, geometryTransform, unitScale);
                     } catch {
@@ -465,7 +535,7 @@ const parseIfcModel = async (buffer, meta) => {
                 : line.GlobalId || null;
 
             let clashMesh = null;
-            if (!ORBIT_DISABLE_CLASH_MESH && clashTriangleBuffer.length >= 9) {
+            if (!shouldSkipIfcClashMeshWork() && clashTriangleBuffer.length >= 9) {
                 const sampled = subsampleFlatTrianglesSpatial9(clashTriangleBuffer, MAX_CLASH_TRIANGLES_PER_OBJECT);
                 clashMesh = { positions: sampled };
             }
@@ -496,7 +566,7 @@ const parseIfcModel = async (buffer, meta) => {
 
     const objects = Array.from(objectsByExpressId.values());
 
-    if (ORBIT_DISABLE_CLASH_MESH || objects.length > ORBIT_MAX_OBJECTS_WITH_MESH) {
+    if (shouldSkipIfcClashMeshWork() || objects.length > ORBIT_MAX_OBJECTS_WITH_MESH) {
         objects.forEach((object) => {
             delete object.clashMesh;
         });
@@ -598,7 +668,9 @@ class ModelService {
             }
             if (sourceFormat === 'ifc') {
                 try {
-                    parsedImports.push(await parseIfcModel(entry.buffer, entry));
+                    const parsed = await parseIfcModel(entry.buffer, entry);
+                    await finalizeNavisworksIfcImport(projectSlug, entry.buffer, parsed);
+                    parsedImports.push(parsed);
                 } catch (ifcErr) {
                     console.warn(`[importModels] Skipping ${entry.originalName || 'unknown'}: ${ifcErr.message}`);
                     skippedFiles.push(entry.originalName || 'unknown');
@@ -617,8 +689,20 @@ class ModelService {
             throw new Error(`All files failed to parse${detail}. They may be too large or corrupt.`);
         }
 
-        const workspace = await updateWorkspace(projectSlug, (current) =>
-            mergeImportedModels(current, parsedImports));
+        let workspace;
+        try {
+            workspace = await updateWorkspace(projectSlug, (current) =>
+                mergeImportedModels(current, parsedImports));
+        } catch (persistErr) {
+            const msg = persistErr?.message || String(persistErr);
+            if (/maximum|too large|16MB|BSON/i.test(msg)) {
+                throw new Error(
+                    'Workspace document exceeds MongoDB size limit (often large IFC metadata). '
+                        + 'Retry after enabling IFC→XKT overview (default) or reduce federated objects.'
+                );
+            }
+            throw persistErr;
+        }
         const federatedModel = await this.getFederatedModel(projectSlug, workspace);
         return { federatedModel, skippedFiles };
     }

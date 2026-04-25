@@ -435,10 +435,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
       {/* Settings Modal */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={() => setIsSettingsOpen(false)}>
-          <div className="relative w-full max-w-3xl max-h-[90vh] bg-white dark:bg-zinc-900 rounded-xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[100] flex items-stretch justify-start bg-black/40" onClick={() => setIsSettingsOpen(false)}>
+          <div
+            className="relative flex h-full w-[min(420px,calc(100vw-24px))] flex-col overflow-hidden border-r border-gray-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-gray-200 dark:border-zinc-700 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-zinc-700 px-5 py-4">
               <h2 className="text-lg font-semibold text-foreground">Settings</h2>
               <button
                 onClick={() => setIsSettingsOpen(false)}
@@ -451,25 +454,27 @@ export default function Sidebar({ currentPath }: SidebarProps) {
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-gray-200 dark:border-zinc-700 px-6">
-              {(['account', 'community', 'notifications', 'security'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setSettingsTab(tab)}
-                  className={cn(
-                    'px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors capitalize',
-                    settingsTab === tab
-                      ? 'border-indigo-600 text-indigo-600'
-                      : 'border-transparent text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {tab}
-                </button>
-              ))}
+            <div className="overflow-x-auto border-b border-gray-200 dark:border-zinc-700 px-4">
+              <div className="flex min-w-max">
+                {(['account', 'community', 'notifications', 'security'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setSettingsTab(tab)}
+                    className={cn(
+                      'px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors capitalize',
+                      settingsTab === tab
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Tab Content */}
-            <div className="overflow-y-auto max-h-[calc(90vh-120px)] p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
               {settingsTab === 'account' && (
                 <div className="space-y-6">
                   {/* Profile Section */}
@@ -488,21 +493,21 @@ export default function Sidebar({ currentPath }: SidebarProps) {
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-xs text-muted-foreground">Name</p>
-                          <p className="text-sm font-medium">{displayName}</p>
+                          <p className="max-w-[180px] truncate text-sm font-medium">{displayName}</p>
                         </div>
                         <button className="text-xs text-indigo-600 hover:underline">Change</button>
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-xs text-muted-foreground">Email</p>
-                          <p className="text-sm font-medium">{authUser?.email || ''}</p>
+                          <p className="max-w-[180px] truncate text-sm font-medium">{authUser?.email || ''}</p>
                         </div>
                         <button className="text-xs text-indigo-600 hover:underline">Change</button>
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-xs text-muted-foreground">User ID</p>
-                          <p className="text-sm font-medium">{authUser?.id || ''}</p>
+                          <p className="max-w-[180px] truncate text-sm font-medium">{authUser?.id || ''}</p>
                         </div>
                         <button className="text-xs text-indigo-600 hover:underline">View</button>
                       </div>

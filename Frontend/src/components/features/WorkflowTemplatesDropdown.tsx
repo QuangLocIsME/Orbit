@@ -14,6 +14,8 @@ interface WorkflowStageInfo {
 interface WorkflowTemplatesDropdownProps {
   selectedWorkflow?: string;
   projectId?: string;
+  canApply?: boolean;
+  disabledReason?: string;
   onSelect?: (workflowId: string, stages: WorkflowStageInfo[]) => void;
   onConfigureClick?: () => void;
 }
@@ -21,6 +23,8 @@ interface WorkflowTemplatesDropdownProps {
 export default function WorkflowTemplatesDropdown({ 
   selectedWorkflow = '',
   projectId,
+  canApply = true,
+  disabledReason,
   onSelect,
   onConfigureClick 
 }: WorkflowTemplatesDropdownProps) {
@@ -36,28 +40,25 @@ export default function WorkflowTemplatesDropdown({
     setSelected(selectedWorkflow);
   }, [selectedWorkflow]);
 
-  // Fetch custom templates (own + downloaded) from API
+  // Fetch selectable templates (my + downloaded + library)
   useEffect(() => {
     const fetchTemplates = async () => {
       setIsLoading(true);
       try {
-        // Fetch user's own templates AND downloaded templates
-        const [myRes, downloadedRes] = await Promise.all([
+        const [myRes, downloadedRes, libraryRes] = await Promise.all([
           workflowTemplateService.getMyTemplates({ limit: 50 }),
           workflowTemplateService.getDownloadedTemplates({ limit: 50 }),
+          workflowTemplateService.getTemplates({ limit: 100, sort: 'recent' }),
         ]);
-        // Merge both, remove duplicates by publicId
-        const allTemplates = [...myRes.templates];
-        downloadedRes.templates.forEach(t => {
-          if (!allTemplates.find(existing => existing.publicId === t.publicId)) {
-            // Add isDownloadedCopy flag for downloaded templates
-            allTemplates.push({
-              ...t,
-              isDownloadedCopy: true,
-            });
+
+        const byId = new Map<string, WorkflowTemplate>();
+        [...myRes.templates, ...downloadedRes.templates, ...libraryRes.templates].forEach((template) => {
+          if (!template?.publicId) return;
+          if (!byId.has(template.publicId)) {
+            byId.set(template.publicId, template);
           }
         });
-        setCustomTemplates(allTemplates);
+        setCustomTemplates(Array.from(byId.values()));
       } catch (error) {
         console.error('Failed to fetch templates:', error);
       } finally {
@@ -67,11 +68,15 @@ export default function WorkflowTemplatesDropdown({
     fetchTemplates();
 
     // Listen for workflow changes
-    const handleWorkflowCreated = () => fetchTemplates();
-    window.addEventListener('workflow-created', handleWorkflowCreated);
+    const handleWorkflowChanged = () => fetchTemplates();
+    window.addEventListener('workflow-created', handleWorkflowChanged);
+    window.addEventListener('workflow-updated', handleWorkflowChanged);
+    window.addEventListener('workflow-deleted', handleWorkflowChanged);
 
     return () => {
-      window.removeEventListener('workflow-created', handleWorkflowCreated);
+      window.removeEventListener('workflow-created', handleWorkflowChanged);
+      window.removeEventListener('workflow-updated', handleWorkflowChanged);
+      window.removeEventListener('workflow-deleted', handleWorkflowChanged);
     };
   }, []);
 
@@ -81,6 +86,10 @@ export default function WorkflowTemplatesDropdown({
     name: t.name,
     stages: t.stages.map(s => ({ id: s.id, name: s.name })),
   }));
+  const isDisabledByReason = Boolean(disabledReason);
+  const isDropdownDisabled =
+    allTemplates.length === 0 || isApplying || isDisabledByReason || (!canApply && allTemplates.length <= 1);
+  const triggerTitle = disabledReason || (!canApply ? 'Only project owner/admin can change workflow' : undefined);
 
   const selectedTemplate = allTemplates.find(w => w.publicId === selected) || null;
 
@@ -97,9 +106,11 @@ export default function WorkflowTemplatesDropdown({
 
   const handleSelect = async (workflowId: string) => {
     const template = allTemplates.find(w => w.publicId === workflowId);
+    const isChangingWorkflow = selected !== workflowId;
+    const shouldApplyToProject = Boolean(projectId) && canApply && isChangingWorkflow && !isDisabledByReason;
     
-    // Apply workflow template to project
-    if (projectId) {
+    // Apply workflow template to project when user has permission
+    if (shouldApplyToProject) {
       setIsApplying(true);
       try {
         const res = await apiFetch('/api/projects/workflow/apply-template', {
@@ -112,7 +123,7 @@ export default function WorkflowTemplatesDropdown({
         });
 
         if (!res.ok) {
-          const error = await res.json();
+          const error = await res.json().catch(() => null);
           toast.error(error.message || 'Failed to apply workflow template');
           setIsApplying(false);
           return;
@@ -138,13 +149,15 @@ export default function WorkflowTemplatesDropdown({
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative" ref={dropdownRef} title={triggerTitle}>
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        disabled={allTemplates.length === 0 || isApplying}
-        className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-[14px] text-[#101828] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={isDropdownDisabled}
+        className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-[14px] text-[#101828] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        title={triggerTitle}
       >
+        <span className="inline-flex items-center gap-2 leading-none">
         {isApplying ? (
           <>
             <svg className="h-4 w-4 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
@@ -155,15 +168,16 @@ export default function WorkflowTemplatesDropdown({
           </>
         ) : selectedTemplate ? (
           <>
-            <span className="h-2 w-2 rounded-full bg-[#155DFC]"></span>
-            <span>{selectedTemplate.name}</span>
-            <span className="text-[12px] text-[#6A7282]">({selectedTemplate.stages.length} stages)</span>
+            <span className="h-2 w-2 shrink-0 rounded-full bg-[#155DFC]"></span>
+            <span className="leading-none">{selectedTemplate.name}</span>
+            <span className="text-[12px] leading-none text-[#6A7282]">({selectedTemplate.stages.length} stages)</span>
           </>
         ) : (
-          <span className="text-[#6A7282]">Select Workflow</span>
+          <span className="leading-none text-[#6A7282]">Select Workflow</span>
         )}
+        </span>
         <svg 
-          className={cn("h-4 w-4 text-[#99A1AF] transition-transform", isOpen && "rotate-180")} 
+          className={cn("ml-1 h-4 w-4 shrink-0 text-[#99A1AF] transition-transform", isOpen && "rotate-180")} 
           fill="none" 
           stroke="currentColor" 
           viewBox="0 0 24 24"
@@ -189,7 +203,7 @@ export default function WorkflowTemplatesDropdown({
                 <button
                   key={workflow.publicId}
                   onClick={() => handleSelect(workflow.publicId)}
-                  disabled={isApplying}
+                  disabled={isApplying || isDisabledByReason || (!canApply && selected !== workflow.publicId)}
                   className={cn(
                     "w-full flex items-center justify-between px-4 py-3 text-left transition-colors",
                     selected === workflow.publicId
@@ -197,6 +211,7 @@ export default function WorkflowTemplatesDropdown({
                       : "text-[#101828] hover:bg-gray-50",
                     isApplying && "opacity-50 cursor-not-allowed"
                   )}
+                  title={disabledReason || (!canApply && selected !== workflow.publicId ? 'Only project owner/admin can change workflow' : undefined)}
                 >
                   <span className={cn(
                     "text-[14px]",

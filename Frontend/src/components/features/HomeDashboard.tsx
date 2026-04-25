@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
-import { DashboardSkeleton } from '@/components/ui/skeletons';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAppStore } from '@/stores/appStore';
 import { apiFetch } from '@/lib/api-client';
+import { loadCustomIndustriesRaw } from './CreateProjectModal';
 
 // Types
 interface Project {
@@ -18,7 +19,12 @@ interface Project {
   teamMembers?: number;
   issues?: number;
   status?: 'active' | 'review' | 'paused' | 'completed';
-  projectType?: 'construction' | 'design' | 'software' | 'research';
+  projectType?: string;
+  industryName?: string;
+  customIndustry?: {
+    icon: string;
+    color: string;
+  };
   isFavorite?: boolean;
 }
 
@@ -143,6 +149,82 @@ function formatRelativeTime(dateString: string): string {
   return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 }
 
+function toSlug(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+const PROJECT_TYPE_VISUALS: Record<string, {
+  gradient: string;
+  badge: string;
+  iconPath: string;
+}> = {
+  software: {
+    gradient: 'bg-gradient-to-br from-cyan-50 to-cyan-100',
+    badge: 'bg-cyan-500 text-white',
+    iconPath: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
+  },
+  design: {
+    gradient: 'bg-gradient-to-br from-purple-50 to-purple-100',
+    badge: 'bg-purple-500 text-white',
+    iconPath: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01',
+  },
+  construction: {
+    gradient: 'bg-gradient-to-br from-blue-50 to-blue-100',
+    badge: 'bg-blue-500 text-white',
+    iconPath: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
+  },
+  research: {
+    gradient: 'bg-gradient-to-br from-teal-50 to-teal-100',
+    badge: 'bg-teal-500 text-white',
+    iconPath: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+  },
+  marketing: {
+    gradient: 'bg-gradient-to-br from-red-50 to-red-100',
+    badge: 'bg-red-500 text-white',
+    iconPath: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z',
+  },
+  default: {
+    gradient: 'bg-gradient-to-br from-gray-50 to-gray-100',
+    badge: 'bg-gray-500 text-white',
+    iconPath: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
+  },
+};
+
+const CUSTOM_COLOR_VISUALS: Record<string, { gradient: string; badge: string }> = {
+  red: { gradient: 'bg-gradient-to-br from-red-50 to-red-100', badge: 'bg-red-500 text-white' },
+  orange: { gradient: 'bg-gradient-to-br from-orange-50 to-orange-100', badge: 'bg-orange-500 text-white' },
+  amber: { gradient: 'bg-gradient-to-br from-amber-50 to-amber-100', badge: 'bg-amber-500 text-white' },
+  green: { gradient: 'bg-gradient-to-br from-green-50 to-green-100', badge: 'bg-green-500 text-white' },
+  teal: { gradient: 'bg-gradient-to-br from-teal-50 to-teal-100', badge: 'bg-teal-500 text-white' },
+  blue: { gradient: 'bg-gradient-to-br from-blue-50 to-blue-100', badge: 'bg-blue-500 text-white' },
+  purple: { gradient: 'bg-gradient-to-br from-purple-50 to-purple-100', badge: 'bg-purple-500 text-white' },
+  pink: { gradient: 'bg-gradient-to-br from-pink-50 to-pink-100', badge: 'bg-pink-500 text-white' },
+  violet: { gradient: 'bg-gradient-to-br from-violet-50 to-violet-100', badge: 'bg-violet-500 text-white' },
+  gray: { gradient: 'bg-gradient-to-br from-gray-50 to-gray-100', badge: 'bg-gray-500 text-white' },
+  yellow: { gradient: 'bg-gradient-to-br from-yellow-50 to-yellow-100', badge: 'bg-yellow-500 text-white' },
+  rose: { gradient: 'bg-gradient-to-br from-rose-50 to-rose-100', badge: 'bg-rose-500 text-white' },
+};
+
+const CUSTOM_ICON_PATHS: Record<string, string> = {
+  building: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
+  code: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
+  megaphone: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z',
+  scale: 'M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3',
+  palette: 'M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01',
+  chart: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
+  bank: 'M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z',
+  music: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
+  cloud: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z',
+  heart: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
+  scissors: 'M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z',
+  book: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+};
+
 // Main component
 export default function HomeDashboard({ userName: initialUserName }: HomeDashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -165,13 +247,18 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
           const mappedProjects: Project[] = (projectsData.data || []).map((p: {
             publicId: string;
             name: string;
+            industry?: string;
             description?: string;
             coverImageUrl?: string;
             status?: string;
             role?: string;
             folderId?: string | null;
             lastVisitedAt?: string | null;
-          }) => ({
+          }) => {
+            const industryName = String(p.industry || '');
+            const customIndustries = loadCustomIndustriesRaw();
+            const customMatch = customIndustries.find((item) => toSlug(item.name) === toSlug(industryName));
+            return {
             id: p.publicId,
             slug: p.publicId,
             name: p.name,
@@ -180,9 +267,12 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
             lastVisited: p.lastVisitedAt ? new Date(p.lastVisitedAt).toISOString() : new Date().toISOString(),
             category: 'shared' as const,
             status: (p.status as Project['status']) || 'active',
-            projectType: (p.industry || 'software').toLowerCase() as Project['projectType'],
+            projectType: toSlug(industryName || 'software'),
+            industryName,
+            customIndustry: customMatch ? { icon: customMatch.iconId, color: customMatch.colorId } : undefined,
             isFavorite: false,
-          }));
+          };
+          });
           setProjects(mappedProjects);
         }
 
@@ -353,7 +443,7 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
     }
   };
 
-  if (!isHydrated || loading) return <DashboardSkeleton />;
+  if (!isHydrated || loading) return <Skeleton />;
 
   return (
     <div className="space-y-8 py-6 px-6 lg:px-[80px] xl:px-[160px]">
@@ -445,7 +535,17 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
           <span className="text-sm font-medium">Recently visited</span>
         </div>
         <div className="flex gap-4 overflow-x-auto scrollbar-hide">
-          {recentProjects.map((project) => (
+          {recentProjects.map((project) => {
+            const typeKey = toSlug(project.projectType || project.industryName || '');
+            const baseVisual = PROJECT_TYPE_VISUALS[typeKey];
+            const customColor = project.customIndustry?.color ? CUSTOM_COLOR_VISUALS[project.customIndustry.color] : null;
+            const customIconPath = project.customIndustry?.icon ? CUSTOM_ICON_PATHS[project.customIndustry.icon] : null;
+            const visual = baseVisual || (customColor ? {
+              gradient: customColor.gradient,
+              badge: customColor.badge,
+              iconPath: customIconPath || CUSTOM_ICON_PATHS.building,
+            } : PROJECT_TYPE_VISUALS.default);
+            return (
             <a
               key={project.id}
               href={`/projects/${project.slug}`}
@@ -468,26 +568,14 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
                 <div className={cn(
                   "absolute inset-0 flex items-center justify-center",
                   project.thumbnail ? "hidden" : "",
-                  project.projectType === 'software' && "bg-gradient-to-br from-cyan-50 to-cyan-100",
-                  project.projectType === 'design' && "bg-gradient-to-br from-purple-50 to-purple-100",
-                  project.projectType === 'construction' && "bg-gradient-to-br from-blue-50 to-blue-100",
-                  project.projectType === 'research' && "bg-gradient-to-br from-teal-50 to-teal-100",
-                  !project.projectType && "bg-gradient-to-br from-gray-50 to-gray-100"
+                  visual.gradient
                 )}>
                   <div className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-lg",
-                    project.projectType === 'software' && "bg-cyan-500 text-white",
-                    project.projectType === 'design' && "bg-purple-500 text-white",
-                    project.projectType === 'construction' && "bg-blue-500 text-white",
-                    project.projectType === 'research' && "bg-teal-500 text-white",
-                    !project.projectType && "bg-gray-500 text-white"
+                    visual.badge
                   )}>
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      {project.projectType === 'software' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />}
-                      {project.projectType === 'design' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />}
-                      {project.projectType === 'construction' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />}
-                      {project.projectType === 'research' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />}
-                      {!project.projectType && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />}
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={visual.iconPath} />
                     </svg>
                   </div>
                 </div>
@@ -497,7 +585,8 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
                 <p className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(project.lastVisited)}</p>
               </div>
             </a>
-          ))}
+            );
+          })}
         </div>
       </section>
 

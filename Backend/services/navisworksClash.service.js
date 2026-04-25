@@ -473,8 +473,23 @@ class NavisworksClashService {
             throw new Error(`Clash result not found: ${clashId}`);
         }
 
-        const testId = updatedRun.testId;
-        return await this.getRun(projectSlug, testId, updatedRun.id);
+        const hit = updatedRun.results.find((result) => result.clashId === clashId);
+        if (!hit) {
+            throw new Error(`Clash result not found after update: ${clashId}`);
+        }
+
+        /** Avoid getRun() → getFederatedModel() on every PATCH (very slow on large federated models). Client merges this + invalidates queries. */
+        return {
+            clashPatch: {
+                clashId,
+                sourceTestId: hit.sourceTestId,
+                note: hit.note || '',
+                assignee: hit.assignee || 'Unassigned',
+                status: hit.status,
+                updatedAt: hit.updatedAt,
+            },
+            runSummary: updatedRun.summary,
+        };
     }
 
     async applyObjectActions(projectSlug, payload = {}) {

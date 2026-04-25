@@ -29,6 +29,10 @@ router.post('/documents/list', authenticate, (req, res) =>
     PackageController.listProjectDocuments(req, res)
 );
 
+router.post('/documents/package/list', authenticate, (req, res) =>
+    PackageController.listPackageDocuments(req, res)
+);
+
 router.post('/documents/folders/create', authenticate, (req, res) =>
     PackageController.createDocumentFolder(req, res)
 );

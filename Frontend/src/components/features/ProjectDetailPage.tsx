@@ -8,22 +8,16 @@ import type { Project } from '@/types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
+import ScopedTasksPanel from './ScopedTasksPanel';
+import ScopedActivityPanel from './ScopedActivityPanel';
 import ProjectTopBar from '@/components/layout/ProjectTopBar';
-import CreateTaskModal from './CreateTaskModal';
-import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
 import ClashesTab from './clash/ClashesTab';
 import { ClashViewerProvider } from './clash/state/clashStore';
 import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import ChangesTab from './ChangesTab';
-import TaskBoard, { type WorkflowStage } from './TaskBoard';
-import TaskCalendar from './TaskCalendar';
-import TaskDetailPage from './TaskDetailPage';
-import {
-  Dialog,
-  DialogContent,
-} from '@/components/ui/dialog';
+import type { WorkflowStage } from './TaskBoard';
 import {
   DndContext,
   DragOverlay,
@@ -528,7 +522,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       const res = await apiFetch(`/api/projects/packages/documents/list`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: project.publicId }),
+        body: JSON.stringify({ projectId: project.publicId, includePackages: true }),
       });
 
       if (res.ok) {
@@ -1549,220 +1543,10 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Tasks Tab */}
         {activeTab === 'tasks' && (
-          <div className="flex flex-col h-full py-6 px-6 lg:px-[80px] xl:px-[160px]">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-[#E5E7EB]">
-<div className="flex items-center gap-3">
-              {/* Workflow dropdown */}
-              <WorkflowTemplatesDropdown 
-                selectedWorkflow={selectedWorkflowId}
-                projectId={project.publicId}
-                onSelect={(workflowId, stages) => {
-                  setSelectedWorkflowId(workflowId);
-                  setSelectedWorkflowStages(stages);
-                }}
-                onConfigureClick={() => console.log('Configure workflow clicked')}
-              />
-  {/* New Task button */}
-  <button
-  onClick={() => setIsNewTaskModalOpen(true)}
-  className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors"
-  >
-  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-  </svg>
-  New Task
-  </button>
-  </div>
-
-              {/* View toggle */}
-              <div className="flex items-center gap-1 rounded-[10px] bg-[#F3F4F6] p-1">
-                <button
-                  onClick={() => setTasksViewMode('board')}
-                  className={cn(
-                    "p-1.5 rounded-[8px] transition-colors",
-                    tasksViewMode === 'board' ? "bg-white shadow-sm" : "hover:bg-gray-200"
-                  )}
-                >
-                  <svg className="h-4 w-4 text-[#4A5565]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                    <rect x="2" y="2" width="5" height="5" rx="1" />
-                    <rect x="9" y="2" width="5" height="5" rx="1" />
-                    <rect x="2" y="9" width="5" height="5" rx="1" />
-                    <rect x="9" y="9" width="5" height="5" rx="1" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setTasksViewMode('list')}
-                  className={cn(
-                    "p-1.5 rounded-[8px] transition-colors",
-                    tasksViewMode === 'list' ? "bg-white shadow-sm" : "hover:bg-gray-200"
-                  )}
-                >
-                  <svg className="h-4 w-4 text-[#4A5565]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                    <path d="M2 4h12M2 8h12M2 12h12" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setTasksViewMode('calendar')}
-                  className={cn(
-                    "p-1.5 rounded-[8px] transition-colors",
-                    tasksViewMode === 'calendar' ? "bg-white shadow-sm" : "hover:bg-gray-200"
-                  )}
-                >
-                  <svg className="h-4 w-4 text-[#4A5565]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                    <rect x="2" y="3" width="12" height="11" rx="1" />
-                    <path d="M2 6h12M5 1v4M11 1v4" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            {/* Search and Filters */}
-            <div className="flex items-center justify-between py-4">
-              <div className="relative flex-1 max-w-md">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Search tasks..."
-                  value={tasksSearchQuery}
-                  onChange={(e) => setTasksSearchQuery(e.target.value)}
-                  className="w-full rounded-[10px] border border-[#E5E7EB] bg-white pl-9 pr-4 py-2 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#364153] hover:bg-gray-50">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
-                  </svg>
-                  Filters
-                </button>
-                <button className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#364153] hover:bg-gray-50">
-                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-                    <path d="M8 7.33333C9.47276 7.33333 10.6667 6.13943 10.6667 4.66667C10.6667 3.19391 9.47276 2 8 2C6.52724 2 5.33333 3.19391 5.33333 4.66667C5.33333 6.13943 6.52724 7.33333 8 7.33333Z" />
-                    <path d="M3.33333 14V12.6667C3.33333 11.9594 3.61428 11.2811 4.11438 10.781C4.61448 10.281 5.29276 10 6 10H10C10.7072 10 11.3855 10.281 11.8856 10.781C12.3857 11.2811 12.6667 11.9594 12.6667 12.6667V14" />
-                  </svg>
-                  Assignee
-                </button>
-                <button className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#364153] hover:bg-gray-50">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
-                  </svg>
-                  Tags
-                </button>
-              </div>
-            </div>
-
-            {/* Board View - Drag & Drop */}
-            {tasksViewMode === 'board' && (
-              <div className='flex-1 overflow-x-auto'>
-                <TaskBoard
-                  tasks={filteredTasks}
-                  teamMembers={teamMembers}
-                  loading={isTasksLoading}
-                  stages={selectedWorkflowStages}
-                  onTaskStatusChange={handleTaskStatusChange}
-                  onTaskClick={setSelectedTaskId}
-                  onAddTask={(stageId) => {
-                    setPendingTaskStageId(stageId);
-                    setIsNewTaskModalOpen(true);
-                  }}
-                />
-              </div>
-            )}
-  {/* List View */}
-            {tasksViewMode === 'list' && (
-              <div className="flex-1 overflow-auto">
-                <div className="rounded-[10px] border border-[#E5E7EB] bg-white overflow-hidden">
-                  {/* Table Header */}
-                  <div className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] text-[12px] font-medium text-[#6A7282] uppercase tracking-wide">
-                    <div>Task</div>
-                    <div>Status</div>
-                    <div>Priority</div>
-                    <div>Due Date</div>
-                    <div>Assignee</div>
-                    <div></div>
-                  </div>
-
-                  {/* Table Body */}
-                  {filteredTasks.map((task) => {
-                      const assignee = teamMembers.find(m => m.id === task.assigneeId);
-                      const stage = selectedWorkflowStages.find(s => s.id === task.status);
-                      return (
-                        <div key={task.id} className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 border-b border-[#E5E7EB] hover:bg-gray-50 items-center">
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedTaskId(task.id)}
-                              className="text-left text-[14px] text-[#101828] hover:text-[#155DFC] hover:underline"
-                            >
-                              {task.title}
-                            </button>
-                            <div className="flex gap-1">
-                              {task.tags.map((tag) => (
-                                <span key={tag} className="inline-flex items-center rounded-[6px] bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#4A5565]">
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                          <div>
-                            <span className={cn(
-                              "inline-flex items-center rounded px-2 py-0.5 text-[12px] bg-[#F3F4F6] text-[#364153]"
-                            )}>
-                              {stage?.name || task.status}
-                            </span>
-                          </div>
-                          <div>
-                            <span className={cn(
-                              "inline-flex items-center rounded px-2 py-0.5 text-[12px]",
-                              task.priority === 'urgent' && "bg-[#FEE2E2] text-[#DC2626]",
-                              task.priority === 'high' && "bg-[#FEE2E2] text-[#DC2626]",
-                              task.priority === 'medium' && "bg-[#F0F9FF] text-[#0069A8]",
-                              task.priority === 'low' && "bg-[#F3F4F6] text-[#364153]"
-                            )}>
-                              {task.priority}
-                            </span>
-                          </div>
-                          <div className="text-[14px] text-[#6A7282]">
-                            {task.dueDate ? formatDate(task.dueDate) : '-'}
-                          </div>
-                          <div>
-                            {assignee && (
-                              <div className="flex items-center gap-2">
-                                <div className={cn("h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white", assignee.color)}>
-                                  {assignee.avatar}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          <div>
-                            <button className="p-1 hover:bg-gray-100 rounded">
-                              <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
-
-            {/* Calendar View */}
-            {tasksViewMode === 'calendar' && (
-              <div className="flex-1 overflow-auto">
-                <TaskCalendar
-                  tasks={filteredTasks}
-                  teamMembers={teamMembers}
-                  onTaskClick={setSelectedTaskId}
-                />
-              </div>
-            )}
-          </div>
+          <ScopedTasksPanel
+            scope={{ type: 'project', projectId: project.publicId }}
+            projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
+          />
         )}
 
         {/* New Change Request Modal — disabled, handled by ChangesTab */}
@@ -2748,7 +2532,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Clashes Tab */}
         {activeTab === 'clashes' && (
-          <ClashesTab projectPublicId={project.publicId} projectDisplayName={project.name} />
+          <ClashesTab
+            projectPublicId={project.publicId}
+            projectDisplayName={project.name}
+            currentUserRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
+          />
         )}
 
         {/* Teams Tab */}
@@ -2759,6 +2547,14 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {/* Extensions Tab */}
         {activeTab === 'extensions' && (
           <ExtensionsTab />
+        )}
+
+        {/* Activity Tab — full feed (overview shows compact recent list separately) */}
+        {activeTab === 'activity' && (
+          <ScopedActivityPanel
+            scope={{ type: 'project', projectId: project.publicId }}
+            title="Activity Feed"
+          />
         )}
 
         {/* Settings Tab */}
@@ -2774,7 +2570,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         )}
   
         {/* Other Tabs - Placeholder (only for tabs without content yet) */}
-        {!['overview', 'packages', 'documents', 'versions', 'changes', 'tasks', 'clashes', 'teams', 'extensions', 'settings'].includes(activeTab) && (
+        {!['overview', 'packages', 'documents', 'versions', 'changes', 'tasks', 'clashes', 'teams', 'extensions', 'activity', 'settings'].includes(activeTab) && (
           <div className="flex flex-col items-center justify-center rounded-xl border border-gray-200 bg-white py-20">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 mb-4">
               <svg className="h-8 w-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2786,58 +2582,6 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           </div>
         )}
 
-        {/* Task Detail Dialog */}
-        <Dialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
-          <DialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
-            {selectedTaskId && (
-              <TaskDetailPage projectPublicId={project.publicId} taskId={selectedTaskId} />
-            )}
-          </DialogContent>
-        </Dialog>
-
-        {/* Create Task Modal */}
-        <CreateTaskModal
-          isOpen={isNewTaskModalOpen}
-          onClose={() => { setIsNewTaskModalOpen(false); setPendingTaskStageId(undefined); }}
-          assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
-          tagOptions={projectTaskTags}
-          workflowStages={selectedWorkflowStages}
-          defaultStageId={pendingTaskStageId}
-          onSubmit={async (task) => {
-            try {
-              const response = await apiFetch('/api/tasks/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                body: JSON.stringify({
-                  projectId: project.publicId,
-                  title: task.title,
-                  status: task.status,
-                  priority: task.priority,
-                  description: task.description,
-                  assigneeId: task.assignee || undefined,
-                  dueDate: task.dueDate || undefined,
-                  linkedUrl: task.linkedItems || undefined,
-                  tags: task.tags,
-                }),
-              });
-
-              if (response.status === 404) {
-                toast.error('Tasks API is not available yet');
-                return;
-              }
-
-              if (!response.ok) {
-                toast.error('Failed to create task');
-                return;
-              }
-
-              toast.success('Task created');
-              await loadProjectTasks();
-            } catch {
-              toast.error('Failed to create task');
-            }
-          }}
-        />
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ const Task = require('../models/Task');
 const TaskComment = require('../models/TaskComment');
 const User = require('../models/User');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const PackageRepository = require('../repositories/PackageRepository');
 const socketService = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
@@ -31,6 +32,70 @@ const normalizePriority = (value) => {
     return ['low', 'medium', 'high', 'urgent'].includes(normalized) ? normalized : 'medium';
 };
 
+const normalizePackageId = (value) => {
+    const normalized = normalizeString(value);
+    return normalized || null;
+};
+
+/** Project roles that may create tasks and change task status (not viewers). */
+const canMutateProjectTasks = (member) => {
+    if (!member || member.status !== 'accepted') return false;
+    return ['owner', 'admin', 'manager', 'member'].includes(member.role);
+};
+
+const canChangeTaskStatus = ({ member, userId, task }) => {
+    if (!member || member.status !== 'accepted' || !task) return false;
+    if (['owner', 'admin', 'manager'].includes(member.role)) return true;
+    if (member.role !== 'member') return false;
+    return Boolean(task.assigneeId) && String(task.assigneeId) === String(userId);
+};
+
+const buildScopeFilter = (projectId, packageId = null) => {
+    if (packageId) {
+        return { projectId, packageId };
+    }
+
+    return {
+        projectId,
+        $or: [
+            { packageId: null },
+            { packageId: '' },
+            { packageId: { $exists: false } },
+        ],
+    };
+};
+
+const getTaskLink = (projectId, packageId, taskId) => {
+    if (packageId) {
+        return `/projects/${projectId}/packages/${packageId}?tab=tasks&taskId=${taskId}`;
+    }
+
+    return `/projects/${projectId}/tasks/${taskId}`;
+};
+
+const validatePackageAccess = async ({ projectId, packageId, userId, member, requireManageAccess = false }) => {
+    if (!packageId) return { ok: true, pkg: null };
+
+    const pkg = await PackageRepository.findByPublicIdInProject(packageId, projectId);
+    if (!pkg || pkg.status === 'Archived') {
+        return { ok: false, status: 404, message: 'Package not found' };
+    }
+
+    const canViewPackage = member?.role === 'admin'
+        || pkg.creatorId === userId
+        || (pkg.teamMemberIds || []).includes(userId);
+
+    if (!canViewPackage) {
+        return { ok: false, status: 403, message: 'Forbidden' };
+    }
+
+    if (requireManageAccess && member?.role === 'viewer') {
+        return { ok: false, status: 403, message: 'Forbidden' };
+    }
+
+    return { ok: true, pkg };
+};
+
 class TaskController {
     async createTask(req, res) {
         try {
@@ -38,11 +103,24 @@ class TaskController {
             if (!userId) return;
 
             const projectId = normalizeString(req.body?.projectId);
+            const packageId = normalizePackageId(req.body?.packageId);
             const title = normalizeString(req.body?.title);
             if (!projectId || !title) return badRequest(res, 'Missing projectId or title');
 
             const actor = await ProjectMemberRepository.findMember(projectId, userId);
-            if (!actor || !['admin'].includes(actor.role)) return forbidden(res);
+            if (!canMutateProjectTasks(actor)) return forbidden(res);
+
+            const packageAccess = await validatePackageAccess({
+                projectId,
+                packageId,
+                userId,
+                member: actor,
+                requireManageAccess: true,
+            });
+            if (!packageAccess.ok) {
+                if (packageAccess.status === 404) return notFound(res, packageAccess.message);
+                return forbidden(res);
+            }
 
             const assigneeId = normalizeString(req.body?.assigneeId);
             if (assigneeId) {
@@ -52,6 +130,7 @@ class TaskController {
 
             const task = await Task.create({
                 projectId,
+                packageId,
                 title,
                 description: normalizeString(req.body?.description),
                 status: normalizeStatus(req.body?.status),
@@ -64,13 +143,17 @@ class TaskController {
                 updatedAt: new Date(),
             });
 
+            if (packageId) {
+                await PackageRepository.addTaskIdToPackage(packageId, projectId, task.publicId);
+            }
+
             if (assigneeId) {
                 socketService.notifyUser(assigneeId, 'notification:new', {
                     id: `task-assigned:${task.publicId}`,
                     type: 'info',
                     title: 'New task assigned',
                     message: `${title}`,
-                    link: `/projects/${projectId}/tasks/${task.publicId}`,
+                    link: getTaskLink(projectId, packageId, task.publicId),
                     read: false,
                     createdAt: new Date().toISOString(),
                 });
@@ -88,12 +171,24 @@ class TaskController {
             if (!userId) return;
 
             const projectId = normalizeString(req.body?.projectId || req.query?.projectId);
+            const packageId = normalizePackageId(req.body?.packageId || req.query?.packageId);
             if (!projectId) return badRequest(res, 'Missing projectId');
 
             const member = await ProjectMemberRepository.findMember(projectId, userId);
             if (!member) return forbidden(res);
 
-            const tasks = await Task.find({ projectId }).sort({ createdAt: -1 }).lean();
+            const packageAccess = await validatePackageAccess({
+                projectId,
+                packageId,
+                userId,
+                member,
+            });
+            if (!packageAccess.ok) {
+                if (packageAccess.status === 404) return notFound(res, packageAccess.message);
+                return forbidden(res);
+            }
+
+            const tasks = await Task.find(buildScopeFilter(projectId, packageId)).sort({ createdAt: -1 }).lean();
             return res.status(200).json({ success: true, data: tasks });
         } catch {
             return serverError(res, 'Load tasks failed');
@@ -107,12 +202,24 @@ class TaskController {
 
             const projectId = normalizeString(req.body?.projectId);
             const taskId = normalizeString(req.body?.taskId);
+            const packageId = normalizePackageId(req.body?.packageId);
             if (!projectId || !taskId) return badRequest(res, 'Missing projectId or taskId');
 
             const member = await ProjectMemberRepository.findMember(projectId, userId);
             if (!member) return forbidden(res);
 
-            const task = await Task.findOne({ publicId: taskId, projectId }).lean();
+            const packageAccess = await validatePackageAccess({
+                projectId,
+                packageId,
+                userId,
+                member,
+            });
+            if (!packageAccess.ok) {
+                if (packageAccess.status === 404) return notFound(res, packageAccess.message);
+                return forbidden(res);
+            }
+
+            const task = await Task.findOne({ publicId: taskId, ...buildScopeFilter(projectId, packageId) }).lean();
             if (!task) return notFound(res, 'Task not found');
 
             let assignee = null;
@@ -140,21 +247,40 @@ class TaskController {
             const projectId = normalizeString(req.body?.projectId);
             const taskId = normalizeString(req.body?.taskId);
             const status = normalizeStatus(req.body?.status);
+            const packageId = normalizePackageId(req.body?.packageId);
             if (!projectId || !taskId || !status) return badRequest(res, 'Missing projectId, taskId or status');
 
             const member = await ProjectMemberRepository.findMember(projectId, userId);
-            if (!member || !['admin'].includes(member.role)) return forbidden(res);
+            if (!canMutateProjectTasks(member)) return forbidden(res);
+
+            const packageAccess = await validatePackageAccess({
+                projectId,
+                packageId,
+                userId,
+                member,
+                requireManageAccess: true,
+            });
+            if (!packageAccess.ok) {
+                if (packageAccess.status === 404) return notFound(res, packageAccess.message);
+                return forbidden(res);
+            }
+
+            const currentTask = await Task.findOne({ publicId: taskId, ...buildScopeFilter(projectId, packageId) }).lean();
+            if (!currentTask) return notFound(res, 'Task not found');
+            if (!canChangeTaskStatus({ member, userId, task: currentTask })) {
+                return forbidden(res, 'Only owner/admin/manager or the assigned member can update task status');
+            }
 
             const updated = await Task.findOneAndUpdate(
-                { publicId: taskId, projectId },
+                { _id: currentTask._id },
                 { status, updatedAt: new Date() },
                 { returnDocument: 'after' }
             ).lean();
-
             if (!updated) return notFound(res, 'Task not found');
 
             socketService.broadcastProject(projectId, 'task:status-changed', {
                 projectId,
+                packageId,
                 taskId,
                 status,
             });
@@ -172,12 +298,24 @@ class TaskController {
 
             const projectId = normalizeString(req.body?.projectId);
             const taskId = normalizeString(req.body?.taskId);
+            const packageId = normalizePackageId(req.body?.packageId);
             if (!projectId || !taskId) return badRequest(res, 'Missing projectId or taskId');
 
             const member = await ProjectMemberRepository.findMember(projectId, userId);
             if (!member) return forbidden(res);
 
-            const comments = await TaskComment.find({ projectId, taskId }).sort({ createdAt: -1 }).lean();
+            const packageAccess = await validatePackageAccess({
+                projectId,
+                packageId,
+                userId,
+                member,
+            });
+            if (!packageAccess.ok) {
+                if (packageAccess.status === 404) return notFound(res, packageAccess.message);
+                return forbidden(res);
+            }
+
+            const comments = await TaskComment.find({ taskId, ...buildScopeFilter(projectId, packageId) }).sort({ createdAt: -1 }).lean();
 
             const authorIds = [...new Set(comments.map((c) => c.authorId).filter(Boolean))];
             const users = authorIds.length
@@ -204,27 +342,44 @@ class TaskController {
             const projectId = normalizeString(req.body?.projectId);
             const taskId = normalizeString(req.body?.taskId);
             const content = normalizeString(req.body?.content);
+            const packageId = normalizePackageId(req.body?.packageId);
             if (!projectId || !taskId || !content) return badRequest(res, 'Missing projectId, taskId or content');
 
             const member = await ProjectMemberRepository.findMember(projectId, userId);
             if (!member) return forbidden(res);
 
-            const task = await Task.findOne({ publicId: taskId, projectId });
+            const packageAccess = await validatePackageAccess({
+                projectId,
+                packageId,
+                userId,
+                member,
+            });
+            if (!packageAccess.ok) {
+                if (packageAccess.status === 404) return notFound(res, packageAccess.message);
+                return forbidden(res);
+            }
+
+            const task = await Task.findOne({ publicId: taskId, ...buildScopeFilter(projectId, packageId) });
             if (!task) return notFound(res, 'Task not found');
 
             const comment = await TaskComment.create({
                 taskId,
                 projectId,
+                packageId: task.packageId || null,
                 authorId: userId,
                 content,
                 createdAt: new Date(),
                 updatedAt: new Date(),
             });
 
-            await Task.updateOne({ publicId: taskId, projectId }, { $inc: { commentsCount: 1 }, $set: { updatedAt: new Date() } });
+            await Task.updateOne(
+                { publicId: taskId, ...buildScopeFilter(projectId, task.packageId || null) },
+                { $inc: { commentsCount: 1 }, $set: { updatedAt: new Date() } }
+            );
 
             socketService.broadcastProject(projectId, 'task:commented', {
                 projectId,
+                packageId: task.packageId || null,
                 taskId,
                 commentId: comment.publicId,
             });
@@ -254,6 +409,9 @@ class TaskController {
 
             const comment = await TaskComment.findOne({ publicId: commentId });
             if (!comment) return notFound(res, 'Comment not found');
+
+            const member = await ProjectMemberRepository.findMember(comment.projectId, userId);
+            if (!member) return forbidden(res);
 
             // Only author can edit their own comment
             if (comment.authorId !== userId) return forbidden(res);
@@ -289,16 +447,16 @@ class TaskController {
             if (!comment) return notFound(res, 'Comment not found');
 
             const member = await ProjectMemberRepository.findMember(comment.projectId, userId);
-            const isAdmin = member && member.role === 'admin';
+            if (!member) return forbidden(res);
             const isAuthor = comment.authorId === userId;
 
-            // Only author or admin can delete
-            if (!isAuthor && !isAdmin) return forbidden(res);
+            // Only author can delete their own comment
+            if (!isAuthor) return forbidden(res);
 
             await TaskComment.deleteOne({ publicId: commentId });
 
             await Task.updateOne(
-                { publicId: comment.taskId, projectId: comment.projectId },
+                { publicId: comment.taskId, ...buildScopeFilter(comment.projectId, comment.packageId || null) },
                 { $inc: { commentsCount: -1 }, $set: { updatedAt: new Date() } }
             );
 

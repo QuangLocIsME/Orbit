@@ -61,12 +61,14 @@ export function useNotifications(): UseNotificationsReturn {
     });
   }, []);
 
+  const resolveProjectName = useCallback((data: InviteNotification) => {
+    if (data.projectName && data.projectName !== 'a project') return data.projectName;
+    return projects.find((p) => String(p.publicId) === String(data.projectId))?.name || 'a project';
+  }, [projects]);
+
   const handleInviteNew = useCallback((data: InviteNotification) => {
     const id = `invite:${data.inviteId}`;
-    const resolvedProjectName =
-      data.projectName && data.projectName !== 'a project'
-        ? data.projectName
-        : projects.find((p) => String(p.publicId) === String(data.projectId))?.name || 'a project';
+    const resolvedProjectName = resolveProjectName(data);
 
     // Dedupe: only add if not already in list
     setNotifications((prev) => {
@@ -90,7 +92,7 @@ export function useNotifications(): UseNotificationsReturn {
       return next;
     });
     setInviteUnreadCount((prev) => prev + 1);
-  }, [projects]);
+  }, [resolveProjectName]);
 
   useEffect(() => {
     if (!isAuthenticated()) return;
@@ -131,17 +133,22 @@ export function useNotifications(): UseNotificationsReturn {
     };
 
     const inviteHandler = (data: InviteNotification) => {
-      handleInviteNew(data);
+      const resolvedProjectName = resolveProjectName(data);
+      const normalizedInviteData: InviteNotification = {
+        ...data,
+        projectName: resolvedProjectName,
+      };
+      handleInviteNew(normalizedInviteData);
       // Show Sonner toast at bottom-right
       toast(
-        `${data.inviterName} invited you to join "${data.projectName}"`,
+        `${normalizedInviteData.inviterName} invited you to join "${normalizedInviteData.projectName}"`,
         {
           duration: Infinity,
           action: {
             label: 'View',
             onClick: () => {
               window.dispatchEvent(
-                new CustomEvent('orbit:show-invite-dialog', { detail: data })
+                new CustomEvent('orbit:show-invite-dialog', { detail: normalizedInviteData })
               );
             },
           },
@@ -156,7 +163,7 @@ export function useNotifications(): UseNotificationsReturn {
       socket.off('notification:new', handler);
       socket.off('invite:new', inviteHandler);
     };
-  }, [push, handleInviteNew]);
+  }, [push, handleInviteNew, resolveProjectName]);
 
   const markRead = useCallback((id: string) => {
     setNotifications((prev) => {

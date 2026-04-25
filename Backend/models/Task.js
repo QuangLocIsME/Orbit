@@ -9,6 +9,7 @@ const TaskSchema = new mongoose.Schema({
         default: () => crypto.randomUUID(),
     },
     projectId: { type: String, required: true, index: true },
+    packageId: { type: String, default: null, index: true },
     title: { type: String, required: true, trim: true },
     description: { type: String, default: '', trim: true },
     status: { type: String, default: 'backlog', trim: true },
@@ -27,5 +28,7 @@ const TaskSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });
+
+TaskSchema.index({ projectId: 1, packageId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Task', TaskSchema);

@@ -1,8 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Eye,
   FileText,
   FlaskConical,
   FolderTree,
@@ -192,6 +194,10 @@ function SidebarActionBanner({ banner, className }: { banner: ActionBanner | nul
 interface NavisworksClashWorkspaceProps {
   projectSlug: string;
   onBack?: () => void;
+  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
+  /** From landing "View 3D" — selects this clash test and row in Results */
+  initialTestId?: string | null;
+  initialClashId?: string | null;
 }
 
 const triggerDownload = async (url: string, filename?: string) => {
@@ -208,16 +214,23 @@ const triggerDownload = async (url: string, filename?: string) => {
   URL.revokeObjectURL(objectUrl);
 };
 
-export default function NavisworksClashWorkspace({ projectSlug, onBack }: NavisworksClashWorkspaceProps) {
+export default function NavisworksClashWorkspace({
+  projectSlug,
+  onBack,
+  currentUserRole,
+  initialTestId = null,
+  initialClashId = null,
+}: NavisworksClashWorkspaceProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarPanelId = useId();
   const objectIdDatalistId = useId();
-  const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
-  const [selectedClashId, setSelectedClashId] = useState<string | null>(null);
+  const openFromLanding = Boolean(initialTestId ?? initialClashId);
+  const [selectedTestId, setSelectedTestId] = useState<string | null>(() => initialTestId ?? null);
+  const [selectedClashId, setSelectedClashId] = useState<string | null>(() => initialClashId ?? null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [planeView, setPlaneView] = useState<'2d' | '3d'>('3d');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('select');
+  const [sidebarOpen, setSidebarOpen] = useState(() => openFromLanding);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => (openFromLanding ? 'results' : 'select'));
   const [dragActive, setDragActive] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'reviewed' | 'resolved'>('all');
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -293,7 +306,13 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   );
 
   /** When false, main viewer shows federated overview only. When true, show clash geometry for the selected test (first last-run result if any). Set true when picking a test, after Run, or when choosing a row in Results. */
-  const [showClashInMainViewer, setShowClashInMainViewer] = useState(false);
+  const [showClashInMainViewer, setShowClashInMainViewer] = useState(() => openFromLanding);
+  const canManageClash = currentUserRole !== 'viewer';
+  const denyViewerEdits = () => {
+    const msg = 'Viewer can only view clash data.';
+    setError(msg);
+    toast.warning(msg);
+  };
 
   const { data: projectMembers = [], isFetching: projectMembersLoading } = useProjectMembers(projectSlug);
 
@@ -307,6 +326,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     deleteClashTest,
     runClashTest,
     updateClashStatus,
+    quietUpdateClashStatus,
     applyObjectActions,
   } = useNavisworksWorkspace(projectSlug);
 
@@ -375,6 +395,15 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     }
   }, [selectedTestId, workspace?.clashTests]);
 
+  useEffect(() => {
+    if (!workspace?.clashTests?.length || !selectedTestId) return;
+    const exists = workspace.clashTests.some((t) => t.id === selectedTestId);
+    if (!exists) {
+      setSelectedTestId(workspace.clashTests[0].id);
+      setSelectedClashId(null);
+    }
+  }, [workspace?.clashTests, selectedTestId]);
+
   const resultsQuery = useNavisworksClashResults(projectSlug, selectedTestId);
   const runPayload = resultsQuery.data;
   const selectedTest = workspace?.clashTests.find((test) => test.id === selectedTestId) ?? null;
@@ -401,7 +430,12 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
       setSelectedClashId(results[0].clashId);
       return;
     }
-    if (selectedClashId && !results.some((result) => result.clashId === selectedClashId)) {
+    /** Empty `results` usually means results query still loading — do not treat as "clash missing" or we wipe deep-link `initialClashId` and fall back to the first row when data arrives. */
+    if (
+      selectedClashId &&
+      results.length > 0 &&
+      !results.some((result) => result.clashId === selectedClashId)
+    ) {
       setSelectedClashId(results[0]?.clashId ?? null);
     }
   }, [results, selectedClashId, showClashInMainViewer]);
@@ -423,20 +457,44 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   const viewerClash =
     showClashInMainViewer && selectedResult ? resultToViewerClash(selectedResult) : null;
 
-  const federatedOverviewScene = useMemo(
+  /** Models served as XKT use xeokit mesh; skip per-element box/mesh overlay in 3D to avoid double geometry. */
+  const modelIdsWithXkt = useMemo(
+    () =>
+      new Set(models.filter((m) => m.sourceFormat === 'xkt' && m.xktFile).map((m) => m.id)),
+    [models]
+  );
+
+  const objectsForOverviewScene3d = useMemo(
+    () => allObjects.filter((o) => !modelIdsWithXkt.has(o.sourceModelId)),
+    [allObjects, modelIdsWithXkt]
+  );
+
+  const federatedOverviewScene3d = useMemo(
+    () =>
+      buildOverviewSceneFromFederated(objectsForOverviewScene3d, {
+        hiddenModelIds,
+        hiddenCategories,
+        maxObjects: objectsForOverviewScene3d.length,
+      }),
+    [objectsForOverviewScene3d, hiddenCategories, hiddenModelIds]
+  );
+
+  /** 2D plan view uses bbox from federated metadata (still stored for IFC→XKT imports); not filtered by XKT. */
+  const federatedOverviewScene2d = useMemo(
     () =>
       buildOverviewSceneFromFederated(allObjects, {
         hiddenModelIds,
         hiddenCategories,
-        // No cap — show all visible objects. Mesh is pre-subsampled (80 tris/object) so
-        // even large federated models stay within xeokit's performance budget.
         maxObjects: allObjects.length,
       }),
     [allObjects, hiddenCategories, hiddenModelIds]
   );
 
   const overviewSceneForViewer =
-    !viewerClash && models.length > 0 ? federatedOverviewScene : undefined;
+    !viewerClash && models.length > 0 ? federatedOverviewScene3d : undefined;
+
+  const overviewSceneForViewer2d =
+    !viewerClash && models.length > 0 ? federatedOverviewScene2d : undefined;
 
   const xktModelsForViewer = useMemo(
     () =>
@@ -449,7 +507,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   const hasXktOnlyOverview = Boolean(
     !viewerClash &&
       models.length > 0 &&
-      federatedOverviewScene.length === 0 &&
+      federatedOverviewScene2d.length === 0 &&
       xktModelsForViewer.length > 0
   );
 
@@ -471,7 +529,14 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     setSelectedObjectId(selectedResult.objectA);
     setNoteDraft(selectedResult.note || '');
     setAssigneeDraft(normalizeAssigneeForDisplay(selectedResult.assignee));
-  }, [clearInspectorActionBanner, normalizeAssigneeForDisplay, selectedResult?.assignee, selectedResult?.clashId]);
+  }, [
+    clearInspectorActionBanner,
+    normalizeAssigneeForDisplay,
+    selectedResult?.assignee,
+    selectedResult?.clashId,
+    selectedResult?.note,
+    selectedResult?.status,
+  ]);
 
   useEffect(() => {
     if (!selectedResult) clearInspectorActionBanner();
@@ -612,6 +677,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   const saveSelectionSetDraft = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!validateSelectionSetDraft()) return;
     try {
       setError(null);
@@ -697,6 +763,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   const saveClashTestDraft = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!validateClashTestDraft()) return;
     try {
       setError(null);
@@ -738,6 +805,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   const importModelFiles = async (files: File[], openSidebarAfter = true) => {
+    if (!canManageClash) return denyViewerEdits();
     if (files.length === 0) return;
     try {
       setError(null);
@@ -793,6 +861,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   const executeRunTest = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!selectedTestId) return;
     setRunTestDialogOpen(false);
     try {
@@ -816,39 +885,56 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   /** Marks resolved (only manual workflow action left). */
-  const markSelectedClashResolved = async () => {
+  const markSelectedClashResolved = () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!selectedResult) return;
-    try {
-      setError(null);
-      await updateClashStatus.mutateAsync({
+    setError(null);
+    updateClashStatus.mutate(
+      {
         clashId: selectedResult.clashId,
+        sourceTestId: selectedResult.sourceTestId,
         status: 'resolved',
         note: noteDraft,
         assignee: assigneeDraft,
-      });
-      await resultsQuery.refetch();
-      toast.success('Clash marked as resolved.');
-    } catch (statusError) {
-      const msg = statusError instanceof Error ? statusError.message : 'Failed to update clash status';
-      setError(msg);
-      toast.error(msg);
-    }
+      },
+      {
+        onSuccess: () => toast.success('Clash marked as resolved.'),
+        onError: (statusError) => {
+          const msg =
+            statusError instanceof Error ? statusError.message : 'Failed to update clash status';
+          setError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   };
 
-  /** After a short delay, opening a New clash in the inspector promotes it to Reviewed (no toast). Cache refresh via mutation onSuccess. */
+  /** After a short delay, opening a New clash in the inspector promotes it to Reviewed (no toast). Uses quietUpdateClashStatus so the Save button is not stuck on "Saving…" from shared isPending. */
   useEffect(() => {
+    if (!canManageClash) return;
     if (!showClashInMainViewer || !selectedResult || selectedResult.status !== 'new') return;
     const { clashId } = selectedResult;
+    const sourceTestId = selectedResult.sourceTestId;
     const timer = window.setTimeout(() => {
-      void updateClashStatus.mutateAsync({ clashId, status: 'reviewed' }).catch(() => {
-        /* ignore — e.g. permission */
-      });
+      void quietUpdateClashStatus
+        .mutateAsync({ clashId, status: 'reviewed', sourceTestId })
+        .catch(() => {
+          /* ignore — e.g. permission */
+        });
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [selectedResult?.clashId, selectedResult?.status, showClashInMainViewer, updateClashStatus]);
+  }, [
+    canManageClash,
+    selectedResult?.clashId,
+    selectedResult?.sourceTestId,
+    selectedResult?.status,
+    showClashInMainViewer,
+    quietUpdateClashStatus,
+  ]);
 
   /** Persist note & assignee; also sets Reviewed when not resolved (keeps workflow in sync). */
   const saveClashInspectorDetails = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!selectedResult) {
       const msg = 'Select a clash in the list before saving.';
       toast.error(msg);
@@ -867,11 +953,11 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
       setError(null);
       await updateClashStatus.mutateAsync({
         clashId: selectedResult.clashId,
+        sourceTestId: selectedResult.sourceTestId,
         note: noteTrim,
         assignee: assigneeTrim,
         ...(selectedResult.status !== 'resolved' ? { status: 'reviewed' as const } : {}),
       });
-      await resultsQuery.refetch();
       setNoteDraft(noteTrim);
       setAssigneeDraft(assigneeTrim);
       toast.success('Note and assignee saved.');
@@ -890,34 +976,42 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
     }
   };
 
-  const hideObject = async (objectId: string) => {
-    try {
-      setError(null);
-      await applyObjectActions.mutateAsync({ action: 'hide', objectIds: [objectId] });
-      await resultsQuery.refetch();
-      toast.success('Object hidden for clash tests.');
-    } catch (hideError) {
-      const msg = hideError instanceof Error ? hideError.message : 'Failed to hide object';
-      setError(msg);
-      toast.error(msg);
-    }
+  const hideObject = (objectId: string) => {
+    if (!canManageClash) return denyViewerEdits();
+    setError(null);
+    applyObjectActions.mutate(
+      { action: 'hide', objectIds: [objectId] },
+      {
+        onSuccess: () => toast.success('Object hidden for clash tests.'),
+        onError: (hideError) => {
+          const msg = hideError instanceof Error ? hideError.message : 'Failed to hide object';
+          setError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   };
 
-  const showObjects = async (objectIds: string[]) => {
+  const showObjects = (objectIds: string[]) => {
+    if (!canManageClash) return denyViewerEdits();
     if (objectIds.length === 0) return;
-    try {
-      setError(null);
-      await applyObjectActions.mutateAsync({ action: 'show', objectIds });
-      await resultsQuery.refetch();
-      toast.success(`${objectIds.length} object${objectIds.length === 1 ? '' : 's'} shown again.`);
-    } catch (showError) {
-      const msg = showError instanceof Error ? showError.message : 'Failed to show objects';
-      setError(msg);
-      toast.error(msg);
-    }
+    setError(null);
+    applyObjectActions.mutate(
+      { action: 'show', objectIds },
+      {
+        onSuccess: () =>
+          toast.success(`${objectIds.length} object${objectIds.length === 1 ? '' : 's'} shown again.`),
+        onError: (showError) => {
+          const msg = showError instanceof Error ? showError.message : 'Failed to show objects';
+          setError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   };
 
   const resetHiddenObjects = async () => {
+    if (!canManageClash) return denyViewerEdits();
     const ids = persistedHiddenObjects.map((object) => object.id);
     if (ids.length === 0) return;
     await showObjects(ids);
@@ -970,19 +1064,33 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   const confirmDeleteClashTest = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!pendingDeleteTestId) return;
     const id = pendingDeleteTestId;
     setPendingDeleteTestId(null);
+    const hadSelection = selectedTestId === id;
+    const prevClashId = selectedClashId;
+    const prevShowViewer = showClashInMainViewer;
     try {
       setError(null);
+      /** Unsubscribe from results query before DELETE + workspace invalidation, or GET /results for this id races and returns "Clash test not found". */
+      flushSync(() => {
+        if (hadSelection) {
+          setSelectedTestId(null);
+          setSelectedClashId(null);
+          setShowClashInMainViewer(false);
+        }
+      });
       await deleteClashTest.mutateAsync(id);
-      if (selectedTestId === id) {
-        setSelectedTestId(null);
-        setSelectedClashId(null);
-        setShowClashInMainViewer(false);
-      }
       toast.success('Clash test deleted.');
     } catch (deleteError) {
+      if (hadSelection) {
+        flushSync(() => {
+          setSelectedTestId(id);
+          setSelectedClashId(prevClashId);
+          setShowClashInMainViewer(prevShowViewer);
+        });
+      }
       const msg = deleteError instanceof Error ? deleteError.message : 'Failed to delete clash test';
       setError(msg);
       toast.error(msg);
@@ -990,6 +1098,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
   };
 
   const confirmDeleteSelectionSet = async () => {
+    if (!canManageClash) return denyViewerEdits();
     if (!pendingDeleteSetId) return;
     const id = pendingDeleteSetId;
     setPendingDeleteSetId(null);
@@ -1026,10 +1135,15 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
       <div
         className={cn(
           'flex h-[calc(100dvh-7.5rem)] min-h-[520px] flex-col',
-          '[&_button]:transition-[transform,filter] [&_button]:duration-100',
+          '[&_button]:transition-[transform,filter,box-shadow] [&_button]:duration-150',
+          '[&_button:not(:disabled)]:cursor-pointer',
           '[&_button]:active:scale-[0.98] [&_button]:active:brightness-[0.93]',
-          '[&_button:disabled]:pointer-events-none [&_button:disabled]:active:scale-100 [&_button:disabled]:active:brightness-100',
-          'motion-reduce:[&_button]:active:scale-100'
+          '[&_button:disabled]:pointer-events-none [&_button:disabled]:cursor-not-allowed [&_button:disabled]:active:scale-100 [&_button:disabled]:active:brightness-100',
+          '[&_button:focus-visible]:outline-none [&_button:focus-visible]:ring-2 [&_button:focus-visible]:ring-[#155DFC]/30 [&_button:focus-visible]:ring-offset-2 [&_button:focus-visible]:ring-offset-white',
+          '[&_input]:transition-colors [&_input]:duration-150 [&_input:focus-visible]:outline-none [&_input:focus-visible]:ring-2 [&_input:focus-visible]:ring-[#155DFC]/20 [&_input:disabled]:cursor-not-allowed [&_input:disabled]:bg-[#F3F4F6]',
+          '[&_select]:transition-colors [&_select]:duration-150 [&_select:focus-visible]:outline-none [&_select:focus-visible]:ring-2 [&_select:focus-visible]:ring-[#155DFC]/20 [&_select:disabled]:cursor-not-allowed [&_select:disabled]:bg-[#F3F4F6]',
+          '[&_textarea]:transition-colors [&_textarea]:duration-150 [&_textarea:focus-visible]:outline-none [&_textarea:focus-visible]:ring-2 [&_textarea:focus-visible]:ring-[#155DFC]/20 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:bg-[#F3F4F6]',
+          'motion-reduce:[&_button]:active:scale-100 motion-reduce:[&_button]:transition-none'
         )}
       >
         {/* ── Top header bar ── */}
@@ -1048,6 +1162,22 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
               </button>
             )}
             <h2 className="text-base font-semibold text-[#101828]">Clash Detection</h2>
+            {!canManageClash && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    tabIndex={0}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700"
+                  >
+                    <Eye className="size-3.5" aria-hidden />
+                    Read-only mode (Viewer)
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-xs">
+                  Viewer can only view clash data. Editing actions such as note/assign/resolve/run test/hide/show/delete/import are disabled.
+                </TooltipContent>
+              </Tooltip>
+            )}
             {error && (
               <span className="inline-flex items-center gap-1 rounded-full bg-[#FEF2F2] px-2.5 py-1 text-xs font-medium text-[#B91C1C]">
                 <svg className="size-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
@@ -1057,12 +1187,20 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
             {persistedHiddenObjects.length > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
                 {persistedHiddenObjects.length} hidden
-                <button type="button" onClick={() => void resetHiddenObjects()} className="ml-0.5 underline underline-offset-1">Reset</button>
+                <button
+                  type="button"
+                  disabled={!canManageClash}
+                  onClick={() => void resetHiddenObjects()}
+                  className="ml-0.5 underline underline-offset-1"
+                >
+                  Reset
+                </button>
               </span>
             )}
           </div>
           <button
             type="button"
+            disabled={!canManageClash}
             onClick={() => { setSelectedDocIds(new Set()); setImportModalOpen(true); }}
             className="inline-flex items-center gap-2 rounded-lg bg-[#155DFC] px-3.5 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
           >
@@ -1218,7 +1356,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                     <button
                       type="button"
                       onClick={() => setRunTestDialogOpen(true)}
-                      disabled={!selectedTestId || runClashTest.isPending}
+                      disabled={!canManageClash || !selectedTestId || runClashTest.isPending}
                       className={cn(
                         'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-colors',
                         !selectedTestId || runClashTest.isPending ? 'cursor-not-allowed bg-[#93C5FD]' : 'bg-[#155DFC] hover:bg-blue-700'
@@ -1269,6 +1407,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
+                                if (!canManageClash) return denyViewerEdits();
                                 setPendingDeleteTestId(test.id);
                               }}
                               className="shrink-0 text-xs text-[#DC2626]"
@@ -1447,7 +1586,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                       <SidebarActionBanner banner={clashTestActionBanner} />
                       <button
                         type="button"
-                        disabled={saveClashTest.isPending}
+                        disabled={!canManageClash || saveClashTest.isPending}
                         onClick={() => void saveClashTestDraft()}
                         className={cn(
                           'mt-3 w-full rounded-lg px-3 py-2 text-sm font-medium text-white',
@@ -1464,6 +1603,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                   <div className="space-y-5">
                     <button
                       type="button"
+                      disabled={!canManageClash}
                       onClick={() => setImportModalOpen(true)}
                       className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#D1D5DC] bg-white py-2.5 text-sm text-[#364153] hover:bg-gray-50"
                     >
@@ -1528,7 +1668,14 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                           <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] p-2.5">
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs font-medium uppercase tracking-[0.14em] text-[#6A7282]">Persisted hidden</p>
-                              <button type="button" onClick={() => void resetHiddenObjects()} className="text-xs font-medium text-[#155DFC]">Show all</button>
+                              <button
+                                type="button"
+                                disabled={!canManageClash}
+                                onClick={() => void resetHiddenObjects()}
+                                className="text-xs font-medium text-[#155DFC]"
+                              >
+                                Show all
+                              </button>
                             </div>
                             <div className="mt-2 space-y-1.5">
                               {persistedHiddenObjects.map((object) => (
@@ -1537,7 +1684,14 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                                     <p className="truncate text-xs font-medium text-[#101828]">{object.id}</p>
                                     <p className="truncate text-[11px] text-[#6A7282]">{object.type} · {object.sourceModel}</p>
                                   </div>
-                                  <button type="button" onClick={() => void showObjects([object.id])} className="shrink-0 rounded border border-[#D1D5DC] px-2 py-1 text-[11px] text-[#364153]">Show</button>
+                                  <button
+                                    type="button"
+                                    disabled={!canManageClash}
+                                    onClick={() => void showObjects([object.id])}
+                                    className="shrink-0 rounded border border-[#D1D5DC] px-2 py-1 text-[11px] text-[#364153]"
+                                  >
+                                    Show
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -1558,7 +1712,14 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                                   {selectionSet.filters.modelIds.length} models · {selectionSet.filters.categories.length} categories · {selectionSet.manualIncludeIds.length} manual
                                 </p>
                               </div>
-                              <button type="button" onClick={() => setPendingDeleteSetId(selectionSet.id)} className="shrink-0 text-xs text-[#DC2626]">Delete</button>
+                              <button
+                                type="button"
+                                disabled={!canManageClash}
+                                onClick={() => setPendingDeleteSetId(selectionSet.id)}
+                                className="shrink-0 text-xs text-[#DC2626]"
+                              >
+                                Delete
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -1720,7 +1881,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                           <SidebarActionBanner banner={selectionSetActionBanner} />
                           <button
                             type="button"
-                            disabled={saveSelectionSet.isPending}
+                            disabled={!canManageClash || saveSelectionSet.isPending}
                             onClick={() => void saveSelectionSetDraft()}
                             className={cn(
                               'mt-3 w-full rounded-lg px-3 py-2 text-sm font-medium text-white',
@@ -1923,6 +2084,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                                     </div>
                                     <button
                                       type="button"
+                                      disabled={!canManageClash}
                                       onClick={() => void (aHidden ? showObjects([selectedResult.objectA]) : hideObject(selectedResult.objectA))}
                                       className={cn(
                                         'shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150',
@@ -1950,6 +2112,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                                     </div>
                                     <button
                                       type="button"
+                                      disabled={!canManageClash}
                                       onClick={() => void (bHidden ? showObjects([selectedResult.objectB]) : hideObject(selectedResult.objectB))}
                                       className={cn(
                                         'shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150',
@@ -1977,6 +2140,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                               className="w-full resize-none rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none transition-colors focus:border-[#155DFC] focus:ring-2 focus:ring-blue-500/10"
                               placeholder="Add coordination notes..."
                               value={noteDraft}
+                              disabled={!canManageClash}
                               maxLength={INSPECTOR_NOTE_MAX_LEN}
                               onChange={(event) => {
                                 clearInspectorActionBanner();
@@ -1995,6 +2159,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                             <select
                               className="w-full cursor-pointer rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm outline-none transition-colors focus:border-[#155DFC] focus:ring-2 focus:ring-blue-500/10"
                               value={assigneeDraft}
+                              disabled={!canManageClash}
                               onChange={(event) => {
                                 clearInspectorActionBanner();
                                 setAssigneeDraft(event.target.value);
@@ -2025,7 +2190,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                           <button
                             type="button"
                             onClick={() => void saveClashInspectorDetails()}
-                            disabled={updateClashStatus.isPending}
+                            disabled={!canManageClash || updateClashStatus.isPending}
                             className={cn(
                               'flex w-full items-center justify-center gap-2 rounded-xl border border-[#155DFC] px-4 py-3 text-sm font-semibold text-[#155DFC] transition-all duration-150 hover:bg-[#EFF6FF] active:scale-[0.98]',
                               updateClashStatus.isPending && 'cursor-wait opacity-70'
@@ -2039,7 +2204,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                           <button
                             type="button"
                             onClick={() => setResolveDialogOpen(true)}
-                            disabled={selectedResult.status === 'resolved'}
+                            disabled={!canManageClash || selectedResult.status === 'resolved'}
                             className={cn(
                               'flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#009966] to-[#059669] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-500/20 transition-all duration-150 hover:shadow-lg hover:shadow-emerald-500/30 active:scale-[0.98]',
                               selectedResult.status === 'resolved' && 'cursor-not-allowed bg-emerald-300 hover:bg-emerald-300 hover:shadow-none'
@@ -2165,6 +2330,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                 <p className="max-w-sm text-xs text-[#6A7282]">Import IFC files from this project's Documents to start detecting clashes.</p>
                 <button
                   type="button"
+                  disabled={!canManageClash}
                   onClick={() => setImportModalOpen(true)}
                   className="rounded-lg bg-[#155DFC] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
@@ -2207,7 +2373,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                       selectedObjectId={selectedObjectId}
                       onSelectObject={setSelectedObjectId}
                       hiddenObjectIds={viewerHiddenObjectIds}
-                      overviewScene={overviewSceneForViewer}
+                      overviewScene={overviewSceneForViewer2d}
                       allowObjectMove={false}
                       objectMeshPositions={objectMeshPositions}
                       testScopeObjectIds={activeTestScopeObjectIds}
@@ -2398,7 +2564,7 @@ export default function NavisworksClashWorkspace({ projectSlug, onBack }: Navisw
                 </button>
                 <button
                   type="button"
-                  disabled={selectedDocIds.size === 0 || importFromDocuments.isPending}
+                  disabled={!canManageClash || selectedDocIds.size === 0 || importFromDocuments.isPending}
                   onClick={async () => {
                     try {
                       setError(null);

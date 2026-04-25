@@ -4,24 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
-import {
-  FileText,
-  FolderPlus,
-  Upload,
-  Image as ImageIcon,
-  CheckCircle,
-  Clock,
-  Users,
-  Activity as ActivityIcon,
-  Settings,
-  MoreHorizontal,
-  ChevronRight,
-  Plus,
-  Search,
-  Download,
-  Upload as UploadIcon,
-  X,
-} from 'lucide-react';
+import { CheckCircle, Clock, FileText, Users, ChevronRight, Plus } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import ProjectDocumentsManager from './ProjectDocumentsManager';
+import ScopedTasksPanel from './ScopedTasksPanel';
+import ScopedActivityPanel from './ScopedActivityPanel';
 
 interface PackageDetailPageProps {
   projectPublicId?: string;
@@ -34,247 +21,225 @@ interface PackageItem {
   name: string;
   description: string;
   status: string;
+  lifecycleStatus?: 'Draft' | 'Active' | 'Completed' | 'Archived';
+  progress?: number;
+  completionCriteria?: {
+    completed: boolean;
+    hasTasks: boolean;
+    allTasksDone: boolean;
+    hasDocuments: boolean;
+    hasMembers: boolean;
+  };
   dueDate?: string;
-  teamMembers?: number;
-  completedTasks?: number;
-  totalTasks?: number;
-  documentCount?: number;
+  creatorId?: string;
+  teamMemberIds?: string[];
 }
 
-interface TreeNode {
+interface TeamMemberView {
   id: string;
   name: string;
-  type: 'folder' | 'file';
-  icon?: string;
-  children?: TreeNode[];
-  s3Url?: string;
-  category?: string;
+  email: string;
+  role: string;
+  avatar: string;
+}
+
+interface TaskSummary {
+  id: string;
+  title: string;
+  status: string;
+  assigneeName: string;
 }
 
 type TabId = 'overview' | 'tasks' | 'documents' | 'team' | 'activity';
+type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+const getInitials = (name: string) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'U';
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+};
 
 export default function PackageDetailPage({ projectPublicId, packageId }: PackageDetailPageProps) {
   const [loading, setLoading] = useState(true);
   const [pkg, setPkg] = useState<PackageItem | null>(null);
-  const [documentsTree, setDocumentsTree] = useState<TreeNode | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [projectRole, setProjectRole] = useState<ProjectRole>('member');
+  const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
+  const [recentTasks, setRecentTasks] = useState<TaskSummary[]>([]);
+  const [documentsCount, setDocumentsCount] = useState(0);
+  const [completedTasksCount, setCompletedTasksCount] = useState(0);
+  const [totalTasksCount, setTotalTasksCount] = useState(0);
+  const [allProjectMembers, setAllProjectMembers] = useState<TeamMemberView[]>([]);
+  const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [savingMembers, setSavingMembers] = useState(false);
+  const canManagePackageMembers = projectRole === 'owner' || projectRole === 'admin';
+  const canManagePackageDocuments = projectRole !== 'viewer';
 
   useEffect(() => {
-    const handleTabChange = (e: CustomEvent<{ tabId: string }>) => {
-      const tab = e.detail.tabId as TabId;
-      if (['overview', 'tasks', 'documents', 'team', 'activity'].includes(tab)) {
-        setActiveTab(tab);
+    let cancelled = false;
+
+    const loadPackage = async (): Promise<PackageItem> => {
+      if (projectPublicId) {
+        const listRes = await apiFetch('/api/projects/packages/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: projectPublicId, listType: 'all' }),
+        });
+        if (!listRes.ok) throw new Error('Cannot load packages');
+        const payload = await listRes.json();
+        const items = Array.isArray(payload?.data) ? payload.data : [];
+        const found = items.find((item: any) => item.publicId === packageId);
+        if (found) return found;
+      } else {
+        const projectsRes = await apiFetch('/api/projects/me');
+        if (!projectsRes.ok) throw new Error('Cannot load projects');
+        const projectPayload = await projectsRes.json();
+        const projects = Array.isArray(projectPayload?.data) ? projectPayload.data : [];
+
+        for (const project of projects) {
+          const listRes = await apiFetch('/api/projects/packages/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: project.publicId, listType: 'all' }),
+          });
+          if (!listRes.ok) continue;
+          const payload = await listRes.json();
+          const items = Array.isArray(payload?.data) ? payload.data : [];
+          const found = items.find((item: any) => item.publicId === packageId);
+          if (found) return found;
+        }
       }
+
+      throw new Error('Package not found or you do not have access');
     };
-    window.addEventListener('orbit:topbar-tab-change', handleTabChange as EventListener);
-    return () => window.removeEventListener('orbit:topbar-tab-change', handleTabChange as EventListener);
-  }, []);
 
-  const [selectedFolderType, setSelectedFolderType] = useState<'files' | 'images'>('files');
-  const [folderName, setFolderName] = useState('');
-  const [parentPath, setParentPath] = useState('');
+    const refresh = async () => {
+      setLoading(true);
+      try {
+        const found = await loadPackage();
+        if (cancelled) return;
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadFolderPath, setUploadFolderPath] = useState('');
-
-  const [showAddTask, setShowAddTask] = useState(false);
-  const [showUpload, setShowUpload] = useState(false);
-  const [showCreateFolder, setShowCreateFolder] = useState(false);
-  const [showAddMember, setShowAddMember] = useState(false);
-
-  const [tasks, setTasks] = useState<{ id: string; title: string; status: string; assignee: string }[]>([]);
-  const [teamMembers] = useState<{ id: string; name: string; email: string; role: string; avatar: string }[]>([]);
-  const [activities] = useState<{ id: string; action: string; user: string; time: string }[]>([]);
-
-  const projectId = projectPublicId || pkg?.projectId || '';
-
-  const loadPackage = async () => {
-    if (projectPublicId) {
-      const listRes = await apiFetch('/api/projects/packages/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ projectId: projectPublicId, listType: 'all' }),
-      });
-      if (!listRes.ok) throw new Error('Không thể tải packages');
-      const payload = await listRes.json();
-      const items = Array.isArray(payload?.data) ? payload.data : [];
-      const found = items.find((p: any) => p.publicId === packageId);
-      if (found) {
         setPkg(found);
-        return found;
-      }
-      throw new Error('Không tìm thấy package hoặc bạn không có quyền truy cập');
-    }
 
-    const projectsRes = await apiFetch('/api/projects/me');
-    if (!projectsRes.ok) throw new Error('Không thể tải projects');
-    const projectPayload = await projectsRes.json();
-    const projects = Array.isArray(projectPayload?.data) ? projectPayload.data : [];
+        const [projectsRes, membersRes, tasksRes, documentsRes] = await Promise.all([
+          apiFetch('/api/projects/me'),
+          fetch('/api/projects/member-list', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: found.projectId }),
+          }),
+          apiFetch('/api/tasks/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: found.projectId, packageId }),
+          }),
+          apiFetch('/api/projects/packages/documents/package/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: found.projectId, packageId }),
+          }),
+        ]);
 
-    for (const project of projects) {
-      const listRes = await apiFetch('/api/projects/packages/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ projectId: project.publicId, listType: 'all' }),
-      });
-      if (!listRes.ok) continue;
-      const payload = await listRes.json();
-      const items = Array.isArray(payload?.data) ? payload.data : [];
-      const found = items.find((p: any) => p.publicId === packageId);
-      if (found) {
-        setPkg(found);
-        return found;
-      }
-    }
+        if (projectsRes.ok) {
+          const payload = await projectsRes.json();
+          const projects = Array.isArray(payload?.data) ? payload.data : [];
+          const currentProject = projects.find((project: any) => String(project.publicId) === String(found.projectId));
+          setProjectRole((currentProject?.role || 'member') as ProjectRole);
+        }
 
-    throw new Error('Không tìm thấy package hoặc bạn không có quyền truy cập');
-  };
+        const memberMap = new Map<string, TeamMemberView>();
+        if (membersRes.ok) {
+          const payload = await membersRes.json();
+          const members = Array.isArray(payload?.data) ? payload.data : [];
+          members.forEach((member: any) => {
+            const name = member?.user?.fullName || member?.user?.name || member?.user?.email || 'Unknown';
+            memberMap.set(String(member?.userId || ''), {
+              id: String(member?.userId || ''),
+              name,
+              email: String(member?.user?.email || ''),
+              role: String(member?.role || 'member'),
+              avatar: getInitials(name),
+            });
+          });
+          const mappedMembers = [...memberMap.values()];
+          setAllProjectMembers(mappedMembers);
 
-  const loadDocuments = async (pid: string) => {
-    const res = await apiFetch('/api/projects/packages/documents/list', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ projectId: pid }),
-    });
+          const packageMemberIds = new Set([
+            ...(Array.isArray(found.teamMemberIds) ? found.teamMemberIds : []),
+            ...(found.creatorId ? [found.creatorId] : []),
+          ]);
 
-    if (!res.ok) throw new Error('Không thể tải documents');
-    const payload = await res.json();
+          const scopedMembers = packageMemberIds.size > 0
+            ? [...packageMemberIds].map((id) => memberMap.get(id)).filter(Boolean) as TeamMemberView[]
+            : [];
+          setTeamMembers(scopedMembers);
+        } else {
+          setAllProjectMembers([]);
+          setTeamMembers([]);
+        }
 
-    const root = payload?.data?.tree as TreeNode;
-    const packageNode = root?.children?.find((node) => node.id?.includes(`/pkg/${packageId}`));
-    setDocumentsTree(packageNode || null);
-  };
+        if (tasksRes.ok) {
+          const payload = await tasksRes.json();
+          const tasks = Array.isArray(payload?.data) ? payload.data : [];
+          setTotalTasksCount(tasks.length);
+          const completedCount = tasks.filter((task: any) => ['done', 'completed', 'approved'].includes(String(task?.status || '').toLowerCase())).length;
+          setCompletedTasksCount(completedCount);
+          setRecentTasks(
+            tasks.slice(0, 5).map((task: any) => ({
+              id: String(task.publicId || task.id || ''),
+              title: String(task.title || 'Untitled task'),
+              status: String(task.status || 'backlog'),
+              assigneeName: memberMap.get(String(task.assigneeId || ''))?.name || 'Unassigned',
+            }))
+          );
+        } else {
+          setTotalTasksCount(0);
+          setCompletedTasksCount(0);
+          setRecentTasks([]);
+        }
 
-  const refresh = async () => {
-    setLoading(true);
-    try {
-      const found = await loadPackage();
-      if (found?.projectId) {
-        await loadDocuments(found.projectId);
-      }
-    } catch (err: any) {
-      toast.error(err?.message || 'Không thể tải package');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    refresh();
-  }, [packageId]);
-
-  const folderOptions = useMemo(() => {
-    const options: string[] = [''];
-    const walk = (node?: TreeNode) => {
-      if (!node || node.type !== 'folder') return;
-      if (node.children) {
-        for (const child of node.children) {
-          if (child.type === 'folder') {
-            options.push(child.name);
-            walk(child);
-          }
+        if (documentsRes.ok) {
+          const payload = await documentsRes.json();
+          setDocumentsCount(Number(payload?.data?.total || 0));
+        } else {
+          setDocumentsCount(0);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          toast.error(err?.message || 'Cannot load package');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
         }
       }
     };
-    walk(documentsTree || undefined);
-    return Array.from(new Set(options));
-  }, [documentsTree]);
 
-  const createFolder = async () => {
-    if (!projectId) return toast.error('Missing project');
-    if (!folderName.trim()) return toast.error('Tên folder bắt buộc');
+    refresh();
+    return () => {
+      cancelled = true;
+    };
+  }, [packageId, projectPublicId]);
 
-    const res = await apiFetch('/api/projects/packages/documents/folders/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        packageId,
-        folderType: selectedFolderType,
-        folderName: folderName.trim(),
-        parentPath: parentPath.trim(),
-      }),
-    });
-
-    const payload = await res.json().catch(() => null);
-    if (!res.ok || !payload?.success) {
-      throw new Error(payload?.message || 'Tạo folder thất bại');
-    }
-
-    setFolderName('');
-    setParentPath('');
-    setShowCreateFolder(false);
-    await loadDocuments(projectId);
-  };
-
-  const uploadDocument = async () => {
-    if (!projectId) return toast.error('Missing project');
-    if (!uploadFile) return toast.error('Vui lòng chọn file');
-
-    const formData = new FormData();
-    formData.append('projectId', projectId);
-    formData.append('packageId', packageId);
-    formData.append('folderType', uploadFile.type.startsWith('image/') ? 'images' : 'files');
-    formData.append('folderPath', uploadFolderPath.trim());
-    formData.append('file', uploadFile);
-
-    setUploading(true);
-    try {
-      const res = await apiFetch('/api/projects/packages/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok || !payload?.success) {
-        throw new Error(payload?.message || 'Upload thất bại');
-      }
-
-      toast.success(payload?.mode === 'queue' ? 'File lớn đã đưa vào queue xử lý nền' : 'Upload thành công');
-      setUploadFile(null);
-      setUploadFolderPath('');
-      setShowUpload(false);
-      await loadDocuments(projectId);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const renderNode = (node: TreeNode) => {
-    if (node.type === 'file') {
-      return (
-        <li key={node.id} className="ml-6 py-1 text-sm text-gray-700">
-          <a href={node.s3Url || '#'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 hover:text-blue-600">
-            {node.category === 'Image' ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-            {node.name}
-          </a>
-        </li>
-      );
-    }
-
-    return (
-      <li key={node.id} className="py-1">
-        <div className="font-medium text-gray-800">{node.name}</div>
-        {node.children && node.children.length > 0 && (
-          <ul className="ml-4 border-l border-gray-200 pl-3">
-            {node.children.map((child) => renderNode(child))}
-          </ul>
-        )}
-      </li>
-    );
-  };
-
-  const stats = {
-    completed: pkg?.completedTasks ?? 0,
-    inProgress: pkg?.totalTasks ? (pkg.totalTasks - (pkg.completedTasks ?? 0)) : 0,
-    documents: pkg?.documentCount ?? 0,
-    team: pkg?.teamMembers ?? 0,
-  };
+  const stats = useMemo(() => {
+    const total = Math.max(totalTasksCount, 0);
+    const completed = Math.min(Math.max(completedTasksCount, 0), Math.max(total, 1));
+    return {
+      completed: completedTasksCount,
+      inProgress: Math.max(totalTasksCount - completedTasksCount, 0),
+      documents: documentsCount,
+      team: teamMembers.length,
+      totalTasks: totalTasksCount,
+      completionPercent: Math.round((completed / Math.max(total, 1)) * 100),
+    };
+  }, [completedTasksCount, documentsCount, teamMembers.length, totalTasksCount]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F2F4F7]">
-        <div className="px-[300px] py-8">
+        <div className="px-6 lg:px-[80px] xl:px-[160px] py-8">
           <div className="h-8 w-48 rounded-lg bg-gray-200 animate-pulse mb-4" />
           <div className="h-4 w-72 rounded-lg bg-gray-200 animate-pulse" />
         </div>
@@ -283,110 +248,194 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   }
 
   if (!pkg) {
-    return <div className="px-6 py-8 text-sm text-red-600">Không tìm thấy package.</div>;
+    return <div className="px-6 py-8 text-sm text-red-600">Package not found.</div>;
   }
 
   const statusColor = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'completed': return 'bg-emerald-500';
-      case 'in progress': return 'bg-blue-500';
-      case 'review': return 'bg-amber-500';
-      case 'pending': return 'bg-gray-500';
-      default: return 'bg-gray-400';
+      case 'completed': return 'bg-[#DCFCE7] text-[#008236]';
+      case 'active': return 'bg-[#DCFCE7] text-[#008236]';
+      case 'draft': return 'bg-[#F3F4F6] text-[#4A5565]';
+      case 'archived': return 'bg-[#FEF3C7] text-[#A16207]';
+      default: return 'bg-[#F3F4F6] text-[#4A5565]';
+    }
+  };
+  const displayStatus = pkg.lifecycleStatus || pkg.status;
+
+  const toggleSelectedMember = (memberId: string) => {
+    setSelectedMemberIds((prev) => (
+      prev.includes(memberId)
+        ? prev.filter((id) => id !== memberId)
+        : [...prev, memberId]
+    ));
+  };
+
+  const openAddMemberDialog = () => {
+    if (!canManagePackageMembers) {
+      toast.error('Only owner/admin can manage package members');
+      return;
+    }
+    const currentIds = new Set([
+      ...(Array.isArray(pkg.teamMemberIds) ? pkg.teamMemberIds : []),
+      ...(pkg.creatorId ? [pkg.creatorId] : []),
+    ]);
+    setSelectedMemberIds([...currentIds]);
+    setIsAddMemberOpen(true);
+  };
+
+  const handleSaveMembers = async () => {
+    if (!pkg) return;
+    if (!canManagePackageMembers) {
+      toast.error('Only owner/admin can manage package members');
+      return;
+    }
+    setSavingMembers(true);
+    try {
+      const res = await apiFetch('/api/projects/packages/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: pkg.projectId,
+          packageId: pkg.publicId,
+          teamMemberIds: selectedMemberIds,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.message || 'Failed to update package members');
+      }
+
+      const updatedIds = Array.isArray(payload?.data?.teamMemberIds) ? payload.data.teamMemberIds : selectedMemberIds;
+      const nextIds = new Set([
+        ...updatedIds,
+        ...(pkg.creatorId ? [pkg.creatorId] : []),
+      ]);
+      const map = new Map(allProjectMembers.map((m) => [m.id, m]));
+      const scoped = [...nextIds].map((id) => map.get(id)).filter(Boolean) as TeamMemberView[];
+
+      setPkg((prev) => prev ? { ...prev, teamMemberIds: updatedIds } : prev);
+      setTeamMembers(scoped);
+      setIsAddMemberOpen(false);
+      toast.success('Updated package members');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update package members');
+    } finally {
+      setSavingMembers(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F2F4F7]">
-      {/* Header Section */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="px-[300px] pt-6 pb-4">
-          {/* Back + Actions row */}
+    <div className="min-h-screen bg-white">
+      <div className="bg-white">
+        <div className="px-[300px] py-6">
+        <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
           <div className="flex items-center justify-between mb-4">
-            <a href={projectPublicId ? `/projects/${projectPublicId}` : '/dashboard'} className="inline-flex items-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
+            <a href={pkg.projectId ? `/projects/${pkg.projectId}` : '/dashboard'} className="inline-flex items-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
               <ChevronRight className="h-4 w-4 rotate-180" />
-              Back
+              Back to Packages
             </a>
-            <div className="flex items-center gap-2">
-              <button className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[13px] font-medium text-[#364153] transition-colors hover:bg-gray-50">
-                <Settings className="h-4 w-4" />
-                Settings
-              </button>
-              <button className="inline-flex items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white p-1.5 text-[#364153] transition-colors hover:bg-gray-50">
-                <MoreHorizontal className="h-5 w-5" />
-              </button>
-            </div>
           </div>
 
-          {/* Package Name + Description */}
-          <div className="mb-4">
-            <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-[24px] font-semibold text-[#101828]">{pkg.name}</h1>
-              <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium text-white capitalize", statusColor(pkg.status))}>
-                {pkg.status}
-              </span>
-            </div>
-            <p className="text-[14px] text-[#6A7282]">{pkg.description || 'No description'}</p>
-          </div>
-
-          {/* Meta Row: Due Date + Progress Ring + Team Avatars */}
-          <div className="flex items-center gap-6">
-            {pkg.dueDate && (
-              <div className="flex items-center gap-2 text-[12px] text-[#6A7282]">
-                <svg className="h-4 w-4" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1">
-                  <rect x="1.5" y="2" width="9" height="8.5" rx="1" />
-                  <line x1="4" y1="1" x2="4" y2="3" />
-                  <line x1="8" y1="1" x2="8" y2="3" />
-                  <line x1="1.5" y1="5" x2="10.5" y2="5" />
-                </svg>
-                Due: {pkg.dueDate}
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-1">
+                <h1 className="text-[24px] font-normal text-[#101828]">{pkg.name}</h1>
               </div>
-            )}
-            {/* Progress Ring */}
-            <div className="flex items-center gap-2">
-              <div className="relative h-8 w-8">
-                <svg className="h-8 w-8 -rotate-90" viewBox="0 0 36 36">
-                  <circle cx="18" cy="18" r="15.5" fill="none" stroke="#E5E7EB" strokeWidth="3" />
-                  <circle
-                    cx="18" cy="18" r="15.5"
-                    fill="none"
-                    stroke="#155DFC"
-                    strokeWidth="3"
-                    strokeDasharray={`${((pkg.completedTasks ?? 0) / Math.max(pkg.totalTasks ?? 1, 1)) * 100} 100`}
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-[#101828]">
-                  {Math.round(((pkg.completedTasks ?? 0) / Math.max(pkg.totalTasks ?? 1, 1)) * 100)}%
+              <p className="text-[14px] text-[#4A5565]">{pkg.description || 'No description'}</p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-[12px] text-[#4A5565]">
+                <span className={cn('inline-flex items-center rounded px-2 py-1 text-xs font-normal capitalize', statusColor(displayStatus))}>
+                  {displayStatus}
+                </span>
+                {pkg.dueDate && (
+                  <span className="inline-flex items-center gap-1">
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1">
+                      <rect x="1.5" y="2" width="9" height="8.5" rx="1" />
+                      <line x1="4" y1="1" x2="4" y2="3" />
+                      <line x1="8" y1="1" x2="8" y2="3" />
+                      <line x1="1.5" y1="5" x2="10.5" y2="5" />
+                    </svg>
+                    Due {String(pkg.dueDate).slice(0, 10)}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1">
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75h6m-6 4.5h6m-3 4.5H9m8.25 3H6.75A2.25 2.25 0 014.5 16.5V7.5a2.25 2.25 0 012.25-2.25h10.5A2.25 2.25 0 0119.5 7.5v9a2.25 2.25 0 01-2.25 2.25z" />
+                  </svg>
+                  {stats.completed}/{stats.totalTasks} tasks
                 </span>
               </div>
-              <span className="text-[12px] text-[#6A7282]">
-                {pkg.completedTasks ?? 0}/{pkg.totalTasks ?? 0} tasks
-              </span>
             </div>
-            {/* Team Avatars */}
-            {(pkg.teamMembers ?? 0) > 0 && (
-              <div className="flex items-center gap-1 text-[12px] text-[#6A7282]">
-                <div className="flex -space-x-2">
-                  {Array.from({ length: Math.min(pkg.teamMembers ?? 0, 3) }).map((_, i) => (
-                    <div key={i} className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-gray-300 text-[10px] font-medium text-white">
-                      {String.fromCharCode(65 + i)}
-                    </div>
-                  ))}
+
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="relative h-20 w-20">
+                  <svg className="h-20 w-20 -rotate-90" viewBox="0 0 36 36">
+                    <circle cx="18" cy="18" r="15.5" fill="none" stroke="#E5E7EB" strokeWidth="3" />
+                    <circle
+                      cx="18"
+                      cy="18"
+                      r="15.5"
+                      fill="none"
+                      stroke="#155DFC"
+                      strokeWidth="3"
+                      strokeDasharray={`${typeof pkg.progress === 'number' ? pkg.progress : stats.completionPercent} 100`}
+                      strokeLinecap="round"
+                    />
+                  </svg>
                 </div>
-                {pkg.teamMembers! > 3 && <span className="ml-1">+{pkg.teamMembers! - 3}</span>}
+                <span className="text-[14px] text-[#101828]">{typeof pkg.progress === 'number' ? Math.round(pkg.progress) : stats.completionPercent}%</span>
               </div>
-            )}
+
+              <div className="flex -space-x-2">
+                {teamMembers.slice(0, 4).map((member, index) => {
+                  const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
+                  return (
+                    <span
+                      key={member.id}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white text-[11px] text-white"
+                      style={{ backgroundColor: avatarBg }}
+                      title={member.name}
+                    >
+                      {member.avatar}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
           </div>
+
+          <div className="flex items-center gap-1 border-b border-[#E5E7EB]">
+            {([
+              { id: 'overview', label: 'Overview' },
+              { id: 'tasks', label: 'Tasks' },
+              { id: 'documents', label: 'Documents' },
+              { id: 'team', label: 'Team' },
+              { id: 'activity', label: 'Activity' },
+            ] as const).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'h-[38px] border-b-2 px-3 text-sm transition-colors',
+                  activeTab === tab.id
+                    ? 'border-[#155DFC] text-[#155DFC]'
+                    : 'border-transparent text-[#4A5565] hover:text-[#101828]'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="px-[300px] py-6">
-        {/* ============ OVERVIEW TAB ============ */}
+      <div className="px-[300px] py-0">
+        <div className="space-y-4 py-1 px-6 lg:px-[80px] xl:px-[160px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Stats Cards */}
             <div className="grid grid-cols-4 gap-4">
               <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-100">
@@ -426,67 +475,36 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
               </div>
             </div>
 
-            {/* Main Content Grid */}
             <div className="grid grid-cols-2 gap-6">
-              {/* Recent Activity */}
-              <div className="rounded-xl border border-gray-200 bg-white p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <ActivityIcon className="h-5 w-5 text-muted-foreground" />
-                  <h3 className="font-semibold text-foreground">Recent Activity</h3>
-                </div>
-                {activities.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-center">
-                    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-                      <ActivityIcon className="h-6 w-6 text-gray-400" />
-                    </div>
-                    <p className="text-sm font-medium text-gray-700">No recent activity</p>
-                    <p className="text-xs text-gray-400 mt-1">Activity will appear here</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {activities.map((a) => (
-                      <div key={a.id} className="flex items-start gap-3">
-                        <div className="mt-0.5 h-2 w-2 rounded-full bg-blue-500" />
-                        <div>
-                          <p className="text-sm text-foreground">{a.action}</p>
-                          <p className="text-xs text-muted-foreground">{a.user} · {a.time}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <ScopedActivityPanel
+                scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+                variant="compact"
+                title="Recent Activity"
+              />
 
-              {/* Recent Tasks */}
               <div className="rounded-xl border border-gray-200 bg-white p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <CheckCircle className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold text-foreground">Recent Tasks</h3>
                 </div>
-                {tasks.length === 0 ? (
+                {recentTasks.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-10 text-center">
                     <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
                       <CheckCircle className="h-6 w-6 text-gray-400" />
                     </div>
                     <p className="text-sm font-medium text-gray-700">No tasks yet</p>
-                    <p className="text-xs text-gray-400 mt-1">Tasks will appear here</p>
+                    <p className="text-xs text-gray-400 mt-1">Tasks created in this package will appear here</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {tasks.map((t) => (
-                      <div key={t.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                    {recentTasks.map((task) => (
+                      <div key={task.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
                         <div>
-                          <p className="text-sm font-medium text-foreground">{t.title}</p>
-                          <p className="text-xs text-muted-foreground">{t.assignee}</p>
+                          <p className="text-sm font-medium text-foreground">{task.title}</p>
+                          <p className="text-xs text-muted-foreground">{task.assigneeName}</p>
                         </div>
-                        <span className={cn(
-                          "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize",
-                          t.status === 'completed' && "bg-emerald-100 text-emerald-700",
-                          t.status === 'in progress' && "bg-blue-100 text-blue-700",
-                          t.status === 'review' && "bg-amber-100 text-amber-700",
-                          t.status === 'pending' && "bg-gray-100 text-gray-600"
-                        )}>
-                          {t.status}
+                        <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize bg-[#F3F4F6] text-[#364153]">
+                          {task.status}
                         </span>
                       </div>
                     ))}
@@ -497,138 +515,35 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
           </div>
         )}
 
-        {/* ============ TASKS TAB ============ */}
         {activeTab === 'tasks' && (
-          <div className="space-y-4">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 flex-1">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search tasks..."
-                    className="w-full rounded-lg border border-gray-200 bg-white pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  />
-                </div>
-              </div>
-              <button
-                onClick={() => setShowAddTask(true)}
-                className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-700"
-              >
-                <Plus className="h-4 w-4" />
-                Add Task
-              </button>
-            </div>
-
-            {/* Task List */}
-            {tasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-gray-50/50 py-20">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gray-100">
-                  <CheckCircle className="h-8 w-8 text-gray-400" />
-                </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-1">No tasks yet</h3>
-                <p className="text-sm text-gray-500 mb-4">Get started by creating your first task</p>
-                <button
-                  onClick={() => setShowAddTask(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-700"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Task
-                </button>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
-                {tasks.map((task) => (
-                  <div key={task.id} className="flex items-center justify-between px-5 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "h-2 w-2 rounded-full",
-                        task.status === 'completed' ? "bg-emerald-500" :
-                        task.status === 'in progress' ? "bg-blue-500" :
-                        task.status === 'review' ? "bg-amber-500" : "bg-gray-400"
-                      )} />
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{task.title}</p>
-                        <p className="text-xs text-muted-foreground">{task.assignee}</p>
-                      </div>
-                    </div>
-                    <span className={cn(
-                      "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize",
-                      task.status === 'completed' && "bg-emerald-100 text-emerald-700",
-                      task.status === 'in progress' && "bg-blue-100 text-blue-700",
-                      task.status === 'review' && "bg-amber-100 text-amber-700",
-                      task.status === 'pending' && "bg-gray-100 text-gray-600"
-                    )}>
-                      {task.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="-mx-6 lg:-mx-[80px] xl:-mx-[160px]">
+            <ScopedTasksPanel
+              scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+              projectRole={projectRole}
+            />
           </div>
         )}
 
-        {/* ============ DOCUMENTS TAB ============ */}
         {activeTab === 'documents' && (
-          <div className="space-y-4">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search documents..."
-                    className="w-full rounded-lg border border-gray-200 bg-white pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 max-w-sm"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowCreateFolder(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-medium text-[#364153] transition-colors hover:bg-gray-50"
-                >
-                  <FolderPlus className="h-4 w-4" />
-                  Create Folder
-                </button>
-                <button
-                  onClick={() => setShowUpload(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-700"
-                >
-                  <UploadIcon className="h-4 w-4" />
-                  Upload
-                </button>
-              </div>
-            </div>
-
-            {/* Documents Tree */}
-            <div className="rounded-xl border border-gray-200 bg-white p-5">
-              <p className="mb-3 text-sm font-medium text-gray-900">Documents Tree</p>
-              {!documentsTree ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-                    <FileText className="h-6 w-6 text-gray-400" />
-                  </div>
-                  <p className="text-sm font-medium text-gray-700">Chưa có dữ liệu documents</p>
-                  <p className="text-xs text-gray-400 mt-1">Tải lên file hoặc tạo thư mục mới</p>
-                </div>
-              ) : (
-                <ul>{renderNode(documentsTree)}</ul>
-              )}
-            </div>
+          <div className="-mx-6 lg:-mx-[80px] xl:-mx-[160px]">
+            <ProjectDocumentsManager
+              projectId={pkg.projectId}
+              packageId={packageId}
+              canManage={canManagePackageDocuments}
+            />
           </div>
         )}
 
-        {/* ============ TEAM TAB ============ */}
         {activeTab === 'team' && (
           <div className="space-y-4">
-            {/* Header */}
             <div className="flex items-center justify-between">
-              <h2 className="text-[20px] font-semibold text-[#101828]">Team Members</h2>
+              <h2 className="text-[14px] font-normal text-[#101828]">Team Members ({teamMembers.length})</h2>
               <button
-                onClick={() => setShowAddMember(true)}
-                className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-700"
+                type="button"
+                disabled={!canManagePackageMembers}
+                className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 text-sm font-normal text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={openAddMemberDialog}
+                title={canManagePackageMembers ? 'Add members to this package' : 'Only owner/admin can add members'}
               >
                 <Plus className="h-4 w-4" />
                 Add Member
@@ -641,289 +556,101 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                   <Users className="h-8 w-8 text-gray-400" />
                 </div>
                 <h3 className="text-lg font-medium text-gray-900 mb-1">No team members</h3>
-                <p className="text-sm text-gray-500 mb-4">Add members to collaborate on this package</p>
-                <button
-                  onClick={() => setShowAddMember(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-700"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Member
-                </button>
+                <p className="text-sm text-gray-500">This package has no assigned members yet</p>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-4">
-                {teamMembers.map((member) => (
-                  <div key={member.id} className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-600">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-3">
+                {teamMembers.map((member, index) => {
+                  const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
+                  return (
+                  <div key={member.id} className="flex h-[81px] items-center gap-3 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
+                    <div
+                      className="flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-normal text-white"
+                      style={{ backgroundColor: avatarBg }}
+                    >
                       {member.avatar}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{member.name}</p>
-                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
-                      <span className="inline-flex items-center mt-1 rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 capitalize">
-                        {member.role}
-                      </span>
+                      <p className="truncate text-[14px] text-[#101828]">{member.name}</p>
+                      <p className="truncate text-[12px] text-[#6A7282] capitalize">{member.role}</p>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>
         )}
 
-        {/* ============ ACTIVITY TAB ============ */}
         {activeTab === 'activity' && (
-          <div className="space-y-4">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <h2 className="text-[20px] font-semibold text-[#101828]">Activity Feed</h2>
-              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-foreground">
-                <option value="all">All Activities</option>
-                <option value="tasks">Tasks</option>
-                <option value="documents">Documents</option>
-                <option value="team">Team</option>
-              </select>
-            </div>
-
-            {activities.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-gray-50/50 py-20">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gray-100">
-                  <ActivityIcon className="h-8 w-8 text-gray-400" />
-                </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-1">No activity yet</h3>
-                <p className="text-sm text-gray-500">Activity will appear here as things happen</p>
-              </div>
-            ) : (
-              <div className="space-y-0">
-                {activities.map((a, i) => (
-                  <div key={a.id} className="relative flex gap-4 py-4 border-b border-gray-100 last:border-0">
-                    <div className="mt-1.5 h-2.5 w-2.5 rounded-full bg-blue-500" />
-                    <div>
-                      <p className="text-sm text-foreground">{a.action}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{a.user} · {a.time}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <ScopedActivityPanel
+            scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+            title="Activity Feed"
+          />
         )}
+        </div>
       </div>
 
-      {/* ============ MODALS ============ */}
-
-      {/* Add Task Modal */}
-      {showAddTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowAddTask(false)} />
-          <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[#101828]">Add Task</h2>
-              <button onClick={() => setShowAddTask(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Task Title</label>
-                <input
-                  type="text"
-                  placeholder="Enter task title"
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Assignee</label>
-                <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground">
-                  <option value="">Select assignee</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Status</label>
-                <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground">
-                  <option value="pending">Pending</option>
-                  <option value="in progress">In Progress</option>
-                  <option value="review">Review</option>
-                  <option value="completed">Completed</option>
-                </select>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setShowAddTask(false)}
-                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-[#364153] hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button className="rounded-lg bg-[#155DFC] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                Add Task
-              </button>
-            </div>
+      <Dialog open={isAddMemberOpen} onOpenChange={setIsAddMemberOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Select Project Members</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[45vh] space-y-2 overflow-y-auto pr-1">
+            {allProjectMembers.length === 0 ? (
+              <p className="text-sm text-[#6A7282]">No members found in this project.</p>
+            ) : (
+              allProjectMembers.map((member, index) => {
+                const checked = selectedMemberIds.includes(member.id);
+                const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
+                return (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => toggleSelectedMember(member.id)}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left',
+                      checked ? 'border-[#155DFC] bg-blue-50' : 'border-[#E5E7EB] bg-white hover:bg-gray-50'
+                    )}
+                  >
+                    <span
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs text-white"
+                      style={{ backgroundColor: avatarBg }}
+                    >
+                      {member.avatar}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-[#101828]">{member.name}</span>
+                      <span className="block truncate text-xs text-[#6A7282]">{member.email}</span>
+                    </span>
+                    <span className={cn(
+                      'h-4 w-4 rounded border',
+                      checked ? 'border-[#155DFC] bg-[#155DFC]' : 'border-[#D0D5DD] bg-white'
+                    )} />
+                  </button>
+                );
+              })
+            )}
           </div>
-        </div>
-      )}
-
-      {/* Upload Modal */}
-      {showUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowUpload(false)} />
-          <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[#101828]">Upload File / Image</h2>
-              <button onClick={() => setShowUpload(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Folder</label>
-                <select
-                  value={uploadFolderPath}
-                  onChange={(e) => setUploadFolderPath(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground"
-                >
-                  {folderOptions.map((opt, idx) => (
-                    <option key={`${opt}-${idx}`} value={opt}>{opt || '(root)'}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">File</label>
-                <input
-                  type="file"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setShowUpload(false)}
-                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-[#364153] hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={!uploadFile || uploading}
-                onClick={uploadDocument}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                <Upload className="h-4 w-4" />
-                {uploading ? 'Uploading...' : 'Upload'}
-              </button>
-            </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded-lg px-3 py-2 text-sm text-[#4A5565] hover:bg-gray-100"
+              onClick={() => setIsAddMemberOpen(false)}
+              disabled={savingMembers}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-lg bg-[#155DFC] px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+              onClick={handleSaveMembers}
+              disabled={savingMembers}
+            >
+              {savingMembers ? 'Saving...' : 'Save'}
+            </button>
           </div>
-        </div>
-      )}
-
-      {/* Create Folder Modal */}
-      {showCreateFolder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowCreateFolder(false)} />
-          <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[#101828]">Create Folder</h2>
-              <button onClick={() => setShowCreateFolder(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Folder Type</label>
-                <select
-                  value={selectedFolderType}
-                  onChange={(e) => setSelectedFolderType(e.target.value as 'files' | 'images')}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground"
-                >
-                  <option value="files">Files</option>
-                  <option value="images">Images</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Parent Path (optional)</label>
-                <select
-                  value={parentPath}
-                  onChange={(e) => setParentPath(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground"
-                >
-                  {folderOptions.map((opt, idx) => (
-                    <option key={`${opt}-${idx}`} value={opt}>{opt || '(root)'}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Folder Name</label>
-                <input
-                  type="text"
-                  value={folderName}
-                  onChange={(e) => setFolderName(e.target.value)}
-                  placeholder="Enter folder name"
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setShowCreateFolder(false)}
-                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-[#364153] hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => createFolder().catch((e) => toast.error(e.message))}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                <FolderPlus className="h-4 w-4" />
-                Create Folder
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Member Modal */}
-      {showAddMember && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowAddMember(false)} />
-          <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[#101828]">Add Team Member</h2>
-              <button onClick={() => setShowAddMember(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Email Address</label>
-                <input
-                  type="email"
-                  placeholder="Enter email address"
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#364153]">Role</label>
-                <select className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-foreground">
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setShowAddMember(false)}
-                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-[#364153] hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button className="rounded-lg bg-[#155DFC] px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                Add Member
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

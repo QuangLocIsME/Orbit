@@ -1,13 +1,23 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { toast } from '@/components/ui/sonner';
+import { Toaster, toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { Calendar, MessageSquare, User, Briefcase, Clock, Send } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 
 interface TaskDetailData {
   id: string;
@@ -15,6 +25,7 @@ interface TaskDetailData {
   description: string;
   status: string;
   priority: TaskPriority;
+  assigneeId?: string;
   assigneeName?: string;
   dueDate?: string;
   tags: string[];
@@ -40,6 +51,7 @@ interface WorkflowStage {
 interface TaskDetailPageProps {
   projectPublicId: string;
   taskId: string;
+  packageId?: string | null;
 }
 
 const statusToneById: Record<string, string> = {
@@ -84,7 +96,7 @@ const toDisplayTime = (iso: string) => {
   return d.toLocaleString();
 };
 
-export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPageProps) {
+export default function TaskDetailPage({ projectPublicId, taskId, packageId = null }: TaskDetailPageProps) {
   const [loading, setLoading] = useState(true);
   const [task, setTask] = useState<TaskDetailData | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
@@ -94,6 +106,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
   const [updatingStage, setUpdatingStage] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
+  const [pendingDeleteCommentId, setPendingDeleteCommentId] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState('');
 
   // Get current userId from localStorage
@@ -119,12 +132,12 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
           apiFetch('/api/tasks/detail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ projectId: projectPublicId, taskId }),
+            body: JSON.stringify({ projectId: projectPublicId, packageId, taskId }),
           }),
           apiFetch('/api/tasks/comments/list', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ projectId: projectPublicId, taskId }),
+            body: JSON.stringify({ projectId: projectPublicId, packageId, taskId }),
           }),
           apiFetch('/api/projects/me', {
             method: 'GET',
@@ -147,6 +160,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
               description: String(t.description || ''),
               status: normalizeStageId(String(t.status || 'backlog')),
               priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as TaskPriority,
+              assigneeId: String(t.assigneeId || ''),
               assigneeName: t.assigneeName || t.assignee?.fullName || '',
               dueDate: t.dueDate || '',
               tags: Array.isArray(t.tags) ? t.tags : [],
@@ -208,7 +222,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
     return () => {
       cancelled = true;
     };
-  }, [projectPublicId, taskId]);
+  }, [projectPublicId, packageId, taskId]);
 
   const dueDateLabel = useMemo(() => {
     if (!task?.dueDate) return 'No due date';
@@ -217,7 +231,13 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }, [task?.dueDate]);
 
-  const canReviewAndMoveStage = projectRole === 'admin' || projectRole === 'owner';
+  const canReviewAndMoveStage = useMemo(() => {
+    if (!task) return false;
+    return projectRole === 'owner'
+      || projectRole === 'admin'
+      || projectRole === 'manager'
+      || (projectRole === 'member' && Boolean(task.assigneeId) && task.assigneeId === currentUserId);
+  }, [currentUserId, projectRole, task]);
 
   const currentStage = useMemo(
     () => workflowStages.find((s) => s.id === normalizeStageId(task?.status || '')),
@@ -232,7 +252,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
       const res = await apiFetch('/api/tasks/comments/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ projectId: projectPublicId, taskId, content }),
+        body: JSON.stringify({ projectId: projectPublicId, packageId, taskId, content }),
       });
 
       if (!res.ok) {
@@ -245,6 +265,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
       setComments((prev) => [
         {
           id: String(c?.publicId || c?.id || `${Date.now()}`),
+          authorId: String(c?.authorId || currentUserId || ''),
           author: String(c?.authorName || c?.author?.fullName || 'You'),
           content: String(c?.content || content),
           createdAt: String(c?.createdAt || new Date().toISOString()),
@@ -253,6 +274,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
         ...prev,
       ]);
       setCommentInput('');
+      toast.success('Comment posted');
     } catch {
       toast.error('Failed to post comment');
     }
@@ -291,7 +313,6 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
   };
 
   const deleteComment = async (commentId: string) => {
-    if (!confirm('Delete this comment?')) return;
     try {
       const res = await apiFetch('/api/tasks/comments', {
         method: 'DELETE',
@@ -301,6 +322,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
       const data = await res.json();
       if (data.success) {
         setComments(prev => prev.filter(c => c.id !== commentId));
+        toast.success('Comment deleted');
       } else {
         toast.error(data.message || 'Failed to delete comment');
       }
@@ -319,6 +341,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           projectId: projectPublicId,
+          packageId,
           taskId,
           status: nextStageId,
         }),
@@ -429,7 +452,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
           </div>
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">Only Admin/Owner can review and move stage.</p>
+        <p className="text-xs text-muted-foreground">Only owner/admin/manager or the assigned member can review and move stage.</p>
       )}
 
       {(task.tags.length > 0 || task.linkedUrl) && <div className="h-px bg-border" />}
@@ -550,7 +573,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
                   ) : (
                     <p className="text-[13px] leading-relaxed text-foreground/80 whitespace-pre-wrap">{comment.content}</p>
                   )}
-                  {(currentUserId === comment.authorId || projectRole === 'admin') && !editingCommentId && (
+                  {(currentUserId === comment.authorId) && !editingCommentId && (
                     <div className="flex gap-3 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       {currentUserId === comment.authorId && (
                         <button
@@ -561,7 +584,7 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
                         </button>
                       )}
                       <button
-                        onClick={() => deleteComment(comment.id)}
+                        onClick={() => setPendingDeleteCommentId(comment.id)}
                         className="text-[11px] text-muted-foreground hover:text-red-500"
                       >
                         Delete
@@ -574,6 +597,37 @@ export default function TaskDetailPage({ projectPublicId, taskId }: TaskDetailPa
           </div>
         )}
       </div>
+
+      <AlertDialog
+        open={!!pendingDeleteCommentId}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteCommentId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete comment</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. Do you want to delete this comment?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingDeleteCommentId(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={() => {
+                if (!pendingDeleteCommentId) return;
+                void deleteComment(pendingDeleteCommentId);
+                setPendingDeleteCommentId(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

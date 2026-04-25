@@ -63,6 +63,26 @@ class PackageRepository {
         );
     }
 
+    async addTaskIdToPackage(packagePublicId, projectId, taskPublicId) {
+        await Package.updateOne(
+            { publicId: packagePublicId, projectId },
+            {
+                $addToSet: { taskIds: taskPublicId },
+                $set: { updatedAt: new Date() },
+            }
+        );
+    }
+
+    async removeTaskIdFromPackage(packagePublicId, projectId, taskPublicId) {
+        await Package.updateOne(
+            { publicId: packagePublicId, projectId },
+            {
+                $pull: { taskIds: taskPublicId },
+                $set: { updatedAt: new Date() },
+            }
+        );
+    }
+
     /** Trùng tên với package khác trong cùng project (dùng khi đổi tên) */
     async findAnotherByProjectIdAndName(projectId, name, excludePublicId) {
         return await Package.findOne({
