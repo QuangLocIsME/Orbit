@@ -6,16 +6,6 @@ import { useNotifications } from '@/hooks/useNotifications';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import type { InviteNotification } from '@/lib/socket';
 
 function timeAgo(dateStr: string): string {
@@ -28,6 +18,7 @@ function timeAgo(dateStr: string): string {
 
 interface PendingInvite extends InviteNotification {
   dismissed?: boolean;
+  inviteStatus?: 'pending' | 'accepted' | 'revoked';
 }
 
 export default function HeaderActions() {
@@ -52,11 +43,39 @@ export default function HeaderActions() {
   const [showSettings, setShowSettings] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const notificationListRef = useRef<HTMLDivElement>(null);
+  const firstUnreadIdRef = useRef<string | null>(null);
 
-  const { notifications, unreadCount, inviteUnreadCount, markRead, markAllRead } = useNotifications();
-  const totalUnread = unreadCount + inviteUnreadCount;
+  const { notifications, unseenCount, unreadCount, markRead, markSeen, markAllRead, markAllSeen, clearAll, deleteNotification } = useNotifications();
+  const totalUnseen = unseenCount;
 
   useEffect(() => { activeInviteRef.current = activeInvite; }, [activeInvite]);
+
+  const prevUnreadRef = useRef<number>(0);
+  const [badgeAnimating, setBadgeAnimating] = useState(false);
+
+  // Animate badge when count increases (new notification arrives)
+  useEffect(() => {
+      if (totalUnseen > prevUnreadRef.current && prevUnreadRef.current > 0) {
+      setBadgeAnimating(true);
+      const t = setTimeout(() => setBadgeAnimating(false), 400);
+      return () => clearTimeout(t);
+    }
+    prevUnreadRef.current = totalUnseen;
+  }, [totalUnseen]);
+
+  // Auto-scroll to first unread notification when dropdown opens
+  useEffect(() => {
+    if (!showNotifications) return;
+    const firstUnread = notifications.find((n) => !n.read);
+    if (!firstUnread) return;
+    const el = document.getElementById(`notif-${firstUnread.id}`);
+    if (el) {
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
+    }
+  }, [showNotifications, notifications]);
 
   const resolveInviteFromNotification = (n: { id: string; title: string; message?: string; link?: string; createdAt: string; inviteData?: InviteNotification }): PendingInvite => {
     const fallbackInviteId = n.id.replace('invite:', '');
@@ -70,9 +89,21 @@ export default function HeaderActions() {
       acceptUrl: n.link,
       createdAt: n.createdAt,
       dismissed: false,
+      inviteStatus: 'pending',
     };
 
-    return { ...(n.inviteData ?? fallbackPayload), dismissed: false };
+    return { ...(n.inviteData ?? fallbackPayload), dismissed: false, inviteStatus: 'pending' };
+  };
+
+  const fetchInviteStatus = async (inviteId: string): Promise<'pending' | 'accepted' | 'revoked'> => {
+    try {
+      const res = await apiFetch(`/api/invites/${inviteId}/status`);
+      const data = await res.json();
+      if (data.success && data.data?.status) {
+        return data.data.status;
+      }
+    } catch { /* ignore */ }
+    return 'pending';
   };
 
   const handleAcceptInvite = async () => {
@@ -129,8 +160,8 @@ export default function HeaderActions() {
         setShowSettings(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
   return (
@@ -158,6 +189,9 @@ export default function HeaderActions() {
         <button
           onClick={() => {
             setShowNotifications(!showNotifications);
+            if (!showNotifications) {
+              markAllSeen();
+            }
             setShowSettings(false);
           }}
           className="relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -167,9 +201,15 @@ export default function HeaderActions() {
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
           </svg>
-          {totalUnread > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white">
-              {totalUnread > 9 ? '9+' : totalUnread}
+          {totalUnseen > 0 && (
+            <span
+              suppressHydrationWarning
+              className={cn(
+                'absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white',
+                badgeAnimating && 'animate-bounce'
+              )}
+            >
+              {totalUnseen > 9 ? '9+' : totalUnseen}
             </span>
           )}
         </button>
@@ -183,15 +223,19 @@ export default function HeaderActions() {
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-card-foreground">Notifications</h3>
-                {totalUnread > 0 && (
+                {totalUnseen > 0 && (
                   <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600">
-                    {totalUnread} new
+                    {totalUnseen} new
                   </span>
                 )}
               </div>
-              {totalUnread > 0 && (
+              {totalUnseen > 0 && (
                 <button
-                  onClick={markAllRead}
+                  onClick={() => {
+                    markAllSeen();
+                    markAllRead();
+                    toast.success('All notifications marked as read');
+                  }}
                   className="text-xs text-indigo-600 hover:underline"
                 >
                   Mark all read
@@ -209,38 +253,68 @@ export default function HeaderActions() {
                 </div>
               ) : (
                 notifications.map((n) => (
-                  <button
+                  <div
                     key={n.id}
-                    onClick={() => {
-                      markRead(n.id);
-                      if (n.id.startsWith('invite:')) {
-                        setActiveInvite(resolveInviteFromNotification(n));
-                        setShowNotifications(false);
-                        return;
-                      }
-                      if (n.link) window.location.href = n.link;
-                    }}
-                    className={cn(
-                      'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted',
-                      !n.read && 'bg-indigo-50/50'
-                    )}
+                    id={`notif-${n.id}`}
+                    className="group relative"
                   >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-600">
-                      {n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : n.type === 'error' ? '✕' : 'ℹ'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={cn('text-sm truncate', !n.read && 'font-medium text-foreground')}>
-                        {n.title}
-                      </p>
-                      {n.message && (
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">{n.message}</p>
+                    <button
+                      onClick={() => {
+                        markRead(n.id);
+                        if (n.id.startsWith('invite:')) {
+                          markRead(n.id);
+                          const invite = resolveInviteFromNotification(n);
+                          fetchInviteStatus(invite.inviteId).then((status) => {
+                            setActiveInvite({ ...invite, inviteStatus: status });
+                          });
+                          setShowNotifications(false);
+                          return;
+                        }
+                        if (n.link) {
+                          const match = n.link.match(/\/projects\/([^/]+)/);
+                          if (match) {
+                            window.location.href = `/projects/${match[1]}?tab=tasks`;
+                          } else {
+                            window.location.href = n.link;
+                          }
+                          return;
+                        }
+                      }}
+                      className={cn(
+                        'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted',
+                        !n.seen && 'bg-indigo-50/50'
                       )}
-                      <p className="mt-1 text-[10px] text-muted-foreground">{timeAgo(n.createdAt)}</p>
-                    </div>
-                    {!n.read && (
-                      <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
-                    )}
-                  </button>
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-600">
+                        {n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : n.type === 'error' ? '✕' : 'ℹ'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn('text-sm truncate', !n.seen && 'font-medium text-foreground')}>
+                          {n.title}
+                        </p>
+                        {n.message && (
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">{n.message}</p>
+                        )}
+                        <p className="mt-1 text-[10px] text-muted-foreground">{timeAgo(n.createdAt)}</p>
+                      </div>
+                      {!n.seen && (
+                        <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
+                      )}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteNotification(n.id);
+                        toast.success('Notification deleted');
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md bg-muted/80 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 group-hover:opacity-100"
+                      aria-label="Delete notification"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -248,48 +322,86 @@ export default function HeaderActions() {
         ), document.body)}
       </div>
 
-      {/* Invite Alert Dialog */}
-      <AlertDialog
-        open={!!activeInvite}
-        onOpenChange={(open) => {
-          if (!open) {
-            setActiveInvite(null);
-            activeInviteRef.current = null;
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {activeInvite?.inviterName} invited you to join
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 pt-1">
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3">
-                  <p className="text-sm font-medium text-[#101828]">{activeInvite?.projectName || 'Project'}</p>
+      {/* Invite Modal */}
+      {activeInvite && ReactDOM.createPortal((
+        <>
+          <div
+            className="fixed inset-0 z-[99998] bg-black/50"
+            onClick={() => {
+              setActiveInvite(null);
+              activeInviteRef.current = null;
+            }}
+          />
+          <div className="fixed left-1/2 top-1/2 z-[99999] w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-6 shadow-xl">
+            <div className="flex flex-col gap-2 text-center sm:text-left">
+              <h2 className="text-lg font-semibold text-card-foreground">
+                {activeInvite?.inviterName} invited you to join
+              </h2>
+              <div className="flex items-start gap-3 rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3">
+                {activeInvite?.projectAvatar ? (
+                  <img
+                    src={activeInvite.projectAvatar}
+                    alt={activeInvite.projectName}
+                    className="h-10 w-10 rounded-lg object-cover flex-shrink-0 border border-[#E5E7EB]"
+                  />
+                ) : (
+                  <div className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0 border border-[#E5E7EB] bg-[#EFF6FF] text-[#155DFC] font-semibold text-sm">
+                    {activeInvite?.projectName?.slice(0, 2).toUpperCase() || 'PR'}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[#101828] truncate">{activeInvite?.projectName || 'Project'}</p>
                   <p className="text-xs text-[#6A7282] mt-0.5">
                     Role: <span className="capitalize font-medium">{activeInvite?.role || 'member'}</span>
                   </p>
                 </div>
+              </div>
+              {activeInvite?.inviteStatus !== 'pending' ? (
+                <div className="flex flex-col items-center gap-2 py-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+                    <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-medium text-green-700">You've already responded to this invitation</p>
+                </div>
+              ) : (
                 <p className="text-sm text-muted-foreground">
                   Would you like to accept this invitation?
                 </p>
+              )}
+            </div>
+            {activeInvite?.inviteStatus !== 'pending' ? (
+              <div className="mt-5">
+                <button
+                  onClick={() => {
+                    setActiveInvite(null);
+                    activeInviteRef.current = null;
+                  }}
+                  className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all h-9 px-4 py-2 border bg-background shadow-xs hover:bg-muted"
+                >
+                  Close
+                </button>
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleDeclineInvite}>
-              Decline
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleAcceptInvite}
-              className="bg-[#155DFC] text-white hover:bg-blue-700"
-            >
-              Accept
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            ) : (
+              <div className="flex flex-col-reverse gap-2 mt-5 sm:flex-row sm:justify-end">
+                <button
+                  onClick={handleDeclineInvite}
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all h-9 px-4 py-2 border bg-background shadow-xs hover:bg-muted"
+                >
+                  Decline
+                </button>
+                <button
+                  onClick={handleAcceptInvite}
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all h-9 px-4 py-2 bg-[#155DFC] text-white hover:bg-blue-700"
+                >
+                  Accept
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      ), document.body)}
 
       {/* Settings */}
       <div ref={settingsRef} className="relative">

@@ -1,11 +1,20 @@
 const fs = require('fs');
+const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_XKT_BUCKET = process.env.SUPABASE_XKT_BUCKET || 'xkt-models';
 const SUPABASE_IFC_BUCKET = process.env.SUPABASE_IFC_BUCKET || 'ifc-files';
 const SUPABASE_ATTACHMENT_BUCKET = process.env.SUPABASE_ATTACHMENT_BUCKET || 'cr-attachments';
-const SUPABASE_THUMBNAIL_BUCKET = process.env.SUPABASE_THUMBNAIL_BUCKET || 'project-thumbnails';
+const S3_BUCKET = process.env.S3_BUCKET || 'orbit-files';
+const S3_ENDPOINT = process.env.S3_ENDPOINT || '';
+const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || '';
+const { s3Client } = require('../config/s3');
+
+function buildS3Url(s3Key) {
+    if (!S3_PUBLIC_URL) return '';
+    return `${S3_PUBLIC_URL.replace(/\/$/, '')}/${S3_BUCKET}/${s3Key}`;
+}
 
 function assertSupabaseConfigured() {
     if (!SUPABASE_URL) {
@@ -221,49 +230,102 @@ function buildSupabaseThumbnailPath({ projectId, fileName }) {
 }
 
 /**
- * Upload thumbnail buffer lên Supabase Storage (bucket: project-thumbnails).
- * @param {Buffer} buffer - nội dung file ảnh
- * @param {string} storagePath - path trả về từ buildSupabaseThumbnailPath
- * @returns {Promise<{bucket: string, key: string, publicUrl: string}>}
+ * Build path cho project avatar trong Supabase.
+ * Format: projects/{projectId}/avatar/{timestamp}-{safeFileName}
+ */
+function buildSupabaseAvatarPath({ projectId, fileName }) {
+    const safeName = (fileName || 'avatar')
+        .replace(/[^a-zA-Z0-9_\-. ]/g, '-')
+        .replace(/\s+/g, '-')
+        .substring(0, 200);
+    const timestamp = Date.now();
+    return `projects/${projectId}/avatar/${timestamp}-${safeName}`;
+}
+
+/**
+ * Upload thumbnail buffer via S3-compatible API.
  */
 async function uploadProjectThumbnailBuffer(buffer, storagePath) {
-    assertSupabaseConfigured();
-    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_THUMBNAIL_BUCKET}/${storagePath}`;
-    const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            apikey: SUPABASE_SERVICE_ROLE_KEY,
-            'Content-Type': 'application/octet-stream',
-            'x-upsert': 'true',
-        },
-        body: buffer,
-    });
-    if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Supabase thumbnail upload failed: ${res.status} ${text}`);
-    }
+    assertS3Configured();
+    await s3Client.send(
+        new (require('@aws-sdk/client-s3').PutObjectCommand)({
+            Bucket: S3_BUCKET,
+            Key: storagePath,
+            Body: buffer,
+            ContentType: 'image/jpeg',
+        })
+    );
     return {
-        bucket: SUPABASE_THUMBNAIL_BUCKET,
+        bucket: S3_BUCKET,
         key: storagePath,
-        publicUrl: `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_THUMBNAIL_BUCKET}/${storagePath}`,
+        publicUrl: buildS3Url(storagePath),
     };
+}
+
+/**
+ * Upload avatar buffer via S3-compatible API.
+ * Path: projects/{projectId}/avatar/{timestamp}-{safeFileName}
+ */
+async function uploadAvatarBuffer(buffer, storagePath) {
+    assertS3Configured();
+    await s3Client.send(
+        new (require('@aws-sdk/client-s3').PutObjectCommand)({
+            Bucket: S3_BUCKET,
+            Key: storagePath,
+            Body: buffer,
+            ContentType: 'image/jpeg',
+        })
+    );
+    return {
+        bucket: S3_BUCKET,
+        key: storagePath,
+        publicUrl: buildS3Url(storagePath),
+    };
+}
+
+/**
+ * Xoá avatar file qua S3-compatible API.
+ */
+async function deleteAvatarFile(storagePath) {
+    try {
+        await s3Client.send(
+            new DeleteObjectCommand({
+                Bucket: S3_BUCKET,
+                Key: storagePath,
+            })
+        );
+    } catch (err) {
+        if (err.name !== 'NoSuchKey') {
+            throw err;
+        }
+    }
+}
+
+function assertS3Configured() {
+    if (!S3_BUCKET) {
+        throw new Error('Missing S3_BUCKET');
+    }
+    if (!S3_ENDPOINT) {
+        throw new Error('Missing S3_ENDPOINT');
+    }
 }
 
 module.exports = {
     SUPABASE_XKT_BUCKET,
     SUPABASE_IFC_BUCKET,
     SUPABASE_ATTACHMENT_BUCKET,
-    SUPABASE_THUMBNAIL_BUCKET,
     buildSupabaseStoragePath,
     buildSupabaseIfcPath,
     buildSupabaseAttachmentPath,
     buildSupabaseThumbnailPath,
+    buildSupabaseAvatarPath,
     uploadXktFile,
     uploadIfcBuffer,
     downloadIfcBuffer,
     uploadAttachmentBuffer,
     uploadProjectThumbnailBuffer,
+    uploadAvatarBuffer,
+    deleteAvatarFile,
     createSignedXktUrl,
     createSignedAttachmentUrl,
     assertSupabaseConfigured,

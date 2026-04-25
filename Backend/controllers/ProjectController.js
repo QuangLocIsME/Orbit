@@ -9,7 +9,7 @@ const socketService = require('../services/socketService');
 const { invalidateUserCache } = socketService;
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
-const { buildSupabaseThumbnailPath, uploadProjectThumbnailBuffer } = require('../services/supabaseStorageService');
+const { buildSupabaseThumbnailPath, buildSupabaseAvatarPath, uploadProjectThumbnailBuffer, uploadAvatarBuffer, deleteAvatarFile } = require('../services/supabaseStorageService');
 
 // System roles to initialize for new projects
 const systemRoles = [
@@ -397,6 +397,131 @@ class ProjectController {
         } catch (error) {
             console.error('Upload thumbnail error:', error);
             return badRequest(res, 'Upload thumbnail failed');
+        }
+    }
+
+    async uploadAvatar(req, res) {
+        try {
+            const { projectId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return unauthorized(res);
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
+                return forbidden(res);
+            }
+
+            const file = req.file;
+            if (!file) {
+                return badRequest(res, 'No file uploaded');
+            }
+
+            const existingProject = await Project.findOne({ publicId: normalizedProjectId });
+            if (!existingProject) {
+                return notFound(res, 'Project not found');
+            }
+
+            if (existingProject.avatarStoragePath) {
+                try {
+                    await deleteAvatarFile(existingProject.avatarStoragePath);
+                } catch (err) {
+                    console.warn('[Avatar] Failed to delete old avatar:', err.message);
+                }
+            }
+
+            const storagePath = buildSupabaseAvatarPath({
+                projectId: normalizedProjectId,
+                fileName: file.originalname || 'avatar.png',
+            });
+
+            const { publicUrl } = await uploadAvatarBuffer(file.buffer, storagePath);
+
+            const project = await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                { coverImageUrl: publicUrl, avatarStoragePath: storagePath, updatedAt: new Date() },
+                { returnDocument: 'after' }
+            );
+
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { coverImageUrl: project.coverImageUrl },
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Avatar uploaded',
+                data: {
+                    publicId: project.publicId,
+                    coverImageUrl: project.coverImageUrl,
+                },
+            });
+        } catch (error) {
+            console.error('Upload avatar error:', error);
+            return badRequest(res, 'Upload avatar failed');
+        }
+    }
+
+    async deleteAvatar(req, res) {
+        try {
+            const { projectId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'Missing projectId');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return unauthorized(res);
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
+                return forbidden(res);
+            }
+
+            const project = await Project.findOne({ publicId: normalizedProjectId });
+            if (!project) {
+                return notFound(res, 'Project not found');
+            }
+
+            if (project.avatarStoragePath) {
+                try {
+                    await deleteAvatarFile(project.avatarStoragePath);
+                } catch (err) {
+                    console.warn('[Avatar] Failed to delete avatar:', err.message);
+                }
+            }
+
+            await Project.findOneAndUpdate(
+                { publicId: normalizedProjectId },
+                { coverImageUrl: '', avatarStoragePath: null, updatedAt: new Date() }
+            );
+
+            await invalidateUserCaches(userId);
+
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { coverImageUrl: '' },
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Avatar deleted',
+            });
+        } catch (error) {
+            console.error('Delete avatar error:', error);
+            return badRequest(res, 'Delete avatar failed');
         }
     }
 

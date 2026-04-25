@@ -12,3 +12,5 @@ Backend/scripts/
 Backend/node_modules/
 Frontend/node_modules/
 **/node_modules/
+node_modules/
+node_modules/

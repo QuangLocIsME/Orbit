@@ -50,6 +50,7 @@ export interface Notification {
   inviteData?: InviteNotification;
   createdAt: string;
   read: boolean;
+  seen: boolean;
 }
 
 export interface InviteNotification {
@@ -57,6 +58,7 @@ export interface InviteNotification {
   token?: string; // raw token — needed for accept endpoint
   projectId: string;
   projectName: string;
+  projectAvatar?: string; // coverImageUrl from project
   role: string;
   inviterName: string;
   acceptUrl?: string;

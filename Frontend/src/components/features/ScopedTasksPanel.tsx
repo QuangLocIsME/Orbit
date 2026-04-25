@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Toaster, toast } from 'sonner';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { apiFetch } from '@/lib/api-client';
@@ -46,6 +46,18 @@ interface TaskItem {
   dueDate: string;
   assigneeId: string;
 }
+
+interface EditTaskData {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  description: string;
+  assigneeId: string;
+  dueDate: string;
+  tags: string[];
+  linkedItems: string;
+}
 type CalendarTaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
 type LinkedSuggestionItem = { label: string; value: string };
 
@@ -77,17 +89,30 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
   const [tasksViewMode, setTasksViewMode] = useState<'board' | 'list' | 'calendar'>('board');
   const [tasksSearchQuery, setTasksSearchQuery] = useState('');
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [listContextMenu, setListContextMenu] = useState<{ x: number; y: number; taskId: string } | null>(null);
   const [pendingTaskStageId, setPendingTaskStageId] = useState<string | undefined>(undefined);
   const [tasksData, setTasksData] = useState<TaskItem[]>([]);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [projectTaskTags, setProjectTaskTags] = useState<string[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [editingTask, setEditingTask] = useState<EditTaskData | null>(null);
+
+  // Open task from URL query param (e.g., from notification link)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const taskParam = params.get('taskId');
+    if (taskParam && !selectedTaskId) {
+      setSelectedTaskId(taskParam);
+    }
+  }, [selectedTaskId]);
   const [selectedWorkflowStages, setSelectedWorkflowStages] = useState<WorkflowStage[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
   const [linkedItemSuggestions, setLinkedItemSuggestions] = useState<LinkedSuggestionItem[]>([]);
 
   const canCreateTask = projectRole !== 'viewer';
   const canManageWorkflow = projectRole === 'owner' || projectRole === 'admin';
+  const canManageTask = ['owner', 'admin', 'manager'].includes(projectRole);
   const hasExistingTasks = tasksData.length > 0;
   const workflowDisabledReason = hasExistingTasks
     ? 'Workflow selection is locked because this project already has tasks.'
@@ -403,6 +428,44 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
     }
   }, [canCreateTask, currentUserId, projectRole, scopeRequestBody, tasksData]);
 
+  const handleDeleteTask = useCallback(async (taskId: string) => {
+    try {
+      const res = await apiFetch('/api/tasks/', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTasksData(prev => prev.filter(t => t.id !== taskId));
+        if (selectedTaskId === taskId) setSelectedTaskId(null);
+        toast.success('Task deleted');
+      } else {
+        toast.error(data.message || 'Failed to delete task');
+      }
+    } catch {
+      toast.error('Failed to delete task');
+    }
+  }, [selectedTaskId]);
+
+  // Close list context menu on outside click
+  const listMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!listContextMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (listMenuRef.current && !listMenuRef.current.contains(e.target as Node)) {
+        setListContextMenu(null);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setListContextMenu(null); };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [listContextMenu]);
+
   const isPackageScope = scope.type === 'package';
   const resolveStageName = useCallback((status: string) => {
     const stage = selectedWorkflowStages.find((s) => s.id === status);
@@ -550,6 +613,37 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           onClose={() => {
             setIsNewTaskModalOpen(false);
             setPendingTaskStageId(undefined);
+            setEditingTask(null);
+          }}
+          editTask={editingTask}
+          onUpdate={async (taskId, task) => {
+            try {
+              const res = await apiFetch('/api/tasks/', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  taskId,
+                  title: task.title,
+                  status: task.status,
+                  priority: task.priority,
+                  description: task.description,
+                  assigneeId: task.assignee || undefined,
+                  dueDate: task.dueDate || undefined,
+                  linkedUrl: task.linkedItems || undefined,
+                  tags: task.tags,
+                }),
+              });
+              const data = await res.json();
+              if (data.success) {
+                toast.success('Task updated');
+                setEditingTask(null);
+                await loadTasks();
+              } else {
+                toast.error(data.message || 'Failed to update task');
+              }
+            } catch {
+              toast.error('Failed to update task');
+            }
           }}
           assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
@@ -686,12 +780,35 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
             teamMembers={teamMembers}
             loading={isTasksLoading}
             stages={selectedWorkflowStages}
+            projectRole={projectRole}
             onTaskStatusChange={handleTaskStatusChange}
             onTaskClick={setSelectedTaskId}
             onAddTask={(stageId) => {
               if (!canCreateTask) return;
               setPendingTaskStageId(stageId);
               setIsNewTaskModalOpen(true);
+            }}
+            onEditRequest={(task) => {
+              if (!canManageTask) return;
+              const fullTask = tasksData.find(t => t.id === task.id);
+              if (fullTask) {
+                setEditingTask({
+                  id: fullTask.id,
+                  title: fullTask.title,
+                  status: fullTask.status,
+                  priority: fullTask.priority,
+                  description: fullTask.description,
+                  assigneeId: fullTask.assigneeId,
+                  dueDate: fullTask.dueDate,
+                  tags: fullTask.tags,
+                  linkedItems: fullTask.linkedItem?.name || '',
+                });
+                setIsNewTaskModalOpen(true);
+              }
+            }}
+            onDeleteRequest={(taskId) => {
+              if (!canManageTask) return;
+              handleDeleteTask(taskId);
             }}
           />
         </div>
@@ -759,11 +876,51 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                     )}
                   </div>
                   <div>
-                    <button className="p-1 hover:bg-gray-100 rounded">
-                      <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
-                      </svg>
-                    </button>
+                    {canManageTask ? (
+                      <div className="relative" ref={listMenuRef}>
+                        <button
+                          type="button"
+                          className="p-1 hover:bg-gray-100 rounded"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setListContextMenu({ x: e.clientX, y: e.clientY, taskId: task.id });
+                          }}
+                        >
+                          <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+                          </svg>
+                        </button>
+                        {listContextMenu?.taskId === task.id && (
+                          <div
+                            className="fixed z-[99999] w-36 bg-white rounded-lg shadow-lg border border-[#E5E7EB] py-1 text-[13px]"
+                            style={{ top: listContextMenu.y, left: listContextMenu.x }}
+                          >
+                            <button
+                              type="button"
+                              className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-2 text-[#101828]"
+                              onClick={() => { setSelectedTaskId(task.id); setListContextMenu(null); }}
+                            >
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                              </svg>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="w-full px-3 py-2 text-left hover:bg-red-50 flex items-center gap-2 text-red-600"
+                              onClick={() => { handleDeleteTask(task.id); setListContextMenu(null); }}
+                            >
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                              </svg>
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="w-6" />
+                    )}
                   </div>
                 </div>
               );
@@ -799,6 +956,37 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
         onClose={() => {
           setIsNewTaskModalOpen(false);
           setPendingTaskStageId(undefined);
+          setEditingTask(null);
+        }}
+        editTask={editingTask}
+        onUpdate={async (taskId, task) => {
+          try {
+            const res = await apiFetch('/api/tasks/', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                taskId,
+                title: task.title,
+                status: task.status,
+                priority: task.priority,
+                description: task.description,
+                assigneeId: task.assignee || undefined,
+                dueDate: task.dueDate || undefined,
+                linkedUrl: task.linkedItems || undefined,
+                tags: task.tags,
+              }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              toast.success('Task updated');
+              setEditingTask(null);
+              await loadTasks();
+            } else {
+              toast.error(data.message || 'Failed to update task');
+            }
+          } catch {
+            toast.error('Failed to update task');
+          }
         }}
         assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
         tagOptions={projectTaskTags}

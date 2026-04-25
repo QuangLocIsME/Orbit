@@ -452,6 +452,14 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       return;
     }
 
+    const trimmedNewName = renameValue.trim();
+    if (trimmedNewName === node.name) {
+      setRenamingNodeId('');
+      setRenameValue('');
+      setRenameError('');
+      return;
+    }
+
     const endpoint = node.type === 'folder'
       ? '/api/projects/packages/documents/folder/rename'
       : '/api/projects/packages/documents/file/rename';
@@ -491,7 +499,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       setRenamingNodeId('');
       setRenameValue('');
       setRenameError('');
-      toast.success('Folder renamed successfully');
+      toast.success(node.type === 'folder' ? `Folder renamed to "${trimmedNewName}"` : `File renamed to "${trimmedNewName}"`);
       await loadDocuments();
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Rename failed';

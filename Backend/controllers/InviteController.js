@@ -1,7 +1,9 @@
 const crypto = require('node:crypto');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const ProjectRepository = require('../repositories/ProjectRepository');
 const UserRepository = require('../repositories/UserRepository');
+const NotificationRepository = require('../repositories/NotificationRepository');
 const socketService = require('../services/socketService');
 const emailService = require('../services/emailService');
 const { errorResponse } = require('../utils/response');
@@ -70,23 +72,42 @@ class InviteController {
             // Real-time notification if invitee has an account
             if (inviteeProfile) {
                 const inviterProfile = await UserRepository.getProfileById(callerId);
-                socketService.notifyUser(String(inviteeProfile._id), 'invite:new', {
+                const project = await ProjectRepository.findByPublicId(normalizedProjectId);
+                const notificationData = {
                     inviteId: String(invite._id),
-                    token, // raw token — needed for accept endpoint
+                    token,
                     projectId: normalizedProjectId,
-                    projectName: req.body?.projectName || 'a project',
+                    projectName: project?.name || 'a project',
+                    projectAvatar: project?.coverImageUrl || undefined,
                     role: invite.role,
                     inviterName: inviterProfile?.fullName || 'Someone',
                     acceptUrl,
+                };
+
+                // Always save to DB first (so it's available when user comes online)
+                await NotificationRepository.create({
+                    userId: String(inviteeProfile._id),
+                    type: 'info',
+                    title: `${inviterProfile?.fullName || 'Someone'} invited you`,
+                    message: `Join "${project?.name || 'a project'}" as ${invite.role}`,
+                    link: acceptUrl,
+                    read: false,
+                    refType: 'invite',
+                    refId: String(invite._id),
+                    inviteData: notificationData,
                 });
+
+                // Also push via WebSocket for online users
+                socketService.notifyUser(String(inviteeProfile._id), 'invite:new', notificationData);
             }
 
             // Send invite email (fire-and-forget — don't block the response)
             const inviterProfile = await UserRepository.getProfileById(callerId);
+            const project = await ProjectRepository.findByPublicId(normalizedProjectId);
             emailService.sendInviteEmail({
                 toEmail: normalizedEmail,
                 inviterName: inviterProfile?.fullName || 'Someone',
-                projectName: req.body?.projectName || 'a project',
+                projectName: project?.name || 'a project',
                 role: invite.role,
                 acceptUrl,
             }).catch((err) => console.warn('[Invite] Email send failed:', err.message));
@@ -214,6 +235,27 @@ class InviteController {
             return res.status(200).json({ success: true, message: 'Invite declined' });
         } catch (error) {
             return errorResponse(res, 400, 'Decline invite failed');
+        }
+    }
+
+    async getInviteStatus(req, res) {
+        try {
+            const { inviteId } = req.params;
+            if (!inviteId) {
+                return errorResponse(res, 400, 'Missing inviteId');
+            }
+
+            const invite = await ProjectInviteRepository.findById(inviteId);
+            if (!invite) {
+                return errorResponse(res, 404, 'Invite not found');
+            }
+
+            return res.status(200).json({
+                success: true,
+                data: { status: invite.status },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, 'Failed to get invite status');
         }
     }
 

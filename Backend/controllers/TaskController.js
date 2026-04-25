@@ -3,6 +3,7 @@ const TaskComment = require('../models/TaskComment');
 const User = require('../models/User');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const PackageRepository = require('../repositories/PackageRepository');
+const NotificationRepository = require('../repositories/NotificationRepository');
 const socketService = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
@@ -67,7 +68,7 @@ const buildScopeFilter = (projectId, packageId = null) => {
 
 const getTaskLink = (projectId, packageId, taskId) => {
     if (packageId) {
-        return `/projects/${projectId}/packages/${packageId}?tab=tasks&taskId=${taskId}`;
+        return `/${projectId}/${packageId}?tab=tasks&taskId=${taskId}`;
     }
 
     return `/projects/${projectId}/tasks/${taskId}`;
@@ -148,14 +149,29 @@ class TaskController {
             }
 
             if (assigneeId) {
-                socketService.notifyUser(assigneeId, 'notification:new', {
-                    id: `task-assigned:${task.publicId}`,
+                const taskLink = getTaskLink(projectId, packageId, task.publicId);
+
+                // Always save to DB first (so it's available when user comes online)
+                const notification = await NotificationRepository.create({
+                    userId: assigneeId,
                     type: 'info',
                     title: 'New task assigned',
-                    message: `${title}`,
-                    link: getTaskLink(projectId, packageId, task.publicId),
+                    message: title,
+                    link: taskLink,
                     read: false,
-                    createdAt: new Date().toISOString(),
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                // Also push via WebSocket for online users — use the same _id as the DB record
+                socketService.notifyUser(assigneeId, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'New task assigned',
+                    message: title,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
                 });
             }
 
@@ -466,6 +482,62 @@ class TaskController {
             });
         } catch {
             return serverError(res, 'Delete comment failed');
+        }
+    }
+
+    async updateTask(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            if (!taskId) return badRequest(res, 'Missing taskId');
+
+            const task = await Task.findOne({ publicId: taskId });
+            if (!task) return notFound(res, 'Task not found');
+
+            const member = await ProjectMemberRepository.findMember(task.projectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin', 'manager'].includes(member.role)) return forbidden(res);
+
+            const { title, description, priority, assigneeId, dueDate, tags } = req.body || {};
+
+            if (title !== undefined) task.title = title.trim();
+            if (description !== undefined) task.description = description.trim();
+            if (priority !== undefined) task.priority = normalizePriority(priority);
+            if (assigneeId !== undefined) task.assigneeId = assigneeId || null;
+            if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
+            if (tags !== undefined) task.tags = Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [];
+            task.updatedAt = new Date();
+
+            await task.save();
+
+            return res.status(200).json({ success: true, message: 'Task updated', data: { publicId: task.publicId } });
+        } catch {
+            return serverError(res, 'Update task failed');
+        }
+    }
+
+    async deleteTask(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            if (!taskId) return badRequest(res, 'Missing taskId');
+
+            const task = await Task.findOne({ publicId: taskId });
+            if (!task) return notFound(res, 'Task not found');
+
+            const member = await ProjectMemberRepository.findMember(task.projectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin', 'manager'].includes(member.role)) return forbidden(res);
+
+            await Task.deleteOne({ publicId: taskId });
+
+            return res.status(200).json({ success: true, message: 'Task deleted' });
+        } catch {
+            return serverError(res, 'Delete task failed');
         }
     }
 }

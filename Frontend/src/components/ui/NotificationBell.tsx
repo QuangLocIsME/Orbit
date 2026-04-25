@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useSocket } from '@/hooks/useSocket';
+import { toast } from '@/components/ui/sonner';
 import { cn } from '@/lib/utils';
 import type { Notification } from '@/lib/socket';
 
@@ -40,6 +41,19 @@ export function NotificationBell() {
   const { connected, latency } = useSocket();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const prevUnreadRef = useRef<number>(0);
+  const [badgeAnimating, setBadgeAnimating] = useState(false);
+
+  // Animate badge when count increases (new notification arrives)
+  useEffect(() => {
+    const total = unreadCount;
+    if (total > prevUnreadRef.current && prevUnreadRef.current > 0) {
+      setBadgeAnimating(true);
+      const t = setTimeout(() => setBadgeAnimating(false), 400);
+      return () => clearTimeout(t);
+    }
+    prevUnreadRef.current = total;
+  }, [unreadCount]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -52,6 +66,19 @@ export function NotificationBell() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Auto-scroll to first unread notification when panel opens
+  useEffect(() => {
+    if (!open) return;
+    const firstUnread = notifications.find((n) => !n.read);
+    if (!firstUnread) return;
+    const el = document.getElementById(`notif-bell-${firstUnread.id}`);
+    if (el) {
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
+    }
+  }, [open, notifications]);
+
   return (
     <div className="relative isolate" ref={panelRef}>
       {/* Bell button */}
@@ -62,7 +89,13 @@ export function NotificationBell() {
       >
         <BellIcon className="h-5 w-5" />
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+          <span
+            suppressHydrationWarning
+            className={cn(
+              'absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white',
+              badgeAnimating && 'animate-bounce'
+            )}
+          >
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -95,7 +128,10 @@ export function NotificationBell() {
             <div className="flex items-center gap-2">
               {unreadCount > 0 && (
                 <button
-                  onClick={markAllRead}
+                  onClick={() => {
+                    markAllRead();
+                    toast.success('All notifications marked as read');
+                  }}
                   className="text-xs text-indigo-600 hover:underline"
                 >
                   Mark all read
@@ -123,6 +159,7 @@ export function NotificationBell() {
               notifications.map((n) => (
                 <button
                   key={n.id}
+                  id={`notif-bell-${n.id}`}
                   onClick={() => {
                     markRead(n.id);
                     if (n.link) window.location.href = n.link;

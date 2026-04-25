@@ -97,6 +97,38 @@ export async function uploadProjectThumbnail(projectId: string, file: File): Pro
   return data.data.coverImageUrl;
 }
 
+export async function uploadProjectAvatar(projectId: string, file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append('avatar', file);
+  formData.append('projectId', projectId);
+
+  const response = await apiFetch('/api/projects/upload-avatar', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Upload failed' }));
+    throw new Error(error.message || 'Failed to upload avatar');
+  }
+
+  const data = await response.json();
+  return data.data.coverImageUrl;
+}
+
+export async function deleteProjectAvatar(projectId: string): Promise<void> {
+  const response = await apiFetch('/api/projects/delete-avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Delete failed' }));
+    throw new Error(error.message || 'Failed to delete avatar');
+  }
+}
+
 /**
  * Update project settings (name, description, industry, coverImageUrl).
  * @param projectId - Public ID của project

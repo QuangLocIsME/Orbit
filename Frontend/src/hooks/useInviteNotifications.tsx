@@ -96,11 +96,24 @@ export default function InviteNotificationHandler() {
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-2 pt-1">
-              <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3">
-                <p className="text-sm font-medium text-[#101828]">{activeInvite?.projectName}</p>
-                <p className="text-xs text-[#6A7282] mt-0.5">
-                  Role: <span className="capitalize font-medium">{activeInvite?.role}</span>
-                </p>
+              <div className="flex items-start gap-3 rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3">
+                {activeInvite?.projectAvatar ? (
+                  <img
+                    src={activeInvite.projectAvatar}
+                    alt={activeInvite.projectName}
+                    className="h-10 w-10 rounded-lg object-cover flex-shrink-0 border border-[#E5E7EB]"
+                  />
+                ) : (
+                  <div className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0 border border-[#E5E7EB] bg-[#EFF6FF] text-[#155DFC] font-semibold text-sm">
+                    {activeInvite?.projectName?.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[#101828] truncate">{activeInvite?.projectName}</p>
+                  <p className="text-xs text-[#6A7282] mt-0.5">
+                    Role: <span className="capitalize font-medium">{activeInvite?.role}</span>
+                  </p>
+                </div>
               </div>
               <p className="text-sm text-muted-foreground">
                 Would you like to accept this invitation?

@@ -485,7 +485,17 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   };
   
   // Check for stored tab on mount (used when navigating back from package detail)
+  // Also check URL search params for tab navigation (e.g. from notification links)
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlTab = params.get('tab');
+    if (urlTab && tabs.some(t => t.id === urlTab)) {
+      setActiveTab(urlTab);
+      params.delete('tab');
+      const newSearch = params.toString();
+      window.history.replaceState({}, '', newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname);
+      return;
+    }
     const storedTab = sessionStorage.getItem('projectActiveTab');
     if (storedTab) {
       setActiveTab(storedTab);
@@ -2564,6 +2574,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             projectCode={project.publicId}
             projectDescription={project.description}
             projectPublicId={project.publicId}
+            projectCoverImageUrl={project.coverImageUrl}
             onSettingsUpdated={handleSettingsUpdated}
             onActivityAdded={() => setActivitiesVersion(v => v + 1)}
           />

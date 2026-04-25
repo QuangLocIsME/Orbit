@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
-import { apiFetch, uploadProjectThumbnail, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole } from '@/lib/api-client';
+import { apiFetch, uploadProjectThumbnail, uploadProjectAvatar, deleteProjectAvatar, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole } from '@/lib/api-client';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
@@ -261,6 +261,7 @@ interface SettingsTabProps {
   projectCode?: string;
   projectDescription?: string;
   projectPublicId?: string;
+  projectCoverImageUrl?: string;
   projectType?: 'construction' | 'design' | 'software' | 'research';
   onSettingsUpdated?: () => void;
   onActivityAdded?: () => void; // Trigger refresh activities
@@ -285,11 +286,12 @@ const defaultDisciplines: Discipline[] = [
   { id: '5', name: 'Drawings', description: 'Construction drawings and documentation', color: 'bg-teal-100 text-teal-600' },
 ];
 
-export default function SettingsTab({ 
+export default function SettingsTab({
   projectName = 'Metro Station - Phase 2',
   projectCode = 'MS-P2-2025',
   projectDescription = '',
   projectPublicId = '',
+  projectCoverImageUrl = '',
   projectType = 'construction',
   onSettingsUpdated,
   onActivityAdded
@@ -347,8 +349,8 @@ export default function SettingsTab({
   const [editingDiscipline, setEditingDiscipline] = useState<Discipline | null>(null);
   
   // Project thumbnail
-  const [projectThumbnail, setProjectThumbnail] = useState<string | null>('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=200&h=120&fit=crop');
-  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
+  const [projectThumbnail, setProjectThumbnail] = useState<string | null>(projectCoverImageUrl || null);
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(projectCoverImageUrl || null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Template apply success
@@ -626,12 +628,12 @@ export default function SettingsTab({
 
     if (projectPublicId) {
       try {
-        const publicUrl = await uploadProjectThumbnail(projectPublicId, file);
+        const publicUrl = await uploadProjectAvatar(projectPublicId, file);
         setCoverImageUrl(publicUrl);
         setProjectThumbnail(publicUrl);
-        toast.success('Image uploaded successfully');
+        toast.success('Avatar uploaded successfully');
       } catch {
-        toast.error('Failed to upload image');
+        toast.error('Failed to upload avatar');
       }
     }
   };
@@ -1478,13 +1480,34 @@ export default function SettingsTab({
                   accept="image/*"
                   className="hidden"
                 />
-                <button 
-                  onClick={handleChangeImage}
-                  className="inline-flex items-center gap-2 text-[14px] text-[#155DFC] hover:underline"
-                >
-                  <Upload className="h-4 w-4" />
-                  Change image
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleChangeImage}
+                    className="inline-flex items-center gap-2 text-[14px] text-[#155DFC] hover:underline"
+                  >
+                    <Upload className="h-4 w-4" />
+                    Change image
+                  </button>
+                  {coverImageUrl && (
+                    <button
+                      onClick={async () => {
+                        if (!projectPublicId) return;
+                        try {
+                          await deleteProjectAvatar(projectPublicId);
+                          setCoverImageUrl(null);
+                          setProjectThumbnail('');
+                          toast.success('Avatar removed');
+                        } catch {
+                          toast.error('Failed to remove avatar');
+                        }
+                      }}
+                      className="inline-flex items-center gap-2 text-[14px] text-red-500 hover:text-red-600 hover:underline"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 

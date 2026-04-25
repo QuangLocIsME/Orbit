@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '../../lib/auth';
+import { uploadProjectAvatar } from '../../lib/api-client';
 
 interface IndustryOption {
   id: string;
@@ -357,7 +358,10 @@ function getIconById(iconId: string): React.ReactNode {
 export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }: CreateProjectModalProps) {
   const [projectName, setProjectName] = useState('');
   const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null);
-  const [coverImageUrl, setCoverImageUrl] = useState('');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string>('');
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const [showMoreIndustries, setShowMoreIndustries] = useState(false);
   const [showCustomIndustry, setShowCustomIndustry] = useState(false);
   const [customIndustries, setCustomIndustries] = useState<IndustryOption[]>(() => {
@@ -370,6 +374,16 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
   const [customName, setCustomName] = useState('');
   const [customIcon, setCustomIcon] = useState('building');
   const [customColor, setCustomColor] = useState('pink'); // Default to pink for better visibility
+
+  // Reset form when modal closes
+  React.useEffect(() => {
+    if (!isOpen) {
+      setProjectName('');
+      setSelectedIndustry(null);
+      setAvatarFile(null);
+      setAvatarPreview('');
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -395,7 +409,7 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
             name: trimmedName,
             description: '',
             industry: selectedIndustryName || null,
-            coverImageUrl: coverImageUrl.trim() || null,
+            coverImageUrl: null,
           }),
         });
 
@@ -403,6 +417,16 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
 
         if (!response.ok || !payload?.success || !payload?.data) {
           throw new Error(payload?.message || 'Create project failed');
+        }
+
+        const createdProjectPublicId = payload.data.publicId;
+
+        if (avatarFile && createdProjectPublicId) {
+          try {
+            await uploadProjectAvatar(createdProjectPublicId, avatarFile);
+          } catch (err) {
+            console.warn('[CreateProject] Avatar upload failed:', err);
+          }
         }
 
         // Get custom industry data if this is a custom industry
@@ -442,7 +466,8 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
         onClose();
         setProjectName('');
         setSelectedIndustry(null);
-        setCoverImageUrl('');
+        setAvatarFile(null);
+        setAvatarPreview('');
 
         return createdProject;
       } finally {
@@ -675,18 +700,60 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
             )}
           </div>
 
-          {/* Cover Image URL */}
+          {/* Project Avatar */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Cover Image URL (optional)
+              Project Avatar (optional)
             </label>
-            <input
-              type="url"
-              value={coverImageUrl}
-              onChange={(e) => setCoverImageUrl(e.target.value)}
-              placeholder="https://example.com/image.jpg"
-              className="w-full h-11 px-4 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-            />
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={isUploadingAvatar}
+                className="relative flex items-center justify-center w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 hover:border-indigo-400 hover:bg-gray-50 transition-colors overflow-hidden group"
+              >
+                {avatarPreview ? (
+                  <img
+                    src={avatarPreview}
+                    alt="Avatar preview"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-gray-400 group-hover:text-indigo-400">
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                )}
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setAvatarFile(file);
+                    const reader = new FileReader();
+                    reader.onloadend = () => setAvatarPreview(reader.result as string);
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </button>
+              {avatarPreview && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAvatarFile(null);
+                    setAvatarPreview('');
+                    if (avatarInputRef.current) avatarInputRef.current.value = '';
+                  }}
+                  className="text-sm text-red-500 hover:text-red-600 hover:underline"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
           </div>
         </form>
 

@@ -25,5 +25,7 @@ router.post('/trash', authenticate, (req, res) => ProjectController.trashProject
 router.post('/restore', authenticate, (req, res) => ProjectController.restoreProject(req, res));
 router.post('/delete-permanent', authenticate, (req, res) => ProjectController.deletePermanentProject(req, res));
 router.post('/upload-thumbnail', authenticate, upload.single('thumbnail'), (req, res) => ProjectController.uploadThumbnail(req, res));
+router.post('/upload-avatar', authenticate, upload.single('avatar'), (req, res) => ProjectController.uploadAvatar(req, res));
+router.post('/delete-avatar', authenticate, (req, res) => ProjectController.deleteAvatar(req, res));
 
 module.exports = router;

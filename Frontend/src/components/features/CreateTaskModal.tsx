@@ -12,6 +12,18 @@ interface CreateTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit?: (task: TaskFormData) => void;
+  onUpdate?: (taskId: string, task: TaskFormData) => void;
+  editTask?: {
+    id: string;
+    title: string;
+    status: string;
+    priority: string;
+    description: string;
+    assigneeId: string;
+    dueDate: string;
+    tags: string[];
+    linkedItems?: string;
+  } | null;
   assigneeOptions?: { id: string; name: string }[];
   tagOptions?: string[];
   linkedItemSuggestions?: { label: string; value: string }[];
@@ -45,10 +57,12 @@ const priorityOptions = [
   { id: 'urgent', label: 'Urgent' },
 ];
 
-export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOptions, tagOptions, linkedItemSuggestions, workflowStages, defaultStageId }: CreateTaskModalProps) {
+export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, editTask, assigneeOptions, tagOptions, linkedItemSuggestions, workflowStages, defaultStageId }: CreateTaskModalProps) {
   const teamMembers = assigneeOptions && assigneeOptions.length > 0
     ? [{ id: '', name: 'Unassigned' }, ...assigneeOptions]
     : [{ id: '', name: 'Unassigned' }];
+
+  const isEditMode = Boolean(editTask);
 
   const resolvedTagOptions = Array.isArray(tagOptions)
     ? tagOptions
@@ -66,26 +80,41 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
 
   // Resolve initial status: use defaultStageId if it exists and is valid, otherwise first stage
   const resolvedInitialStageId = (() => {
+    if (isEditMode && editTask.status) return editTask.status;
     if (defaultStageId && stages.some(s => s.id === defaultStageId)) return defaultStageId;
     return stages[0]?.id || 'backlog';
   })();
 
-  // Sync status when modal opens with a new defaultStageId
+  // Sync status when modal opens with a new defaultStageId or edit task
   useEffect(() => {
     if (isOpen) {
       setFormData(prev => ({ ...prev, status: resolvedInitialStageId }));
     }
   }, [isOpen, resolvedInitialStageId]);
 
-  const [formData, setFormData] = useState<TaskFormData>({
-    title: '',
-    status: resolvedInitialStageId,
-    priority: 'medium',
-    description: '',
-    assignee: '',
-    dueDate: '',
-    tags: [],
-    linkedItems: '',
+  const [formData, setFormData] = useState<TaskFormData>(() => {
+    if (editTask) {
+      return {
+        title: editTask.title,
+        status: editTask.status || resolvedInitialStageId,
+        priority: editTask.priority || 'medium',
+        description: editTask.description || '',
+        assignee: editTask.assigneeId || '',
+        dueDate: editTask.dueDate ? new Date(editTask.dueDate).toISOString().slice(0, 10) : '',
+        tags: editTask.tags || [],
+        linkedItems: editTask.linkedItems || '',
+      };
+    }
+    return {
+      title: '',
+      status: resolvedInitialStageId,
+      priority: 'medium',
+      description: '',
+      assignee: '',
+      dueDate: '',
+      tags: [],
+      linkedItems: '',
+    };
   });
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -105,9 +134,7 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
     }));
   };
 
-  const handleSubmit = () => {
-    if (!formData.title.trim()) return;
-    onSubmit?.(formData);
+  const resetForm = () => {
     setFormData({
       title: '',
       status: resolvedInitialStageId,
@@ -118,6 +145,17 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
       tags: [],
       linkedItems: '',
     });
+  };
+
+  const handleSubmit = () => {
+    if (!formData.title.trim()) return;
+    if (isEditMode && editTask && onUpdate) {
+      onUpdate(editTask.id, formData);
+      onClose();
+      return;
+    }
+    onSubmit?.(formData);
+    resetForm();
     onClose();
   };
 
@@ -139,12 +177,16 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-10 h-10 bg-[#EFF6FF] rounded-[10px]">
               <svg className="w-5 h-5 text-[#155DFC]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.67}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                {isEditMode ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                )}
               </svg>
             </div>
             <div>
-              <h2 className="text-[18px] font-normal text-[#101828]">Create New Task</h2>
-              <p className="text-[12px] text-[#6A7282]">Add a task to your project</p>
+              <h2 className="text-[18px] font-normal text-[#101828]">{isEditMode ? 'Edit Task' : 'Create New Task'}</h2>
+              <p className="text-[12px] text-[#6A7282]">{isEditMode ? 'Update task information' : 'Add a task to your project'}</p>
             </div>
           </div>
           <button
@@ -359,9 +401,13 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, assigneeOpt
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#7C9EF8] text-[14px] text-white hover:bg-[#6B8EE8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              {isEditMode ? (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              )}
             </svg>
-            Create Task
+            {isEditMode ? 'Save Changes' : 'Create Task'}
           </button>
         </div>
       </div>
