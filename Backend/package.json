@@ -28,7 +28,7 @@
     "redis": "^4.7.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "uuid": "^13.0.0",
+    "uuid": "^14.0.0",
     "web-ifc": "^0.0.77"
   },
   "devDependencies": {
