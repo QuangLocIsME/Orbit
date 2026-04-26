@@ -192,7 +192,7 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
                 createdAt: String(c.createdAt || ''),
                 updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
                 isEdited: Boolean(c.isEdited),
-                avatar: c.author?.avatar || '',
+                avatar: c.avatar || c.author?.avatar || '',
               }))
             );
           }
@@ -282,7 +282,7 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
           author: String(c?.authorName || c?.author?.fullName || 'You'),
           content: String(c?.content || content),
           createdAt: String(c?.createdAt || new Date().toISOString()),
-          avatar: c?.author?.avatar || '',
+          avatar: c?.avatar || '',
         },
         ...prev,
       ]);
@@ -548,17 +548,25 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
           <div className="space-y-1 pt-1">
             {comments.map((comment) => (
               <div key={comment.id} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30 group">
-                <div
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-                  style={{ backgroundColor: (() => {
-                    const PALETTE = ['#6366F1','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899'];
-                    let h = 0;
-                    for (let i = 0; i < (comment.author || '').length; i++) h = (comment.author || '').charCodeAt(i) + ((h << 5) - h);
-                    return PALETTE[Math.abs(h) % PALETTE.length];
-                  })() }}
-                >
-                  {String(comment.author || 'U').charAt(0).toUpperCase()}
-                </div>
+                {comment.avatar ? (
+                  <img
+                    src={comment.avatar}
+                    alt={comment.author}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full object-cover text-xs font-semibold text-white"
+                  />
+                ) : (
+                  <div
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+                    style={{ backgroundColor: (() => {
+                      const PALETTE = ['#6366F1','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899'];
+                      let h = 0;
+                      for (let i = 0; i < (comment.author || '').length; i++) h = (comment.author || '').charCodeAt(i) + ((h << 5) - h);
+                      return PALETTE[Math.abs(h) % PALETTE.length];
+                    })() }}
+                  >
+                    {String(comment.author || 'U').charAt(0).toUpperCase()}
+                  </div>
+                )}
                 <div className="flex-1 min-w-0 space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] font-semibold text-foreground">{comment.author}</span>

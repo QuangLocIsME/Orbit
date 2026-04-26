@@ -1,6 +1,7 @@
 const Project = require('../models/Project');
 const Folder = require('../models/Folder');
 const User = require('../models/User');
+const Task = require('../models/Task');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const ProjectInviteRepository = require('../repositories/ProjectInviteRepository');
 const ProjectRoleRepository = require('../repositories/ProjectRoleRepository');
@@ -10,6 +11,7 @@ const { invalidateUserCache } = socketService;
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 const { buildSupabaseThumbnailPath, buildSupabaseAvatarPath, uploadProjectThumbnailBuffer, uploadAvatarBuffer, deleteAvatarFile } = require('../services/supabaseStorageService');
+const { evaluatePackageLifecycle } = require('../utils/packageLifecycle');
 
 // System roles to initialize for new projects
 const systemRoles = [
@@ -177,6 +179,83 @@ class ProjectController {
                 memberships.map((membership) => [membership.projectId, membership])
             );
 
+            // Compute project progress from package + task data in parallel
+            const progressResults = await Promise.all(
+                projects.map(async (project) => {
+                    try {
+                        const pkgStatusResult = await require('../repositories/PackageRepository').findByProjectId(project.publicId);
+                        const packages = Array.isArray(pkgStatusResult) ? pkgStatusResult : [];
+                        if (packages.length === 0) return { projectId: project.publicId, progress: 0 };
+
+                        const pkgIds = packages.map((p) => p.publicId).filter(Boolean);
+                        const stages = Array.isArray(project.workflow?.stages) ? project.workflow.stages : [];
+                        const doneStatuses = stages.map((s) => String(s.id || '').toLowerCase()).filter(Boolean);
+
+                        const [taskAgg, docAgg] = await Promise.all([
+                            Task.aggregate([
+                                { $match: { projectId: project.publicId, packageId: { $in: pkgIds } } },
+                                {
+                                    $group: {
+                                        _id: '$packageId',
+                                        taskTotal: { $sum: 1 },
+                                        doneTaskTotal: {
+                                            $sum: {
+                                                $cond: [
+                                                    { $in: [{ $toLower: '$status' }, doneStatuses] },
+                                                    1,
+                                                    0,
+                                                ],
+                                            },
+                                        },
+                                    },
+                                },
+                            ]),
+                            require('../models/Document').aggregate([
+                                { $match: { projectId: project.publicId, packageId: { $in: pkgIds } } },
+                                { $group: { _id: '$packageId', documentTotal: { $sum: 1 } } },
+                            ]),
+                        ]);
+
+                        const taskMap = new Map(taskAgg.map((r) => [String(r._id), r]));
+                        const docMap = new Map(docAgg.map((r) => [String(r._id), r]));
+
+                        let totalProgress = 0;
+                        let packageCount = 0;
+
+                        for (const pkg of packages) {
+                            const pid = String(pkg.publicId || '');
+                            if (!pid) continue;
+                            const taskStat = taskMap.get(pid) || {};
+                            const docStat = docMap.get(pid) || {};
+                            const memberSet = new Set([
+                                ...(Array.isArray(pkg.teamMemberIds) ? pkg.teamMemberIds : []),
+                                ...(pkg.creatorId ? [pkg.creatorId] : []),
+                            ]);
+
+                            const lifecycle = evaluatePackageLifecycle({
+                                dbStatus: pkg.status,
+                                taskTotal: Number(taskStat.taskTotal || 0),
+                                doneTaskTotal: Number(taskStat.doneTaskTotal || 0),
+                                documentTotal: Number(docStat.documentTotal || 0),
+                                memberTotal: memberSet.size,
+                            });
+
+                            totalProgress += lifecycle.progress;
+                            packageCount++;
+                        }
+
+                        return {
+                            projectId: project.publicId,
+                            progress: packageCount > 0 ? Math.round(totalProgress / packageCount) : 0,
+                        };
+                    } catch {
+                        return { projectId: project.publicId, progress: 0 };
+                    }
+                })
+            );
+
+            const progressMap = new Map(progressResults.map((r) => [r.projectId, r.progress]));
+
             const data = projects.map((project) => {
                 const membership = membershipMap.get(project.publicId);
                 return {
@@ -190,6 +269,7 @@ class ProjectController {
                     status: membership?.status || 'accepted',
                     lastVisitedAt: membership?.lastVisitedAt || null,
                     isFavorite: membership?.isFavorite || false,
+                    progress: progressMap.get(project.publicId) || 0,
                 };
             });
 

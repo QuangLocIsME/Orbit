@@ -23,7 +23,7 @@ const User = require('../models/User');
 const Task = require('../models/Task');
 const Document = require('../models/Document');
 const {
-    DONE_TASK_STATUSES,
+    computeDoneStatuses,
     evaluatePackageLifecycle,
     normalizeTaskStatus,
 } = require('../utils/packageLifecycle');
@@ -68,6 +68,11 @@ async function buildPackageLifecycleMap(projectId, packageIds = [], packageRows 
     const normalizedIds = [...new Set((packageIds || []).filter(Boolean))];
     if (normalizedIds.length === 0) return new Map();
 
+    const Project = require('../models/Project');
+    const project = await Project.findOne({ publicId: projectId }).select('workflow.stages').lean();
+    const stages = Array.isArray(project?.workflow?.stages) ? project.workflow.stages : [];
+    const doneStatuses = computeDoneStatuses(stages);
+
     const [taskAgg, docAgg] = await Promise.all([
         Task.aggregate([
             { $match: { projectId, packageId: { $in: normalizedIds } } },
@@ -78,7 +83,7 @@ async function buildPackageLifecycleMap(projectId, packageIds = [], packageRows 
                     doneTaskTotal: {
                         $sum: {
                             $cond: [
-                                { $in: [{ $toLower: '$status' }, [...DONE_TASK_STATUSES]] },
+                                { $in: [{ $toLower: '$status' }, [...doneStatuses]] },
                                 1,
                                 0,
                             ],
@@ -126,12 +131,17 @@ async function evaluateSinglePackageLifecycle(projectId, pkg) {
     if (!packageId) {
         return evaluatePackageLifecycle({ dbStatus: pkg?.status || 'Draft' });
     }
+    const Project = require('../models/Project');
+    const project = await Project.findOne({ publicId: projectId }).select('workflow.stages').lean();
+    const stages = Array.isArray(project?.workflow?.stages) ? project.workflow.stages : [];
+    const doneStatuses = computeDoneStatuses(stages);
+
     const [tasks, docs] = await Promise.all([
         Task.find({ projectId, packageId }, { status: 1 }).lean(),
         DocumentRepository.listByProjectAndPackage(projectId, packageId),
     ]);
     const doneTaskTotal = tasks.reduce(
-        (acc, task) => acc + (DONE_TASK_STATUSES.has(normalizeTaskStatus(task?.status)) ? 1 : 0),
+        (acc, task) => acc + (doneStatuses.has(normalizeTaskStatus(task?.status)) ? 1 : 0),
         0
     );
     const memberSet = new Set([

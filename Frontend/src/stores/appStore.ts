@@ -55,6 +55,7 @@ function writeCache<T>(key: string, data: T): void {
 
 export interface AuthUser {
   id: string;
+  publicId: string;
   fullName: string;
   email: string;
   avatar?: string | null;
@@ -151,6 +152,7 @@ interface AppState {
 
   // Actions
   setAuth: (auth: AuthUser | null) => void;
+  updateAuthAvatar: (avatar: string) => void;
   setProjects: (projects: ApiProject[]) => void;
   setFolders: (folders: ApiFolder[]) => void;
   setTeamMembers: (projectPublicId: string, members: ApiMember[]) => void;
@@ -208,6 +210,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   socket: null as OrbitSocket | null,
 
   setAuth: (auth) => set({ auth }),
+
+  updateAuthAvatar: (avatar) => {
+    set((s) => {
+      if (!s.auth) return s;
+      const updated = { ...s.auth, avatar };
+      try { localStorage.setItem('orbit_user', JSON.stringify(updated)); } catch { /* ignore */ }
+      return { auth: updated };
+    });
+  },
 
   setProjects: (projects) => {
     writeCache(PROJECTS_CACHE_KEY, projects);
@@ -319,6 +330,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     });
 
+    socket.on('user:avatar:updated', (payload: { userId: string; avatar: string }) => {
+      const s = get();
+      if (s.auth?.publicId === payload.userId) {
+        s.updateAuthAvatar(payload.avatar);
+      }
+    });
+
     // ── Project-scoped events — dispatch to registered callbacks ───────────────
     const projectEvents: ProjectEvent[] = [
       'documents:refresh',
@@ -402,3 +420,4 @@ export const hydrateApp = () => useAppStore.getState().hydrate();
 export const initAppSocket = () => useAppStore.getState().initSocket();
 export const destroyAppSocket = () => useAppStore.getState().destroySocket();
 export const clearAll = () => useAppStore.getState().clearAll();
+export const updateAuthAvatar = (avatar: string) => useAppStore.getState().updateAuthAvatar(avatar);

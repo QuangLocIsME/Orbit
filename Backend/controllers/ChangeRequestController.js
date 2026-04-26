@@ -380,15 +380,16 @@ class ChangeRequestController {
                 const validIds = authorIds.filter(id => { try { return mongoose.Types.ObjectId.isValid(id); } catch { return false; } });
                 if (validIds.length > 0) {
                     const User = require('../models/User');
-                    const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1 }).lean();
-                    authorMap = Object.fromEntries(users.map(u => [u._id.toString(), u.fullName]));
+                    const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1, avatar: 1 }).lean();
+                    authorMap = Object.fromEntries(users.map(u => [u._id.toString(), { fullName: u.fullName, avatar: u.avatar || '' }]));
                 }
             }
 
             const data = comments.map(c => ({
                 publicId: c.publicId,
                 authorId: c.authorId,
-                authorName: authorMap[c.authorId] || 'Unknown',
+                authorName: authorMap[c.authorId]?.fullName || 'Unknown',
+                avatar: authorMap[c.authorId]?.avatar || '',
                 content: c.content,
                 createdAt: c.createdAt,
             }));
@@ -422,10 +423,12 @@ class ChangeRequestController {
             });
 
             let authorName = 'Unknown';
+            let authorAvatar = '';
             if (mongoose.Types.ObjectId.isValid(userId)) {
                 const User = require('../models/User');
-                const user = await User.findById(userId).select('fullName').lean();
+                const user = await User.findById(userId).select('fullName avatar').lean();
                 authorName = user?.fullName || 'Unknown';
+                authorAvatar = user?.avatar || '';
             }
 
             return res.status(201).json({
@@ -434,6 +437,7 @@ class ChangeRequestController {
                     publicId: comment.publicId,
                     authorId: comment.authorId,
                     authorName,
+                    avatar: authorAvatar,
                     content: comment.content,
                     createdAt: comment.createdAt,
                 },

@@ -70,11 +70,12 @@ const statusSummaryCard = {
 } as const;
 
 const packageProgressPercent = (pkg: PackageItem) => {
-  if (typeof pkg.progress === 'number') return Math.max(0, Math.min(100, Math.round(pkg.progress)));
+  if (typeof pkg.progress === 'number') {
+    return Math.max(0, Math.min(100, Math.round(pkg.progress)));
+  }
   if (pkg.lifecycleStatus === 'Archived' || pkg.status === 'Archived') return 100;
   if (pkg.lifecycleStatus === 'Draft' || pkg.status === 'Draft') return 0;
-  const seed = Array.from(pkg.publicId || '').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return 35 + (seed % 55);
+  return 0;
 };
 
 const SELECTED_PROJECT_KEY = 'orbit:selected-project-id';

@@ -766,6 +766,7 @@ interface CRComment {
   publicId: string;
   authorId: string;
   authorName: string;
+  avatar?: string;
   content: string;
   createdAt: string;
   updatedAt?: string;
@@ -994,7 +995,7 @@ function DetailModal({
                   const m = teamMembers.find(x => x.userId === id);
                   return m ? (
                     <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2.5 py-0.5 text-[12px] text-[#1D4ED8]">
-                      <Avatar name={m.user?.fullName} color="#3B82F6" />{m.user?.fullName}
+                      <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />{m.user?.fullName}
                     </span>
                   ) : <span key={id} className="text-[13px] text-[#6A7282]">{id}</span>;
                 })}
@@ -1010,7 +1011,7 @@ function DetailModal({
                   const m = teamMembers.find(x => x.userId === id);
                   return m ? (
                     <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-1 pr-2.5 py-0.5 text-[12px] text-[#166534]">
-                      <Avatar name={m.user?.fullName} color="#22C55E" />{m.user?.fullName}
+                      <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />{m.user?.fullName}
                     </span>
                   ) : <span key={id} className="text-[13px] text-[#6A7282]">{id}</span>;
                 })}
@@ -1135,12 +1136,20 @@ function DetailModal({
               <div className="space-y-1 pt-1">
                 {comments.map(c => (
                   <div key={c.publicId} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30 group">
-                    <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-                      style={{ backgroundColor: nameToColor(c.authorName) }}
-                    >
-                      {c.authorName.charAt(0).toUpperCase()}
-                    </div>
+                    {c.avatar ? (
+                      <img
+                        src={c.avatar}
+                        alt={c.authorName}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full object-cover text-xs font-semibold text-white"
+                      />
+                    ) : (
+                      <div
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+                        style={{ backgroundColor: nameToColor(c.authorName) }}
+                      >
+                        {c.authorName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] font-semibold text-foreground">{c.authorName}</span>
@@ -1471,7 +1480,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
                         <div className="flex flex-wrap gap-1.5">
                           {assigneeMembers.slice(0, 4).map(m => (
                             <span key={m.userId} className="inline-flex items-center gap-1.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-0.5 pr-2.5 py-0.5 text-[11px] text-[#1D4ED8]">
-                              <Avatar name={m.user?.fullName} color="#3B82F6" />
+                              <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />
                               <span className="font-medium">{m.user?.fullName}</span>
                             </span>
                           ))}
@@ -1487,7 +1496,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
                         <div className="flex flex-wrap gap-1.5">
                           {reviewerMembers.slice(0, 4).map(m => (
                             <span key={m.userId} className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-0.5 pr-2.5 py-0.5 text-[11px] text-[#166534]">
-                              <Avatar name={m.user?.fullName} color="#22C55E" />
+                              <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />
                               <span className="font-medium">{m.user?.fullName}</span>
                             </span>
                           ))}

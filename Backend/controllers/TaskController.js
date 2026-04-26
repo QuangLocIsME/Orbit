@@ -263,6 +263,17 @@ class TaskController {
                 assignees: assigneeNames,
             });
 
+            // Broadcast to package room for real-time stat updates
+            if (packageId) {
+                socketService.broadcastPackage(packageId, 'package:task-count-changed', {
+                    projectId,
+                    packageId,
+                    action: 'created',
+                    taskId: task.publicId,
+                    status: task.status,
+                });
+            }
+
             return res.status(201).json({ success: true, data: task });
         } catch {
             return serverError(res, 'Create task failed');
@@ -409,6 +420,17 @@ class TaskController {
                 status,
             });
 
+            // Also broadcast to package room for real-time stat updates
+            if (packageId) {
+                socketService.broadcastPackage(packageId, 'package:task-count-changed', {
+                    projectId,
+                    packageId,
+                    action: 'status-changed',
+                    taskId,
+                    status,
+                });
+            }
+
             // Notify all assignees and reviewers when task stage changes
             const assigneeIds = currentTask.assigneeIds || [];
             const reviewerIds = currentTask.reviewerIds || [];
@@ -506,13 +528,14 @@ class TaskController {
 
             const authorIds = [...new Set(comments.map((c) => c.authorId).filter(Boolean))];
             const users = authorIds.length
-                ? await User.find({ _id: { $in: authorIds } }).select('_id fullName email').lean()
+                ? await User.find({ _id: { $in: authorIds } }).select('_id fullName email avatar').lean()
                 : [];
             const map = new Map(users.map((u) => [String(u._id), u]));
 
             const data = comments.map((c) => ({
                 ...c,
                 authorName: map.get(String(c.authorId))?.fullName || map.get(String(c.authorId))?.email || 'Unknown',
+                avatar: map.get(String(c.authorId))?.avatar || '',
             }));
 
             return res.status(200).json({ success: true, data });
@@ -572,8 +595,9 @@ class TaskController {
             });
 
             // Notify all assignees and reviewers when someone comments on their task
-            const author = await User.findById(userId).select('_id fullName email').lean();
+            const author = await User.findById(userId).select('_id fullName email avatar').lean();
             const authorName = author?.fullName || author?.email || 'Someone';
+            const authorAvatar = author?.avatar || '';
             const taskLink = getTaskLink(projectId, task.packageId, taskId);
             const message = `${authorName} commented: "${content.substring(0, 80)}${content.length > 80 ? '...' : ''}"`;
 
@@ -611,6 +635,7 @@ class TaskController {
                 data: {
                     ...comment.toObject(),
                     authorName: author?.fullName || author?.email || 'You',
+                    avatar: author?.avatar || '',
                 },
             });
         } catch {
@@ -802,6 +827,17 @@ class TaskController {
                 });
             }
 
+            // Broadcast to package room for real-time stat updates
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'package:task-count-changed', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    action: 'updated',
+                    taskId: task.publicId,
+                    status: task.status,
+                });
+            }
+
             return res.status(200).json({ success: true, message: 'Task updated', data: { publicId: task.publicId } });
         } catch {
             return serverError(res, 'Update task failed');
@@ -840,6 +876,16 @@ class TaskController {
             });
 
             await sendDiscordNotification(deletedProjectId, userId, 'task_deleted', deletedTitle, {});
+
+            // Broadcast to package room for real-time stat updates
+            if (deletedPackageId) {
+                socketService.broadcastPackage(deletedPackageId, 'package:task-count-changed', {
+                    projectId: deletedProjectId,
+                    packageId: deletedPackageId,
+                    action: 'deleted',
+                    taskId,
+                });
+            }
 
             return res.status(200).json({ success: true, message: 'Task deleted' });
         } catch {

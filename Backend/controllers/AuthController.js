@@ -291,6 +291,7 @@ class AuthController {
 
             const data = {
                 id: user._id,
+                publicId: user.publicId,
                 fullName: user.fullName,
                 email: user.email,
                 role: user.role,

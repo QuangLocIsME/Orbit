@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { cn, getTodayLocalDateString, localDateStringToUTCDate } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
@@ -18,6 +18,7 @@ import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import ChangesTab from './ChangesTab';
 import type { WorkflowStage } from './TaskBoard';
+import { getSocket } from '@/lib/socket';
 import {
   DndContext,
   DragOverlay,
@@ -59,6 +60,7 @@ interface TeamMemberView {
   name: string;
   role: string;
   avatar: string;
+  avatarUrl: string | null;
   color: string;
   isOnline: boolean;
 }
@@ -391,6 +393,51 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [loadingActivities, setLoadingActivities] = useState(true);
   const [activitiesVersion, setActivitiesVersion] = useState(0); // Increment to trigger refresh
   const [settingsUpdated, setSettingsUpdated] = useState(0);
+  const [dynamicProgress, setDynamicProgress] = useState<number | null>(null);
+  const isMounted = useRef(true);
+
+  // Compute effective progress: dynamic (from API) overrides the SSR prop
+  const effectiveProgress = dynamicProgress !== null ? dynamicProgress : project.progress;
+
+  // Fetch project progress from /api/projects/me and listen for real-time task changes
+  useEffect(() => {
+    isMounted.current = true;
+    let cancelled = false;
+
+    const fetchProjectProgress = async () => {
+      try {
+        const res = await apiFetch('/api/projects/me');
+        if (!res.ok || cancelled) return;
+        const payload = await res.json();
+        if (cancelled) return;
+        const projects = Array.isArray(payload?.data) ? payload.data : [];
+        const current = projects.find(
+          (p: any) => String(p.publicId) === String(project.publicId)
+        );
+        if (current && typeof current.progress === 'number' && isMounted.current) {
+          setDynamicProgress(current.progress);
+        }
+      } catch { /* silent */ }
+    };
+
+    fetchProjectProgress();
+
+    const socket = getSocket();
+    const handleTaskCountChanged = (data: { projectId: string }) => {
+      if (data.projectId !== project.publicId) return;
+      fetchProjectProgress();
+    };
+
+    socket.on('package:task-count-changed', handleTaskCountChanged);
+    socket.emit('project:join', { projectId: project.publicId });
+
+    return () => {
+      isMounted.current = false;
+      cancelled = true;
+      socket.off('package:task-count-changed', handleTaskCountChanged);
+      socket.emit('project:leave', { projectId: project.publicId });
+    };
+  }, [project.publicId]);
 
   // Fetch real team members + documents count + clash count from backend API
   useEffect(() => {
@@ -431,6 +478,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               name,
               role: m?.role || 'member',
               avatar: getInitials(name),
+              avatarUrl: m?.user?.avatar || null,
               color: avatarColors[index % avatarColors.length],
               isOnline: m?.status === 'accepted',
             };
@@ -996,10 +1044,10 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-indigo-600 rounded-full transition-all"
-                  style={{ width: `${project.progress}%` }}
+                  style={{ width: `${effectiveProgress}%` }}
                 />
               </div>
-              <span className="text-sm font-medium text-foreground">{project.progress}%</span>
+              <span className="text-sm font-medium text-foreground">{effectiveProgress}%</span>
             </div>
           </div>
           <div>
@@ -1074,9 +1122,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               {teamMembers.map((member) => (
                 <div key={member.id} className="flex items-center gap-3">
                   <div className="relative">
-                    <div className={cn("flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium text-white", member.color)}>
-                      {member.avatar}
-                    </div>
+                    {member.avatarUrl ? (
+                      <img src={member.avatarUrl} alt={member.name} className="flex h-10 w-10 items-center justify-center rounded-full object-cover text-sm font-medium text-white" />
+                    ) : (
+                      <div className={cn("flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium text-white", member.color)}>
+                        {member.avatar}
+                      </div>
+                    )}
                     {member.isOnline && (
                       <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />
                     )}
@@ -1728,9 +1780,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                               className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500"
                             />
                             <div className="flex items-center gap-2">
-                              <div className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium text-white", member.color)}>
-                                {member.avatar}
-                              </div>
+                              {member.avatarUrl ? (
+                                <img src={member.avatarUrl} alt={member.name} className="flex h-7 w-7 items-center justify-center rounded-full object-cover text-[11px] font-medium text-white" />
+                              ) : (
+                                <div className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium text-white", member.color)}>
+                                  {member.avatar}
+                                </div>
+                              )}
                               <span className="text-[14px] text-[#101828]">{member.name}</span>
                             </div>
                           </label>
@@ -1773,9 +1829,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                               className="h-4 w-4 rounded border-[#D1D5DC] text-[#155DFC] focus:ring-blue-500"
                             />
                             <div className="flex items-center gap-2">
-                              <div className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium text-white", member.color)}>
-                                {member.avatar}
-                              </div>
+                              {member.avatarUrl ? (
+                                <img src={member.avatarUrl} alt={member.name} className="flex h-7 w-7 items-center justify-center rounded-full object-cover text-[11px] font-medium text-white" />
+                              ) : (
+                                <div className={cn("flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium text-white", member.color)}>
+                                  {member.avatar}
+                                </div>
+                              )}
                               <span className="text-[14px] text-[#101828]">{member.name}</span>
                             </div>
                           </label>

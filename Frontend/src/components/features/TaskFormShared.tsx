@@ -36,9 +36,10 @@ interface AvatarProps {
   name?: string;
   color?: string;
   size?: 'xs' | 'sm' | 'md';
+  avatarSrc?: string | null;
 }
 
-export function Avatar({ name, color = '#6366f1', size = 'sm' }: AvatarProps) {
+export function Avatar({ name, color = '#6366f1', size = 'xs', avatarSrc }: AvatarProps) {
   const initials = (name || '')
     .split(' ')
     .map(w => w?.[0])
@@ -47,13 +48,21 @@ export function Avatar({ name, color = '#6366f1', size = 'sm' }: AvatarProps) {
     .slice(0, 2) || '?';
   const sizes = {
     xs: 'h-5 w-5 text-[9px]',
-    sm: 'h-6 h-6 w-6 text-[10px]',
+    sm: 'h-6 w-6 text-[10px]',
     md: 'h-7 w-7 text-[11px]',
   };
-  return (
+  const sizeClass = sizes[size];
+  return avatarSrc ? (
+    <img
+      src={avatarSrc}
+      alt={name || initials}
+      title={name}
+      className={cn('rounded-full object-cover shrink-0', sizeClass)}
+    />
+  ) : (
     <span
       title={name}
-      className={cn('inline-flex items-center justify-center rounded-full font-semibold text-white shrink-0', sizes[size])}
+      className={cn('inline-flex items-center justify-center rounded-full font-semibold text-white shrink-0', sizeClass)}
       style={{ backgroundColor: color }}
     >
       {initials}
@@ -66,7 +75,7 @@ export function Avatar({ name, color = '#6366f1', size = 'sm' }: AvatarProps) {
 interface MemberOption {
   userId: string;
   role?: string;
-  user?: { fullName?: string; email?: string; name?: string } | null;
+  user?: { fullName?: string; email?: string; name?: string; avatar?: string | null } | null;
 }
 
 interface MemberPickerProps {
@@ -98,7 +107,7 @@ export function MemberPicker({ label, members = [], selected, onChange }: Member
                   onChange={() => toggle(m.userId)}
                   className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]"
                 />
-                <Avatar name={memberName} size="sm" />
+                <Avatar name={memberName} size="sm" avatarSrc={m.user?.avatar} />
                 <div className="min-w-0">
                   <p className="text-[14px] text-[#101828] truncate">{memberName}</p>
                   <p className="text-[11px] text-[#6A7282] truncate">{m.role || ''}</p>
@@ -114,8 +123,8 @@ export function MemberPicker({ label, members = [], selected, onChange }: Member
             const m = members.find(x => x.userId === id);
             const memberName = m?.user?.fullName || m?.user?.name || 'Unknown';
             return m ? (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[11px] text-[#1D4ED8]">
-                <Avatar name={memberName} color="#3B82F6" size="xs" />
+                  <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[11px] text-[#1D4ED8]">
+                <Avatar name={memberName} color="#3B82F6" size="xs" avatarSrc={m?.user?.avatar} />
                 {memberName}
                 <button type="button" onClick={() => toggle(id)} className="ml-0.5 text-[#93C5FD] hover:text-[#1D4ED8] font-bold">x</button>
               </span>

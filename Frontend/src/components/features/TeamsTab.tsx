@@ -577,9 +577,13 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
               return (
                 <div key={member.userId} className="rounded-xl border border-[#E5E7EB] bg-white p-5 hover:shadow-md transition-shadow">
                   <div className="flex items-start gap-3 mb-4">
-                    <div className={cn("h-12 w-12 rounded-full flex items-center justify-center text-white font-medium text-[14px]", color)}>
-                      {getInitials(name)}
-                    </div>
+                    {member.user?.avatar ? (
+                      <img src={member.user.avatar} alt={name} className="h-12 w-12 rounded-full object-cover flex items-center justify-center text-white font-medium text-[14px]" style={{ backgroundColor: color }} />
+                    ) : (
+                      <div className={cn("h-12 w-12 rounded-full flex items-center justify-center text-white font-medium text-[14px]", color)}>
+                        {getInitials(name)}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <h3 className="text-[14px] font-medium text-[#101828] truncate">{name}</h3>
                       <p className="text-[12px] text-[#6A7282]">{roleInfo.name}</p>
@@ -666,10 +670,14 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                 const roleInfo = getRoleInfo(member.role);
                 return (
                   <div key={member.userId} className="grid grid-cols-[2fr_1.2fr_1fr_0.8fr_0.5fr] gap-4 px-6 py-4 items-center hover:bg-[#FAFAFA] transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className={cn("h-10 w-10 rounded-full flex items-center justify-center text-white text-[13px] font-medium", color)}>
-                        {getInitials(name)}
-                      </div>
+                      <div className="flex items-center gap-3">
+                        {member.user?.avatar ? (
+                          <img src={member.user.avatar} alt={name} className="h-10 w-10 rounded-full object-cover flex items-center justify-center text-white text-[13px] font-medium" style={{ backgroundColor: color }} />
+                        ) : (
+                          <div className={cn("h-10 w-10 rounded-full flex items-center justify-center text-white text-[13px] font-medium", color)}>
+                            {getInitials(name)}
+                          </div>
+                        )}
                       <div>
                         <p className="text-[14px] font-medium text-[#101828]">{name}</p>
                         <p className="text-[12px] text-[#6A7282]">{email || '—'}</p>
@@ -770,9 +778,13 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                         const color = getAvatarColor(email);
                         return (
                           <div key={m.userId} className="flex items-center gap-3 px-4 py-3">
-                            <div className={cn("h-8 w-8 rounded-full flex items-center justify-center text-white text-[12px] font-medium flex-shrink-0", color)}>
-                              {getInitials(name)}
-                            </div>
+                            {m.user?.avatar ? (
+                              <img src={m.user.avatar} alt={name} className="h-8 w-8 rounded-full object-cover flex items-center justify-center text-white text-[12px] font-medium flex-shrink-0" style={{ backgroundColor: color }} />
+                            ) : (
+                              <div className={cn("h-8 w-8 rounded-full flex items-center justify-center text-white text-[12px] font-medium flex-shrink-0", color)}>
+                                {getInitials(name)}
+                              </div>
+                            )}
                             <div className="flex-1 min-w-0">
                               <p className="text-[13px] font-medium text-[#101828] truncate">{name}</p>
                               <p className="text-[11px] text-[#6A7282] truncate capitalize">{m.role}</p>

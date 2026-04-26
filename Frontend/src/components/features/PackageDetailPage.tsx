@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
+import { useSocket } from '@/hooks/useSocket';
+import { getSocket } from '@/lib/socket';
 import { CheckCircle, Clock, FileText, Users, ChevronRight, Plus } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
@@ -41,6 +43,7 @@ interface TeamMemberView {
   email: string;
   role: string;
   avatar: string;
+  avatarUrl: string | null;
 }
 
 interface TaskSummary {
@@ -73,6 +76,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [savingMembers, setSavingMembers] = useState(false);
+  const [workflowStages, setWorkflowStages] = useState<{ id: string; name: string }[]>([]);
   const canManagePackageMembers = projectRole === 'owner' || projectRole === 'admin';
   const canManagePackageDocuments = projectRole !== 'viewer';
 
@@ -122,7 +126,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
 
         setPkg(found);
 
-        const [projectsRes, membersRes, tasksRes, documentsRes] = await Promise.all([
+        const [projectsRes, membersRes, tasksRes, documentsRes, workflowRes] = await Promise.all([
           apiFetch('/api/projects/me'),
           fetch('/api/projects/member-list', {
             method: 'POST',
@@ -139,6 +143,11 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({ projectId: found.projectId, packageId }),
+          }),
+          apiFetch('/api/projects/workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: found.projectId }),
           }),
         ]);
 
@@ -161,6 +170,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
               email: String(member?.user?.email || ''),
               role: String(member?.role || 'member'),
               avatar: getInitials(name),
+              avatarUrl: member?.user?.avatar || null,
             });
           });
           const mappedMembers = [...memberMap.values()];
@@ -180,11 +190,19 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
           setTeamMembers([]);
         }
 
+        const stages = Array.isArray(workflowRes?.data?.stages) ? workflowRes.data.stages : [];
+        setWorkflowStages(stages);
+        const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
+
         if (tasksRes.ok) {
           const payload = await tasksRes.json();
           const tasks = Array.isArray(payload?.data) ? payload.data : [];
           setTotalTasksCount(tasks.length);
-          const completedCount = tasks.filter((task: any) => ['done', 'completed', 'approved'].includes(String(task?.status || '').toLowerCase())).length;
+          const completedCount = tasks.filter((task: any) => {
+            const status = String(task?.status || '').toLowerCase();
+            const lastStageLower = lastStageId.toLowerCase();
+            return ['done', 'completed', 'approved'].includes(status) || status === lastStageLower;
+          }).length;
           setCompletedTasksCount(completedCount);
           setRecentTasks(
             tasks.slice(0, 5).map((task: any) => ({
@@ -217,11 +235,87 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
       }
     };
 
+    const refreshTasksAndDocuments = async (projectId: string) => {
+      if (cancelled) return;
+      try {
+        const memberMap = new Map<string, TeamMemberView>();
+        allProjectMembers.forEach((m) => memberMap.set(m.id, m));
+
+        const stages = workflowStages;
+        const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
+
+        const [tasksRes, documentsRes] = await Promise.all([
+          apiFetch('/api/tasks/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId, packageId }),
+          }),
+          apiFetch('/api/projects/packages/documents/package/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId, packageId }),
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        if (tasksRes.ok) {
+          const payload = await tasksRes.json();
+          const tasks = Array.isArray(payload?.data) ? payload.data : [];
+          setTotalTasksCount(tasks.length);
+          const completedCount = tasks.filter((task: any) => {
+            const status = String(task?.status || '').toLowerCase();
+            const lastStageLower = lastStageId.toLowerCase();
+            return ['done', 'completed', 'approved'].includes(status) || status === lastStageLower;
+          }).length;
+          setCompletedTasksCount(completedCount);
+          setRecentTasks(
+            tasks.slice(0, 5).map((task: any) => ({
+              id: String(task.publicId || task.id || ''),
+              title: String(task.title || 'Untitled task'),
+              status: String(task.status || 'backlog'),
+              assigneeName: memberMap.get(String(task.assigneeId || ''))?.name || 'Unassigned',
+            }))
+          );
+        }
+
+        if (documentsRes.ok) {
+          const payload = await documentsRes.json();
+          setDocumentsCount(Number(payload?.data?.total || 0));
+        }
+      } catch { /* silent refresh */ }
+    };
+
     refresh();
+
+    (window as any).__refreshPackageTasks = async () => {
+      if (cancelled || !pkg) return;
+      await refreshTasksAndDocuments(pkg.projectId);
+    };
+
     return () => {
       cancelled = true;
+      delete (window as any).__refreshPackageTasks;
     };
   }, [packageId, projectPublicId]);
+
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleTaskCountChanged = (data: { packageId: string; projectId: string }) => {
+      if (data.packageId !== packageId) return;
+      const refresh = (window as any).__refreshPackageTasks;
+      if (refresh) refresh();
+    };
+
+    socket.on('package:task-count-changed', handleTaskCountChanged);
+    socket.emit('package:join', { packageId });
+
+    return () => {
+      socket.off('package:task-count-changed', handleTaskCountChanged);
+      socket.emit('package:leave', { packageId });
+    };
+  }, [packageId]);
 
   const stats = useMemo(() => {
     const total = Math.max(totalTasksCount, 0);
@@ -391,14 +485,24 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                 {teamMembers.slice(0, 4).map((member, index) => {
                   const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
                   return (
-                    <span
-                      key={member.id}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white text-[11px] text-white"
-                      style={{ backgroundColor: avatarBg }}
-                      title={member.name}
-                    >
-                      {member.avatar}
-                    </span>
+                    member.avatarUrl ? (
+                      <img
+                        key={member.id}
+                        src={member.avatarUrl}
+                        alt={member.name}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white object-cover text-[11px] text-white"
+                        title={member.name}
+                      />
+                    ) : (
+                      <span
+                        key={member.id}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white text-[11px] text-white"
+                        style={{ backgroundColor: avatarBg }}
+                        title={member.name}
+                      >
+                        {member.avatar}
+                      </span>
+                    )
                   );
                 })}
               </div>
@@ -564,12 +668,16 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                   const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
                   return (
                   <div key={member.id} className="flex h-[81px] items-center gap-3 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
-                    <div
-                      className="flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-normal text-white"
-                      style={{ backgroundColor: avatarBg }}
-                    >
-                      {member.avatar}
-                    </div>
+                    {member.avatarUrl ? (
+                      <img src={member.avatarUrl} alt={member.name} className="h-12 w-12 rounded-full object-cover flex items-center justify-center text-[16px] font-normal text-white" style={{ backgroundColor: avatarBg }} />
+                    ) : (
+                      <div
+                        className="flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-normal text-white"
+                        style={{ backgroundColor: avatarBg }}
+                      >
+                        {member.avatar}
+                      </div>
+                    )}
                     <div className="min-w-0">
                       <p className="truncate text-[14px] text-[#101828]">{member.name}</p>
                       <p className="truncate text-[12px] text-[#6A7282] capitalize">{member.role}</p>
@@ -612,12 +720,16 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                       checked ? 'border-[#155DFC] bg-blue-50' : 'border-[#E5E7EB] bg-white hover:bg-gray-50'
                     )}
                   >
-                    <span
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs text-white"
-                      style={{ backgroundColor: avatarBg }}
-                    >
-                      {member.avatar}
-                    </span>
+                    {member.avatarUrl ? (
+                      <img src={member.avatarUrl} alt={member.name} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full object-cover text-xs text-white" />
+                    ) : (
+                      <span
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs text-white"
+                        style={{ backgroundColor: avatarBg }}
+                      >
+                        {member.avatar}
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-[#101828]">{member.name}</span>
                       <span className="block truncate text-xs text-[#6A7282]">{member.email}</span>

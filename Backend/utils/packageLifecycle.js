@@ -1,5 +1,14 @@
 const DONE_TASK_STATUSES = new Set(['done', 'completed', 'approved']);
 
+function computeDoneStatuses(stages = []) {
+    if (!stages || stages.length === 0) return DONE_TASK_STATUSES;
+    const last = stages[stages.length - 1];
+    const lastId = typeof last === 'string' ? last : (last?.id || '');
+    if (!lastId) return DONE_TASK_STATUSES;
+    const normalized = lastId.toLowerCase().trim();
+    return new Set([...DONE_TASK_STATUSES, normalized]);
+}
+
 function normalizeTaskStatus(status) {
     return String(status || '').trim().toLowerCase();
 }
@@ -71,6 +80,7 @@ function countDoneTasks(tasks = []) {
 
 module.exports = {
     DONE_TASK_STATUSES,
+    computeDoneStatuses,
     normalizeTaskStatus,
     getCompletionCriteria,
     getLifecycleStatus,

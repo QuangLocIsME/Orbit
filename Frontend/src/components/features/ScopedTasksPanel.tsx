@@ -29,6 +29,7 @@ interface TeamMemberView {
   name: string;
   role: string;
   avatar: string;
+  avatarUrl: string | null;
   color: string;
   isOnline: boolean;
 }
@@ -167,6 +168,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
             name,
             role: m?.role || 'member',
             avatar: getInitials(name),
+            avatarUrl: m?.user?.avatar || null,
             color: avatarColors[index % avatarColors.length],
             isOnline: m?.status === 'accepted',
           };
@@ -623,9 +625,13 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                     <div className="flex items-center gap-2">
                       {assignee ? (
                         <>
-                          <span className={cn('inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium text-white', assignee.color)}>
-                            {assignee.avatar}
-                          </span>
+                          {assignee.avatarUrl ? (
+                            <img src={assignee.avatarUrl} alt={assignee.name} className="inline-flex h-5 w-5 items-center justify-center rounded-full object-cover" />
+                          ) : (
+                            <span className={cn('inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium text-white', assignee.color)}>
+                              {assignee.avatar}
+                            </span>
+                          )}
                           <span className="text-[12px] text-[#4A5565]">{assignee.name}</span>
                         </>
                       ) : (
@@ -932,9 +938,13 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                   <div>
                     {assignee && (
                       <div className="flex items-center gap-2">
-                        <div className={cn('h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white', assignee.color)}>
-                          {assignee.avatar}
-                        </div>
+                        {assignee.avatarUrl ? (
+                          <img src={assignee.avatarUrl} alt={assignee.name} className="h-6 w-6 rounded-full object-cover" />
+                        ) : (
+                          <div className={cn('h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white', assignee.color)}>
+                            {assignee.avatar}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

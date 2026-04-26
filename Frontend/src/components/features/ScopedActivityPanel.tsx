@@ -382,7 +382,7 @@ export default function ScopedActivityPanel({
       setLoading(true);
       try {
         const endpoint = scope.type === 'package' && scope.packageId
-          ? `/api/projects/${scope.projectId}/packages/${scope.projectId}/activities`
+          ? `/api/projects/${scope.projectId}/packages/${scope.packageId}/activities`
           : `/api/projects/${scope.projectId}/activities`;
         const res = await apiFetch(endpoint);
         const payload = await res.json().catch(() => null);

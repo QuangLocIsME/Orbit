@@ -4,6 +4,7 @@ import { dispatchAuthExpired, dispatchSignOut } from './auth-helpers';
 
 export interface User {
   id: string;
+  publicId: string;
   fullName: string;
   email: string;
   avatar?: string | null;
@@ -23,6 +24,7 @@ function sanitizeStoredUser(raw: unknown): User | null {
 
   return {
     id: candidate.id,
+    publicId: typeof candidate.publicId === 'string' ? candidate.publicId : '',
     fullName: candidate.fullName,
     email: candidate.email,
     avatar: typeof candidate.avatar === 'string' || candidate.avatar === null
