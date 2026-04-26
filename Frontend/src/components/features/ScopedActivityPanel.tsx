@@ -501,7 +501,14 @@ export default function ScopedActivityPanel({
 
   return (
     <div className="space-y-4">
-      {/* Header with search + filters + margin */}
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-[24px] font-normal text-[#101828]">Activity</h2>
+        </div>
+      </div>
+
+      {/* Search and filters */}
       <div className="flex items-center justify-between gap-3 flex-wrap" style={{ marginTop: '0px', marginBottom: '24px' }}>
         {/* Search */}
         <div className="relative flex-1 min-w-[220px] max-w-xs">

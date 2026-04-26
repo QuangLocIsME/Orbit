@@ -3046,10 +3046,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Activity Tab — full feed (overview shows compact recent list separately) */}
         {activeTab === 'activity' && (
-          <ScopedActivityPanel
-            scope={{ type: 'project', projectId: project.publicId }}
-            title="Activity Feed"
-          />
+          <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+            <ScopedActivityPanel
+              scope={{ type: 'project', projectId: project.publicId }}
+            />
+          </div>
         )}
 
         {/* Settings Tab */}

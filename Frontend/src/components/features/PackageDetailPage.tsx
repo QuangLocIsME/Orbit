@@ -1062,7 +1062,6 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
         {activeTab === 'activity' && (
           <ScopedActivityPanel
             scope={{ type: 'package', projectId: pkg.projectId, packageId }}
-            title="Activity Feed"
           />
         )}
         </div>
