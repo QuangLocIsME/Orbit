@@ -3,6 +3,7 @@ import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
 import { useAppStore, type ApiProject } from '../../stores/appStore';
 import { apiFetch } from '../../lib/api-client';
+import { toast } from 'sonner';
 
 interface SidebarProps {
   currentPath: string;
@@ -83,6 +84,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [projects, setProjects] = useState<Project[]>([]);
 
@@ -107,6 +109,45 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     } catch (error) {
       console.error('Failed to fetch projects:', error);
     }
+  };
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File too large. Max size is 5MB.');
+      return;
+    }
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Invalid file type. Allowed: JPG, PNG, GIF, WEBP.');
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('avatar', file);
+      const res = await apiFetch('/api/user-settings/avatar', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok && data.data?.avatar) {
+        setAuthUser((prev) => prev ? { ...prev, avatar: data.data.avatar } : prev);
+        sidebarUserCache = sidebarUserCache ? { ...sidebarUserCache, avatar: data.data.avatar } : null;
+        const { updateAuthAvatar } = await import('../../stores/appStore');
+        updateAuthAvatar(data.data.avatar);
+        toast.success('Avatar updated');
+      } else {
+        toast.error(data.message || 'Failed to upload avatar');
+      }
+    } catch {
+      toast.error('Failed to upload avatar');
+    }
+
+    e.target.value = '';
   };
 
   // Fetch projects from API
@@ -294,8 +335,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsUserMenuOpen(false);
-                    setIsSettingsOpen(true);
+                    avatarInputRef.current?.click();
                   }}
                   className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-600 shadow-sm hover:bg-gray-50 dark:hover:bg-zinc-700"
                 >
@@ -422,6 +462,15 @@ export default function Sidebar({ currentPath }: SidebarProps) {
             </div>
           </div>
         )}
+
+        {/* Hidden file input for avatar upload */}
+        <input
+          ref={avatarInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp"
+          className="hidden"
+          onChange={handleAvatarChange}
+        />
       </div>
 
       {/* Main Navigation */}
