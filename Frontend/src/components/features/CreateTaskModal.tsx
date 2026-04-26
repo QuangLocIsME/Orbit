@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getTodayLocalDateString, utcDateStringToLocalDateString } from '@/lib/utils';
 import { MemberPicker, AffectedModelsPicker, AttachPicker } from './TaskFormShared';
@@ -101,6 +101,8 @@ export default function CreateTaskModal({
   const isEditMode = Boolean(editTask);
 
   const resolvedTagOptions = Array.isArray(tagOptions) ? tagOptions : [];
+  const [customTagOptions, setCustomTagOptions] = useState<string[]>([]);
+  const [newTagInput, setNewTagInput] = useState('');
   const linkedSuggestions = useMemo(
     () => (linkedItemSuggestions || [])
       .map((item) => ({ label: String(item?.label || '').trim(), value: String(item?.value || '').trim() }))
@@ -108,7 +110,10 @@ export default function CreateTaskModal({
       .slice(0, 100),
     [linkedItemSuggestions]
   );
-  const linkedSuggestionsListId = useId();
+  const changeRequestSuggestions = useMemo(
+    () => linkedSuggestions.filter((item) => item.label.toLowerCase().startsWith('[change request]')),
+    [linkedSuggestions]
+  );
 
   const stages = workflowStages && workflowStages.length > 0 ? workflowStages : defaultStages;
 
@@ -148,9 +153,21 @@ export default function CreateTaskModal({
     }
     return base;
   });
+  const allTagOptions = useMemo(() => {
+    const merged = [...resolvedTagOptions, ...customTagOptions, ...formData.tags];
+    return Array.from(
+      new Set(
+        merged
+          .map((tag) => String(tag || '').trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+  }, [customTagOptions, formData.tags, resolvedTagOptions]);
 
   useEffect(() => {
     if (!isOpen) return;
+    setCustomTagOptions([]);
+    setNewTagInput('');
     if (editTask) {
       setFormData({
         title: editTask.title,
@@ -197,6 +214,19 @@ export default function CreateTaskModal({
         ? prev.tags.filter(t => t !== tag)
         : [...prev.tags, tag]
     }));
+  };
+
+  const handleAddNewTag = () => {
+    const normalized = newTagInput.trim().toLowerCase();
+    if (!normalized) return;
+    if (!allTagOptions.includes(normalized)) {
+      setCustomTagOptions((prev) => [...prev, normalized]);
+    }
+    setFormData((prev) => ({
+      ...prev,
+      tags: prev.tags.includes(normalized) ? prev.tags : [...prev.tags, normalized],
+    }));
+    setNewTagInput('');
   };
 
   const handleSubmit = () => {
@@ -340,38 +370,21 @@ export default function CreateTaskModal({
 
             {/* Linked Items */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-[14px] font-medium text-[#101828]">Linked Drawings & Models</label>
-              {linkedSuggestions.length > 0 ? (
-                <select
-                  value={linkedSuggestions.some(item => item.value === formData.linkedItems) ? formData.linkedItems : ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
-                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
-                >
-                  <option value="">Select...</option>
-                  {linkedSuggestions.map((item) => (
-                    <option key={`${item.value}-${item.label}`} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  list={linkedSuggestionsListId}
-                  value={formData.linkedItems}
-                  onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
-                  placeholder="Link to drawings, CRs..."
-                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
-                />
-              )}
-              {linkedSuggestions.length > 0 && (
-                <datalist id={linkedSuggestionsListId}>
-                  {linkedSuggestions.map((item) => (
-                    <option key={`dl-${item.value}-${item.label}`} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </datalist>
+              <label className="text-[14px] font-medium text-[#101828]">Link Change Request</label>
+              <select
+                value={changeRequestSuggestions.some(item => item.value === formData.linkedItems) ? formData.linkedItems : ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
+                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+              >
+                <option value="">{changeRequestSuggestions.length > 0 ? 'Select a change request...' : 'No change requests available'}</option>
+                {changeRequestSuggestions.map((item) => (
+                  <option key={`${item.value}-${item.label}`} value={item.value}>
+                    {item.label.replace(/^\[Change Request\]\s*/i, '')}
+                  </option>
+                ))}
+              </select>
+              {changeRequestSuggestions.length === 0 && (
+                <p className="text-[12px] text-[#6A7282]">Create a change request first to link it here.</p>
               )}
             </div>
           </div>
@@ -395,22 +408,45 @@ export default function CreateTaskModal({
           {/* Tags */}
           <div className="flex flex-col gap-1.5">
             <label className="text-[14px] font-medium text-[#101828]">Tags</label>
-            {resolvedTagOptions.length === 0 ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newTagInput}
+                onChange={(e) => setNewTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddNewTag();
+                  }
+                }}
+                placeholder="Enter new tag and press Enter"
+                className="h-[38px] flex-1 rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+              />
+              <button
+                type="button"
+                onClick={handleAddNewTag}
+                disabled={!newTagInput.trim()}
+                className="inline-flex h-[38px] items-center rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[13px] text-[#364153] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Add
+              </button>
+            </div>
+            {allTagOptions.length === 0 ? (
               <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[13px] text-[#6A7282]">
-                No task tags configured. Add tags in <strong>Settings &rarr; Tasks</strong>.
+                No tags yet. Create your first tag above.
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {resolvedTagOptions.map((tag) => (
+                {allTagOptions.map((tag) => (
                   <button
                     key={tag}
                     type="button"
                     onClick={() => handleTagToggle(tag)}
                     className={cn(
-                      'px-3 py-1.5 rounded-full text-[13px] transition-all',
+                      'h-10 rounded-[10px] border px-3 text-[14px] capitalize transition-colors active:scale-[0.98] flex items-center justify-center',
                       formData.tags.includes(tag)
-                        ? 'bg-[#1F2937] text-white'
-                        : 'bg-[#F3F4F6] text-[#4A5565] hover:bg-gray-200'
+                        ? 'bg-[#EFF6FF] border-2 border-[#155DFC] text-[#1447E6]'
+                        : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
                     )}
                   >
                     {tag}

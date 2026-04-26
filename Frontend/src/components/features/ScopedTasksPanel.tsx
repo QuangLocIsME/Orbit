@@ -320,6 +320,60 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
     }
   }, [scope.projectId]);
 
+  const persistNewTaskTags = useCallback(async (submittedTags: string[]) => {
+    const normalizedSubmittedTags = Array.from(
+      new Set((submittedTags || []).map((t) => String(t || '').trim().toLowerCase()).filter(Boolean))
+    );
+    if (normalizedSubmittedTags.length === 0) return;
+
+    const knownTags = new Set(projectTaskTags.map((t) => String(t || '').trim().toLowerCase()).filter(Boolean));
+    const newTags = normalizedSubmittedTags.filter((t) => !knownTags.has(t));
+    if (newTags.length === 0) return;
+
+    try {
+      const workflowRes = await apiFetch('/api/projects/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: scope.projectId }),
+      });
+      if (!workflowRes.ok) return;
+
+      const workflowPayload = await workflowRes.json().catch(() => null);
+      const workflowData = workflowPayload?.data || {};
+      const existingTaskTags = Array.isArray(workflowData?.taskTags) ? workflowData.taskTags : [];
+      const existingNames = new Set(
+        existingTaskTags.map((tag: any) => String(tag?.name || '').trim().toLowerCase()).filter(Boolean)
+      );
+
+      const tagsToAppend = newTags
+        .filter((name) => !existingNames.has(name))
+        .map((name) => ({
+          id: `tag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name,
+          description: '',
+          color: '#6366F1',
+        }));
+      if (tagsToAppend.length === 0) return;
+
+      const updateRes = await apiFetch('/api/projects/workflow/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: scope.projectId,
+          template: workflowData?.template,
+          stages: workflowData?.stages,
+          settings: workflowData?.settings,
+          taskTags: [...existingTaskTags, ...tagsToAppend],
+        }),
+      });
+      if (!updateRes.ok) return;
+
+      setProjectTaskTags((prev) => Array.from(new Set([...prev, ...newTags])));
+    } catch {
+      // Non-blocking: task create/update should still continue.
+    }
+  }, [projectTaskTags, scope.projectId]);
+
   useEffect(() => {
     let cancelled = false;
     loadProjectWorkflowData();
@@ -555,8 +609,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
 
   if (isPackageScope) {
     return (
-      <div className="flex h-full flex-col py-6 px-6 lg:px-[80px] xl:px-[160px]">
-        <div className="flex items-center justify-between gap-4 py-2">
+      <div className="flex h-full flex-col py-1 px-6 lg:px-[80px] xl:px-[160px]">
+        <div className="flex items-center justify-between gap-4 pt-0 pb-6">
           <div className="relative flex-1 max-w-md">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -681,6 +735,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           editTask={editingTask}
           onUpdate={async (taskId, task) => {
             try {
+              await persistNewTaskTags(task.tags);
               const res = await apiFetch('/api/tasks/', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -718,6 +773,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           teamMembers={teamMembersForTask}
           onSubmit={async (task) => {
             try {
+              await persistNewTaskTags(task.tags);
               const response = await apiFetch('/api/tasks/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -1034,6 +1090,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
         editTask={editingTask}
         onUpdate={async (taskId, task) => {
           try {
+            await persistNewTaskTags(task.tags);
             const res = await apiFetch('/api/tasks/', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
@@ -1071,6 +1128,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           teamMembers={teamMembersForTask}
           onSubmit={async (task) => {
             try {
+              await persistNewTaskTags(task.tags);
               const response = await apiFetch('/api/tasks/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

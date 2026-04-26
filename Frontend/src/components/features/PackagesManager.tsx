@@ -85,6 +85,8 @@ interface PackagesManagerProps {
   fixedProjectName?: string;
 }
 
+type StatusFilter = 'all' | 'active' | 'completed' | 'draft';
+
 export default function PackagesManager({ fixedProjectId, fixedProjectName }: PackagesManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -95,6 +97,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -128,11 +131,20 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
   const filteredPackages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return packages;
-    return packages.filter((item) =>
-      `${item.name} ${item.description || ''} ${item.packageType || ''}`.toLowerCase().includes(q)
-    );
-  }, [packages, searchQuery]);
+    return packages.filter((item) => {
+      const lifecycle = (item.lifecycleStatus || item.status || '').toLowerCase();
+      const matchesStatus = statusFilter === 'all'
+        ? true
+        : statusFilter === 'draft'
+          ? lifecycle === 'draft'
+          : statusFilter === 'active'
+            ? lifecycle === 'active'
+            : lifecycle === 'completed';
+      if (!matchesStatus) return false;
+      if (!q) return true;
+      return `${item.name} ${item.description || ''} ${item.packageType || ''}`.toLowerCase().includes(q);
+    });
+  }, [packages, searchQuery, statusFilter]);
 
   const summaryStats = useMemo(() => {
     const total = packages.length;
@@ -478,22 +490,54 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.total)}>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('all')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.total,
+            statusFilter === 'all' ? 'ring-2 ring-offset-1 ring-[#101828]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.total}</p>
           <p className="text-[14px]">Total</p>
-        </div>
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.active)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('active')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.active,
+            statusFilter === 'active' ? 'ring-2 ring-offset-1 ring-[#008236]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.active}</p>
           <p className="text-[14px]">Active</p>
-        </div>
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.completed)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('completed')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.completed,
+            statusFilter === 'completed' ? 'ring-2 ring-offset-1 ring-[#155DFC]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.completed}</p>
           <p className="text-[14px]">Completed</p>
-        </div>
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.onHold)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('draft')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.onHold,
+            statusFilter === 'draft' ? 'ring-2 ring-offset-1 ring-[#CA8A04]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.onHold}</p>
           <p className="text-[14px]">Draft</p>
-        </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-4">
