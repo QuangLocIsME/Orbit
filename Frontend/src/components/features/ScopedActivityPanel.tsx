@@ -469,30 +469,32 @@ export default function ScopedActivityPanel({
 
   if (variant === 'compact') {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
+      <div className="flex h-[300px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-5">
         <div className="flex items-center gap-2 mb-4">
           <ActivityIcon className="h-5 w-5 text-muted-foreground" />
           <h3 className="font-semibold text-foreground">{title}</h3>
         </div>
-        {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-          </div>
-        ) : visibleActivities.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-              <ActivityIcon className="h-6 w-6 text-gray-400" />
+        <div className="flex-1 overflow-y-auto pr-1">
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
             </div>
-            <p className="text-sm font-medium text-gray-700">No recent activity</p>
-            <p className="text-xs text-gray-400 mt-1">Activity will appear here</p>
-          </div>
-        ) : (
-          <div className="space-y-0 divide-y divide-gray-100">
-            {visibleActivities.map((activity) => (
-              <ActivityRow key={activity.id} activity={activity} compact />
-            ))}
-          </div>
-        )}
+          ) : visibleActivities.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+                <ActivityIcon className="h-6 w-6 text-gray-400" />
+              </div>
+              <p className="text-sm font-medium text-gray-700">No recent activity</p>
+              <p className="text-xs text-gray-400 mt-1">Activity will appear here</p>
+            </div>
+          ) : (
+            <div className="space-y-0 divide-y divide-gray-100">
+              {visibleActivities.map((activity) => (
+                <ActivityRow key={activity.id} activity={activity} compact />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -500,18 +502,16 @@ export default function ScopedActivityPanel({
   return (
     <div className="space-y-4">
       {/* Header with search + filters + margin */}
-      <div className="flex items-center justify-between gap-3 flex-wrap" style={{ marginTop: '16px', marginBottom: '16px' }}>
-        <h2 className="text-[20px] font-semibold text-[#101828] shrink-0">{title}</h2>
-
+      <div className="flex items-center justify-between gap-3 flex-wrap" style={{ marginTop: '0px', marginBottom: '24px' }}>
         {/* Search */}
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative flex-1 min-w-[220px] max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" />
           <input
             type="text"
             placeholder="Search activity..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full h-9 pl-9 pr-8 rounded-[8px] border border-[#E5E7EB] bg-white text-[13px] text-[#101828] placeholder:text-[#99A1AF] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+            className="h-10 w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] pl-9 pr-8 text-sm text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {search && (
             <button

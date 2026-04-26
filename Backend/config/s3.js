@@ -6,7 +6,7 @@ const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID;
 const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY;
 const S3_BUCKET = process.env.S3_BUCKET;
 const S3_FORCE_PATH_STYLE = process.env.S3_FORCE_PATH_STYLE === 'true';
-const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL; // optional (example: https://minio.example.com)
+const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL; 
 
 const s3Client = new S3Client({
     region: S3_REGION,

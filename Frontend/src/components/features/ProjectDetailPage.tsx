@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { cn, getTodayLocalDateString, localDateStringToUTCDate } from '@/lib/utils';
-import { apiFetch } from '@/lib/api-client';
+import { apiFetch, uploadProjectThumbnail } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
 import type { Project } from '@/types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -85,13 +85,22 @@ interface Activity {
   createdAt: string;
 }
 
-const mockMilestones = [
-  { id: '1', name: 'Foundation Complete', date: 'Jan 15, 2024', status: 'completed' },
-  { id: '2', name: 'Structural Framework', date: 'Apr 30, 2024', status: 'completed' },
-  { id: '3', name: 'MEP Installation', date: 'Aug 15, 2024', status: 'in-progress' },
-  { id: '4', name: 'Interior Finishing', date: 'Nov 30, 2024', status: 'upcoming' },
-  { id: '5', name: 'Final Inspection', date: 'Dec 15, 2025', status: 'upcoming' },
-];
+type ProjectMilestoneStatus = 'completed' | 'in-progress' | 'upcoming';
+
+interface ProjectMilestone {
+  id: string;
+  name: string;
+  dueDate: string;
+  status: ProjectMilestoneStatus;
+}
+
+type OverviewProjectStatus = 'planning' | 'active' | 'accepted' | 'review' | 'paused' | 'completed';
+
+interface OverviewEditableFields {
+  status: OverviewProjectStatus;
+  startDate: string;
+  deadline: string;
+}
 
 // Document structure with nested folders and files
 interface DocFile {
@@ -385,6 +394,8 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
+  const [projectCoverImageUrl, setProjectCoverImageUrl] = useState(project.coverImageUrl || '');
+  const [isUploadingCoverImage, setIsUploadingCoverImage] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
   const [documentsCount, setDocumentsCount] = useState(0);
   const [clashCount, setClashCount] = useState(0);
@@ -394,7 +405,24 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [activitiesVersion, setActivitiesVersion] = useState(0); // Increment to trigger refresh
   const [settingsUpdated, setSettingsUpdated] = useState(0);
   const [dynamicProgress, setDynamicProgress] = useState<number | null>(null);
+  const [projectMilestones, setProjectMilestones] = useState<ProjectMilestone[]>([]);
+  const [isAddingMilestone, setIsAddingMilestone] = useState(false);
+  const [newMilestoneName, setNewMilestoneName] = useState('');
+  const [newMilestoneDueDate, setNewMilestoneDueDate] = useState('');
+  const [newMilestoneStatus, setNewMilestoneStatus] = useState<ProjectMilestoneStatus>('upcoming');
+  const [editingDateMilestoneId, setEditingDateMilestoneId] = useState<string | null>(null);
+  const [editingStatusMilestoneId, setEditingStatusMilestoneId] = useState<string | null>(null);
+  const [overviewEditable, setOverviewEditable] = useState<OverviewEditableFields>({
+    status: ((project.status || 'accepted').toLowerCase() as OverviewProjectStatus),
+    startDate: '2024-01-15',
+    deadline: '2025-12-15',
+  });
+  const [isEditingOverviewStatus, setIsEditingOverviewStatus] = useState(false);
+  const [isEditingOverviewStartDate, setIsEditingOverviewStartDate] = useState(false);
+  const [isEditingOverviewDeadline, setIsEditingOverviewDeadline] = useState(false);
   const isMounted = useRef(true);
+  const coverUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const canEditProjectCover = project.role === 'owner' || project.role === 'admin';
 
   // Compute effective progress: dynamic (from API) overrides the SSR prop
   const effectiveProgress = dynamicProgress !== null ? dynamicProgress : project.progress;
@@ -536,6 +564,153 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   // Handle settings updated - refresh last activity timestamp
   const handleSettingsUpdated = () => {
     setSettingsUpdated(prev => prev + 1);
+  };
+
+  const milestoneStorageKey = `orbit-project-milestones:${project.publicId}`;
+  const overviewStorageKey = `orbit-project-overview:${project.publicId}`;
+
+  const normalizedStatus = (rawStatus?: string): OverviewProjectStatus => {
+    const value = String(rawStatus || '').toLowerCase();
+    if (value === 'planning' || value === 'active' || value === 'accepted' || value === 'review' || value === 'paused' || value === 'completed') {
+      return value;
+    }
+    return 'accepted';
+  };
+
+  useEffect(() => {
+    try {
+      const storedMilestones = localStorage.getItem(milestoneStorageKey);
+      if (!storedMilestones) {
+        setProjectMilestones([]);
+        return;
+      }
+      const parsed = JSON.parse(storedMilestones);
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.filter((item: any) =>
+          typeof item?.id === 'string'
+          && typeof item?.name === 'string'
+          && typeof item?.dueDate === 'string'
+          && (item?.status === 'completed' || item?.status === 'in-progress' || item?.status === 'upcoming')
+        );
+        setProjectMilestones(normalized);
+      } else {
+        setProjectMilestones([]);
+      }
+    } catch {
+      setProjectMilestones([]);
+    }
+  }, [milestoneStorageKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(milestoneStorageKey, JSON.stringify(projectMilestones));
+    } catch {
+      // Ignore localStorage write failures
+    }
+  }, [milestoneStorageKey, projectMilestones]);
+
+  useEffect(() => {
+    try {
+      const rawStored = localStorage.getItem(overviewStorageKey);
+      if (!rawStored) {
+        setOverviewEditable({
+          status: normalizedStatus(project.status),
+          startDate: '2024-01-15',
+          deadline: '2025-12-15',
+        });
+        return;
+      }
+      const parsed = JSON.parse(rawStored);
+      setOverviewEditable({
+        status: normalizedStatus(parsed?.status || project.status),
+        startDate: typeof parsed?.startDate === 'string' ? parsed.startDate : '2024-01-15',
+        deadline: typeof parsed?.deadline === 'string' ? parsed.deadline : '2025-12-15',
+      });
+    } catch {
+      setOverviewEditable({
+        status: normalizedStatus(project.status),
+        startDate: '2024-01-15',
+        deadline: '2025-12-15',
+      });
+    }
+  }, [overviewStorageKey, project.status]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(overviewStorageKey, JSON.stringify(overviewEditable));
+    } catch {
+      // Ignore localStorage write failures
+    }
+  }, [overviewStorageKey, overviewEditable]);
+
+  const resetMilestoneDraft = () => {
+    setNewMilestoneName('');
+    setNewMilestoneDueDate('');
+    setNewMilestoneStatus('upcoming');
+  };
+
+  const handleAddMilestone = () => {
+    const trimmedName = newMilestoneName.trim();
+    if (!trimmedName) {
+      toast.error('Milestone name is required');
+      return;
+    }
+    if (!newMilestoneDueDate) {
+      toast.error('Milestone date is required');
+      return;
+    }
+
+    const createdMilestone: ProjectMilestone = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: trimmedName,
+      dueDate: newMilestoneDueDate,
+      status: newMilestoneStatus,
+    };
+
+    setProjectMilestones(prev => [...prev, createdMilestone]);
+    resetMilestoneDraft();
+    setIsAddingMilestone(false);
+    toast.success('Milestone added');
+  };
+
+  const updateMilestone = (milestoneId: string, updates: Partial<ProjectMilestone>) => {
+    setProjectMilestones(prev =>
+      prev.map(milestone =>
+        milestone.id === milestoneId ? { ...milestone, ...updates } : milestone
+      )
+    );
+  };
+
+  const handleHeroOverlayClick = () => {
+    if (!canEditProjectCover || isUploadingCoverImage) return;
+    coverUploadInputRef.current?.click();
+  };
+
+  const handleHeroCoverFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file');
+      return;
+    }
+
+    if (!canEditProjectCover) {
+      toast.error('You do not have permission to update project background');
+      return;
+    }
+
+    setIsUploadingCoverImage(true);
+    try {
+      const uploadedUrl = await uploadProjectThumbnail(project.publicId, file);
+      setProjectCoverImageUrl(uploadedUrl);
+      toast.success('Project background updated');
+    } catch {
+      toast.error('Failed to update project background');
+    } finally {
+      setIsUploadingCoverImage(false);
+    }
   };
   
   // Check for stored tab on mount (used when navigating back from package detail)
@@ -962,9 +1137,12 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     versions: 124,
     teamMembers: teamMembers.length,
     openClashes: clashCount,
-    startDate: 'Jan 15, 2024',
-    deadline: 'Dec 15, 2025',
+    startDate: new Date(`${overviewEditable.startDate}T00:00:00`).toLocaleDateString(),
+    deadline: new Date(`${overviewEditable.deadline}T00:00:00`).toLocaleDateString(),
   };
+
+  const visibleTeamMembers = teamMembers.slice(0, 3);
+  const hiddenTeamMembers = teamMembers.slice(3);
 
   return (
     <div className="min-h-screen bg-background pt-[105px]">
@@ -981,11 +1159,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
       {/* Hero Section - Only show on Overview tab */}
       {activeTab === 'overview' && (
-        <div className="relative h-52 flex items-end overflow-hidden">
+        <div className="group relative h-52 flex items-end overflow-hidden">
           {/* Background Image - Use coverImageUrl from API */}
-          {project.coverImageUrl ? (
+          {projectCoverImageUrl ? (
             <img
-              src={project.coverImageUrl}
+              src={projectCoverImageUrl}
               alt={project.name}
               className="absolute inset-0 w-full h-full object-cover"
             />
@@ -1004,7 +1182,43 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           )}
           
           {/* Dark overlay for text readability */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent"></div>
+          <div
+            className={cn(
+              "absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent",
+              canEditProjectCover && !isUploadingCoverImage && "cursor-pointer"
+            )}
+            onClick={handleHeroOverlayClick}
+            role={canEditProjectCover ? 'button' : undefined}
+            aria-label={canEditProjectCover ? 'Upload project background' : undefined}
+            title={canEditProjectCover ? 'Click to upload project background' : undefined}
+          />
+
+          <input
+            ref={coverUploadInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleHeroCoverFileChange}
+          />
+
+          {canEditProjectCover && (
+            <button
+              type="button"
+              onClick={handleHeroOverlayClick}
+              className={cn(
+                "absolute bottom-3 right-3 z-20 inline-flex items-center gap-1 rounded-md border border-white/30 bg-black/45 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm backdrop-blur-sm transition",
+                "opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/60 active:scale-[0.98]",
+                isUploadingCoverImage && "cursor-not-allowed opacity-100"
+              )}
+              disabled={isUploadingCoverImage}
+              title="Upload project background"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 16V8m0 0l-3 3m3-3l3 3M5 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9" />
+              </svg>
+              {isUploadingCoverImage ? 'Uploading...' : 'Upload'}
+            </button>
+          )}
           
           <div className="relative w-full px-[300px] pb-6">
             <div className="flex items-center gap-2 text-white/80 text-sm mb-2">
@@ -1031,12 +1245,34 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   <div className="grid grid-cols-4 gap-4 rounded-xl border border-gray-200 bg-white p-4 mb-6">
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</p>
-            <p className={cn(
-              "mt-1 inline-block rounded-full px-3 py-1 text-sm font-medium text-white capitalize",
-              getStatusColor(project.status)
-            )}>
-              {project.status}
-            </p>
+            {isEditingOverviewStatus ? (
+              <select
+                value={overviewEditable.status}
+                autoFocus
+                onChange={(e) => setOverviewEditable(prev => ({ ...prev, status: e.target.value as OverviewProjectStatus }))}
+                onBlur={() => setIsEditingOverviewStatus(false)}
+                className="mt-1 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm font-medium text-foreground outline-none focus:border-indigo-400"
+              >
+                <option value="planning">planning</option>
+                <option value="active">active</option>
+                <option value="accepted">accepted</option>
+                <option value="review">review</option>
+                <option value="paused">paused</option>
+                <option value="completed">completed</option>
+              </select>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditingOverviewStatus(true)}
+                className={cn(
+                  "mt-1 inline-block rounded-full px-3 py-1 text-sm font-medium text-white capitalize transition hover:opacity-90 active:scale-[0.98]",
+                  getStatusColor(overviewEditable.status)
+                )}
+                title="Click to edit status"
+              >
+                {overviewEditable.status}
+              </button>
+            )}
           </div>
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Progress</p>
@@ -1052,11 +1288,47 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           </div>
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Start Date</p>
-            <p className="mt-1 text-sm font-medium text-foreground">{projectStats.startDate}</p>
+            {isEditingOverviewStartDate ? (
+              <input
+                type="date"
+                value={overviewEditable.startDate}
+                autoFocus
+                onChange={(e) => setOverviewEditable(prev => ({ ...prev, startDate: e.target.value }))}
+                onBlur={() => setIsEditingOverviewStartDate(false)}
+                className="mt-1 w-full max-w-[140px] rounded-md border border-gray-200 bg-white px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-indigo-400"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditingOverviewStartDate(true)}
+                className="mt-1 rounded px-1 text-sm font-medium text-foreground transition hover:bg-gray-100 active:scale-[0.98]"
+                title="Click to edit start date"
+              >
+                {projectStats.startDate}
+              </button>
+            )}
           </div>
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Deadline</p>
-            <p className="mt-1 text-sm font-medium text-foreground">{projectStats.deadline}</p>
+            {isEditingOverviewDeadline ? (
+              <input
+                type="date"
+                value={overviewEditable.deadline}
+                autoFocus
+                onChange={(e) => setOverviewEditable(prev => ({ ...prev, deadline: e.target.value }))}
+                onBlur={() => setIsEditingOverviewDeadline(false)}
+                className="mt-1 w-full max-w-[140px] rounded-md border border-gray-200 bg-white px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-indigo-400"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditingOverviewDeadline(true)}
+                className="mt-1 rounded px-1 text-sm font-medium text-foreground transition hover:bg-gray-100 active:scale-[0.98]"
+                title="Click to edit deadline"
+              >
+                {projectStats.deadline}
+              </button>
+            )}
           </div>
         </div>
 
@@ -1109,17 +1381,17 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         </div>
 
         {/* Main Content Grid */}
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-2 items-stretch gap-6">
           {/* Team Members */}
-          <div className="rounded-xl border border-gray-200 bg-white p-5">
-            <div className="flex items-center gap-2 mb-4">
+          <div className="flex h-[300px] flex-col rounded-xl border border-gray-200 bg-white p-5">
+            <div className="mb-4 flex items-center gap-2">
               <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
               <h3 className="font-semibold text-foreground">Team members</h3>
             </div>
-            <div className="space-y-3">
-              {teamMembers.map((member) => (
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1">
+              {visibleTeamMembers.map((member) => (
                 <div key={member.id} className="flex items-center gap-3">
                   <div className="relative">
                     {member.avatarUrl ? (
@@ -1139,12 +1411,42 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                   </div>
                 </div>
               ))}
+
+              {hiddenTeamMembers.length > 0 && (
+                <details className="group rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2">
+                  <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground hover:text-foreground">
+                    +{hiddenTeamMembers.length} more members
+                  </summary>
+                  <div className="mt-2 space-y-2 border-t border-gray-200 pt-2">
+                    {hiddenTeamMembers.map((member) => (
+                      <div key={member.id} className="flex items-center gap-2">
+                        <div className="relative">
+                          {member.avatarUrl ? (
+                            <img src={member.avatarUrl} alt={member.name} className="h-8 w-8 rounded-full object-cover" />
+                          ) : (
+                            <div className={cn("flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium text-white", member.color)}>
+                              {member.avatar}
+                            </div>
+                          )}
+                          {member.isOnline && (
+                            <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white bg-emerald-500" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-foreground">{member.name}</p>
+                          <p className="text-[11px] text-muted-foreground capitalize">{member.role}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           </div>
 
           {/* Recent Activity */}
-          <div className="rounded-xl border border-gray-200 bg-white p-5">
-            <div className="flex items-center gap-2 mb-4">
+          <div className="flex h-[300px] flex-col rounded-xl border border-gray-200 bg-white p-5">
+            <div className="mb-4 flex items-center gap-2">
               <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
@@ -1152,14 +1454,14 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             </div>
 
             {loadingActivities ? (
-              <div className="flex items-center justify-center py-8">
+              <div className="flex h-full items-center justify-center">
                 <svg className="h-6 w-6 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                 </svg>
               </div>
             ) : activities.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
+              <div className="flex h-full flex-col items-center justify-center text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 mb-3">
                   <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z"/>
@@ -1169,7 +1471,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                 <p className="text-xs text-muted-foreground mt-1">Upload documents or create change requests to see activity here</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden pr-1">
                 {activities.map((activity) => (
                   <div key={activity.id} className="flex items-start gap-3">
                     <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg shrink-0", activity.color)}>
@@ -1194,9 +1496,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                         </svg>
                       )}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{activity.action}</p>
-                      <p className="text-xs text-muted-foreground">{activity.user} • {formatRelativeTime(activity.createdAt)}</p>
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <p className="truncate text-sm font-medium text-foreground">{activity.action}</p>
+                      <p className="truncate text-xs text-muted-foreground">{activity.user} • {formatRelativeTime(activity.createdAt)}</p>
                     </div>
                   </div>
                 ))}
@@ -1207,36 +1509,152 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Project Milestones */}
         <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            <h3 className="font-semibold text-foreground">Project milestones</h3>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <h3 className="font-semibold text-foreground">Project milestones</h3>
+            </div>
+            {!isAddingMilestone && (
+              <button
+                type="button"
+                onClick={() => setIsAddingMilestone(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <span className="text-sm leading-none">+</span>
+                Add
+              </button>
+            )}
           </div>
-          <div className="space-y-3">
-            {mockMilestones.map((milestone) => (
-              <div key={milestone.id} className="flex items-center gap-4 py-2 border-b border-gray-100 last:border-0">
-                <div className={cn(
-                  "h-3 w-3 rounded-full",
-                  milestone.status === 'completed' && "bg-emerald-500",
-                  milestone.status === 'in-progress' && "bg-indigo-500",
-                  milestone.status === 'upcoming' && "bg-gray-300"
-                )} />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-foreground">{milestone.name}</p>
-                  <p className="text-xs text-muted-foreground">{milestone.date}</p>
+
+          {isAddingMilestone && (
+            <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50/70 p-3">
+              <div className="space-y-2">
+                <input
+                  value={newMilestoneName}
+                  onChange={(e) => setNewMilestoneName(e.target.value)}
+                  placeholder="Milestone name"
+                  className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={newMilestoneDueDate}
+                    onChange={(e) => setNewMilestoneDueDate(e.target.value)}
+                    className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                  />
+                  <select
+                    value={newMilestoneStatus}
+                    onChange={(e) => setNewMilestoneStatus(e.target.value as ProjectMilestoneStatus)}
+                    className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                  >
+                    <option value="upcoming">Upcoming</option>
+                    <option value="in-progress">In progress</option>
+                    <option value="completed">Completed</option>
+                  </select>
                 </div>
-                <span className={cn(
-                  "text-xs font-medium px-2 py-1 rounded-full",
-                  milestone.status === 'completed' && "bg-emerald-100 text-emerald-700",
-                  milestone.status === 'in-progress' && "bg-indigo-100 text-indigo-700",
-                  milestone.status === 'upcoming' && "bg-gray-100 text-gray-600"
-                )}>
-                  {milestone.status === 'completed' ? 'completed' : milestone.status === 'in-progress' ? 'in progress' : 'upcoming'}
-                </span>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetMilestoneDraft();
+                      setIsAddingMilestone(false);
+                    }}
+                    className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddMilestone}
+                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {projectMilestones.length > 0 ? (
+            <div className="space-y-3">
+              {projectMilestones.map((milestone) => (
+                <div
+                  key={milestone.id}
+                  className="group flex items-center gap-4 rounded-md border-b border-gray-100 px-2 py-2 transition-colors hover:bg-gray-50/80 last:border-0"
+                >
+                  <div className={cn(
+                    "h-3 w-3 rounded-full",
+                    milestone.status === 'completed' && "bg-emerald-500",
+                    milestone.status === 'in-progress' && "bg-indigo-500",
+                    milestone.status === 'upcoming' && "bg-gray-300"
+                  )} />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-foreground">{milestone.name}</p>
+                    {editingDateMilestoneId === milestone.id ? (
+                      <input
+                        type="date"
+                        value={milestone.dueDate}
+                        autoFocus
+                        onChange={(e) => updateMilestone(milestone.id, { dueDate: e.target.value })}
+                        onBlur={() => setEditingDateMilestoneId(null)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === 'Escape') {
+                            setEditingDateMilestoneId(null);
+                          }
+                        }}
+                        className="mt-1 w-[145px] rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-muted-foreground outline-none focus:border-indigo-400"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditingDateMilestoneId(milestone.id)}
+                        className="mt-1 rounded px-1 text-left text-xs text-muted-foreground transition hover:bg-gray-100 hover:text-gray-700 active:scale-[0.98]"
+                        title="Click to edit date"
+                      >
+                        {new Date(`${milestone.dueDate}T00:00:00`).toLocaleDateString()}
+                      </button>
+                    )}
+                  </div>
+                  {editingStatusMilestoneId === milestone.id ? (
+                    <select
+                      value={milestone.status}
+                      autoFocus
+                      onChange={(e) => updateMilestone(milestone.id, { status: e.target.value as ProjectMilestoneStatus })}
+                      onBlur={() => setEditingStatusMilestoneId(null)}
+                      className="rounded-full border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 outline-none focus:border-indigo-400"
+                    >
+                      <option value="upcoming">upcoming</option>
+                      <option value="in-progress">in progress</option>
+                      <option value="completed">completed</option>
+                    </select>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setEditingStatusMilestoneId(milestone.id)}
+                      className={cn(
+                        "rounded-full px-2 py-1 text-xs font-medium transition hover:opacity-90 active:scale-[0.97]",
+                        milestone.status === 'completed' && "bg-emerald-100 text-emerald-700",
+                        milestone.status === 'in-progress' && "bg-indigo-100 text-indigo-700",
+                        milestone.status === 'upcoming' && "bg-gray-100 text-gray-600"
+                      )}
+                      title="Click to edit status"
+                    >
+                      {milestone.status === 'completed' ? 'completed' : milestone.status === 'in-progress' ? 'in progress' : 'upcoming'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/70 px-4 py-8 text-center">
+              <p className="text-sm font-medium text-foreground">No milestones yet</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Milestones will appear here after users add them when creating or updating the project.
+              </p>
+            </div>
+          )}
         </div>
         </div>
         )}
@@ -2641,7 +3059,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             projectCode={project.publicId}
             projectDescription={project.description}
             projectPublicId={project.publicId}
-            projectCoverImageUrl={project.coverImageUrl}
+            projectCoverImageUrl={projectCoverImageUrl}
             onSettingsUpdated={handleSettingsUpdated}
             onActivityAdded={() => setActivitiesVersion(v => v + 1)}
           />

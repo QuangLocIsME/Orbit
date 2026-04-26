@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -86,6 +86,27 @@ interface MemberPickerProps {
 }
 
 export function MemberPicker({ label, members = [], selected, onChange }: MemberPickerProps) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
   const toggle = (id: string) =>
     onChange(selected.includes(id) ? selected.filter(s => s !== id) : [...selected, id]);
 
@@ -95,26 +116,43 @@ export function MemberPicker({ label, members = [], selected, onChange }: Member
       {!members || members.length === 0 ? (
         <p className="text-[13px] text-[#6A7282]">No team members available.</p>
       ) : (
-        <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#F3F4F6] max-h-[150px] overflow-y-auto">
-          {members.map(m => {
-            const checked = selected.includes(m.userId);
-            const memberName = m.user?.fullName || m.user?.name || m.user?.email || 'Unknown';
-            return (
-              <label key={m.userId} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[#F9FAFB]">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(m.userId)}
-                  className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]"
-                />
-                <Avatar name={memberName} size="sm" avatarSrc={m.user?.avatar} />
-                <div className="min-w-0">
-                  <p className="text-[14px] text-[#101828] truncate">{memberName}</p>
-                  <p className="text-[11px] text-[#6A7282] truncate">{m.role || ''}</p>
-                </div>
-              </label>
-            );
-          })}
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-3 text-left text-[14px] text-[#101828] hover:bg-gray-50 transition-colors flex items-center justify-between"
+          >
+            <span className="truncate">
+              {selected.length > 0 ? `${selected.length} selected` : `Select ${label.toLowerCase()}...`}
+            </span>
+            <svg className={cn('h-4 w-4 text-[#6A7282] transition-transform', open && 'rotate-180')} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+
+          {open && (
+            <div className="absolute z-50 mt-1 w-full rounded-[10px] border border-[#E5E7EB] bg-white shadow-lg divide-y divide-[#F3F4F6] max-h-[220px] overflow-y-auto">
+              {members.map(m => {
+                const checked = selected.includes(m.userId);
+                const memberName = m.user?.fullName || m.user?.name || m.user?.email || 'Unknown';
+                return (
+                  <label key={m.userId} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[#F9FAFB]">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(m.userId)}
+                      className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]"
+                    />
+                    <Avatar name={memberName} size="sm" avatarSrc={m.user?.avatar} />
+                    <div className="min-w-0">
+                      <p className="text-[14px] text-[#101828] truncate">{memberName}</p>
+                      <p className="text-[11px] text-[#6A7282] truncate">{m.role || ''}</p>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {selected.length > 0 && (
