@@ -33,6 +33,9 @@ interface TeamMemberView {
   isOnline: boolean;
 }
 
+interface ModelFile { id: string; name: string; folderPath?: string; }
+interface TeamMemberForTask { userId: string; user?: { fullName: string }; role: string; }
+
 interface TaskItem {
   id: string;
   title: string;
@@ -90,6 +93,9 @@ const formatIsoDate = (dateStr: string) => {
 
 export default function ScopedTasksPanel({ scope, projectRole = 'member' }: ScopedTasksPanelProps) {
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
+  const [modelFiles, setModelFiles] = useState<ModelFile[]>([]);
+  const [loadingModelFiles, setLoadingModelFiles] = useState(false);
+  const [teamMembersForTask, setTeamMembersForTask] = useState<TeamMemberForTask[]>([]);
   const [tasksViewMode, setTasksViewMode] = useState<'board' | 'list' | 'calendar'>('board');
   const [tasksSearchQuery, setTasksSearchQuery] = useState('');
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
@@ -181,6 +187,50 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
       cancelled = true;
     };
   }, [scope.projectId]);
+
+  // Load model files for Affected Models picker
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingModelFiles(true);
+
+    const loadModelFiles = async () => {
+      try {
+        const url = scope.type === 'package' && scope.packageId
+          ? `/api/projects/${scope.projectId}/packages/${scope.packageId}/documents?types=ifc,rvt,dwg`
+          : `/api/projects/${scope.projectId}/documents?types=ifc,rvt,dwg`;
+
+        const res = await apiFetch(url);
+        if (!res.ok) return;
+
+        const payload = await res.json();
+        const docs: any[] = Array.isArray(payload?.data) ? payload.data : [];
+
+        if (!cancelled) {
+          setModelFiles(docs.map((d: any) => ({
+            id: d.publicId || d.id || String(d._id),
+            name: d.name || d.fileName || 'Untitled',
+            folderPath: d.folderPath || d.folder?.name,
+          })));
+        }
+      } catch {
+        if (!cancelled) setModelFiles([]);
+      } finally {
+        if (!cancelled) setLoadingModelFiles(false);
+      }
+    };
+
+    loadModelFiles();
+    return () => { cancelled = true; };
+  }, [scope.projectId, scope.packageId, scope.type]);
+
+  // Map team members for CreateTaskModal's MemberPicker from existing teamMembers
+  useEffect(() => {
+    setTeamMembersForTask(teamMembers.map((m) => ({
+      userId: m.id,
+      user: { fullName: m.name },
+      role: m.role,
+    })));
+  }, [teamMembers]);
 
   const loadTasks = useCallback(async () => {
     setIsTasksLoading(true);
@@ -653,11 +703,13 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
               toast.error('Failed to update task');
             }
           }}
-          assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
           linkedItemSuggestions={linkedItemSuggestions}
           workflowStages={selectedWorkflowStages}
           defaultStageId={pendingTaskStageId}
+          modelFiles={modelFiles}
+          loadingFiles={loadingModelFiles}
+          teamMembers={teamMembersForTask}
           onSubmit={async (task) => {
             try {
               const response = await apiFetch('/api/tasks/create', {
@@ -1000,17 +1052,19 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
             toast.error('Failed to update task');
           }
         }}
-        assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
         tagOptions={projectTaskTags}
         linkedItemSuggestions={linkedItemSuggestions}
         workflowStages={selectedWorkflowStages}
-        defaultStageId={pendingTaskStageId}
-        onSubmit={async (task) => {
-          try {
-            const response = await apiFetch('/api/tasks/create', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-              body: JSON.stringify({
+          defaultStageId={pendingTaskStageId}
+          modelFiles={modelFiles}
+          loadingFiles={loadingModelFiles}
+          teamMembers={teamMembersForTask}
+          onSubmit={async (task) => {
+            try {
+              const response = await apiFetch('/api/tasks/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({
                 ...scopeRequestBody,
                 title: task.title,
                 status: task.status,

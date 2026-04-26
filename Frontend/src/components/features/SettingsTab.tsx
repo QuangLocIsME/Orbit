@@ -354,6 +354,8 @@ export default function SettingsTab({
   // Project thumbnail
   const [projectThumbnail, setProjectThumbnail] = useState<string | null>(projectCoverImageUrl || null);
   const [coverImageUrl, setCoverImageUrl] = useState<string | null>(projectCoverImageUrl || null);
+  const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null); // Chưa upload, chờ Save Changes
+  const [pendingAvatarPreview, setPendingAvatarPreview] = useState<string | null>(null); // Preview tạm
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Template apply success
@@ -568,12 +570,26 @@ export default function SettingsTab({
 
     setGeneralSaveState('saving');
     try {
+      let finalCoverImageUrl: string | undefined;
+
+      // Nếu có file avatar mới, upload trước
+      if (pendingAvatarFile) {
+        const publicUrl = await uploadProjectAvatar(projectPublicId, pendingAvatarFile);
+        finalCoverImageUrl = publicUrl;
+        // Xóa preview tạm, dùng URL thật
+        setPendingAvatarFile(null);
+        setPendingAvatarPreview(null);
+        setCoverImageUrl(publicUrl);
+      }
+
       const updates: { name: string; description: string; coverImageUrl?: string } = {
         name: name.trim(),
         description: description.trim(),
       };
 
-      if (coverImageUrl) {
+      if (finalCoverImageUrl) {
+        updates.coverImageUrl = finalCoverImageUrl;
+      } else if (coverImageUrl) {
         updates.coverImageUrl = coverImageUrl;
       }
 
@@ -619,25 +635,24 @@ export default function SettingsTab({
     fileInputRef.current?.click();
   };
   
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onloadend = () => {
-      setProjectThumbnail(reader.result as string);
+      const preview = reader.result as string;
+      setPendingAvatarPreview(preview); // Chỉ preview tạm
+      setProjectThumbnail(preview); // Preview trên UI
     };
     reader.readAsDataURL(file);
 
-    if (projectPublicId) {
-      try {
-        const publicUrl = await uploadProjectAvatar(projectPublicId, file);
-        setCoverImageUrl(publicUrl);
-        setProjectThumbnail(publicUrl);
-        toast.success('Avatar uploaded successfully');
-      } catch {
-        toast.error('Failed to upload avatar');
-      }
+    // Lưu file để upload khi nhấn Save Changes
+    setPendingAvatarFile(file);
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
   
@@ -1491,9 +1506,18 @@ export default function SettingsTab({
                     <Upload className="h-4 w-4" />
                     Change image
                   </button>
-                  {coverImageUrl && (
+                  {(coverImageUrl || pendingAvatarPreview) && (
                     <button
                       onClick={async () => {
+                        // Nếu chỉ là preview tạm (chưa save), bỏ preview là đủ
+                        if (pendingAvatarPreview) {
+                          setPendingAvatarFile(null);
+                          setPendingAvatarPreview(null);
+                          // Reset về ảnh đã lưu trước đó (hoặc placeholder)
+                          setProjectThumbnail(coverImageUrl || '');
+                          return;
+                        }
+                        // Nếu có ảnh đã lưu, xóa trên server
                         if (!projectPublicId) return;
                         try {
                           await deleteProjectAvatar(projectPublicId);

@@ -195,10 +195,20 @@ class AuthController {
     async forgotPassword(req, res) {
         try {
             const { email } = req.body || {};
-            await UserService.requestResetCode(email);
+            const result = await UserService.requestResetCode(email);
+
+            if (!result.sent) {
+                return res.status(200).json({
+                    success: true,
+                    message: 'If that email is registered, a verification code has been sent.',
+                    emailExists: result.emailExists,
+                });
+            }
+
             return res.status(200).json({
                 success: true,
-                message: 'If that email exists, a verification code has been sent.',
+                message: 'If that email is registered, a verification code has been sent.',
+                emailExists: true,
             });
         } catch (error) {
             if (error.message === 'Account is blocked.') {
@@ -208,44 +218,10 @@ class AuthController {
         }
     }
 
-    async verifyResetCode(req, res) {
-        try {
-            const { email, code } = req.body || {};
-            const result = await UserService.verifyCodeAndCreateResetToken(email, code);
-            return res.status(200).json({
-                success: true,
-                message: 'Code verified. Use the link to reset your password.',
-                data: {
-                    resetToken: result.resetToken,
-                    resetPasswordUrl: result.resetPasswordUrl,
-                },
-            });
-        } catch (error) {
-            return errorResponse(res, 400, 'Invalid or expired code');
-        }
-    }
-
     async resetPassword(req, res) {
         try {
-            const { token, newPassword, confirmPassword } = req.body || {};
-            await UserService.resetPassword(token, newPassword, confirmPassword);
-            return res.status(200).json({
-                success: true,
-                message: 'Password has been reset. You can log in with your new password.',
-            });
-        } catch (error) {
-            return errorResponse(res, 400, 'Reset failed');
-        }
-    }
-
-    /**
-     * Đặt lại mật khẩu bằng mã từ email (1 request: email + code + newPassword + confirmPassword).
-     * Dùng sau khi nhận mail reset: nhập mã + mật khẩu mới + xác nhận mật khẩu.
-     */
-    async resetPasswordWithCode(req, res) {
-        try {
-            const { email, code, newPassword, confirmPassword } = req.body || {};
-            await UserService.resetPasswordWithCode(email, code, newPassword, confirmPassword);
+            const { token, newPassword, confirmPassword, email } = req.body || {};
+            await UserService.resetPassword(token, newPassword, confirmPassword, email);
             return res.status(200).json({
                 success: true,
                 message: 'Password has been reset. You can log in with your new password.',

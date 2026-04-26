@@ -27,15 +27,8 @@ const validateGoogleId = (googleId) => {
     return /^\d+$/.test(normalized) ? normalized : '';
 };
 
-const validateResetCode = (code) => {
-    const normalized = normalizeString(code);
-    if (!normalized) return '';
-    return /^\d{6}$/.test(normalized) ? normalized : '';
-};
-
 module.exports = {
     validateEmail,
     validateObjectId,
     validateGoogleId,
-    validateResetCode,
 };

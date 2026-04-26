@@ -24,14 +24,7 @@ const forgotPasswordLimiter = createLimiter({
     message: 'Too many password reset requests. Please try again later.',
 });
 
-const verifyCodeLimiter = createLimiter({
-    windowMs: 10 * 60 * 1000,
-    limit: 10,
-    message: 'Too many verification attempts. Please try again later.',
-});
-
 module.exports = {
     loginLimiter,
     forgotPasswordLimiter,
-    verifyCodeLimiter,
 };

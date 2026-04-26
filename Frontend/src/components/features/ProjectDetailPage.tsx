@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, getTodayLocalDateString, localDateStringToUTCDate } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from '@/components/ui/sonner';
 import type { Project } from '@/types';
@@ -463,7 +463,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         if (activitiesRes.ok) {
           const payload = await activitiesRes.json();
           if (!cancelled) {
-            setActivities(Array.isArray(payload?.data) ? payload.data : []);
+            const raw = Array.isArray(payload?.data) ? payload.data : [];
+            const sorted = [...raw].sort((a, b) => {
+              const dateA = new Date(a.createdAt).getTime();
+              const dateB = new Date(b.createdAt).getTime();
+              return isNaN(dateA) || isNaN(dateB) ? 0 : dateB - dateA;
+            });
+            setActivities(sorted.slice(0, 5));
             // Prefer projectUpdatedAt when available (real project update timestamp)
             setLastActivity(payload?.projectUpdatedAt || payload?.lastActivity || null);
           }
@@ -602,7 +608,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           assignees: newRequestAssignees,
           reviewers: newRequestReviewers,
           discipline: newRequestDiscipline,
-          deadline: newRequestDeadline,
+          deadline: newRequestDeadline ? localDateStringToUTCDate(newRequestDeadline) : undefined,
         }),
       });
 
@@ -1692,6 +1698,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
                       type="date"
                       value={newRequestDeadline}
                       onChange={(e) => setNewRequestDeadline(e.target.value)}
+                      min={getTodayLocalDateString()}
                       className="w-full h-[37px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#00A6F4] focus:outline-none focus:ring-1 focus:ring-[#00A6F4]"
                     />
                   </div>

@@ -7,6 +7,7 @@ const PUBLIC_PATHS = new Set([
   '/register',
   '/forgot-password',
   '/forget-password',
+  '/reset-password',
   '/landing',
 ]);
 
@@ -16,6 +17,7 @@ const GUEST_ONLY_PATHS = new Set([
   '/register',
   '/forgot-password',
   '/forget-password',
+  '/reset-password',
 ]);
 
 const PUBLIC_PREFIXES = ['/auth/', '/api/', '/_astro/', '/favicon', '/_image'];

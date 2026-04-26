@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
-import { cn } from '@/lib/utils';
+import { cn, getTodayLocalDateString, localDateStringToUTCDate, utcDateStringToLocalDateString } from '@/lib/utils';
 import { PackagesSkeleton } from '@/components/ui/skeletons';
 import { Search, LayoutGrid, List, Plus, Calendar, Users, Pencil, Trash2 } from 'lucide-react';
 
@@ -309,7 +309,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       description: pkg.description || '',
       type: pkg.packageType || 'construction',
       initialStatus: pkg.status || 'Draft',
-      dueDate: pkg.dueDate ? String(pkg.dueDate).split('T')[0] : '',
+      dueDate: pkg.dueDate ? utcDateStringToLocalDateString(pkg.dueDate) : '',
     });
     setShowEditModal(true);
     setContextMenu(null);
@@ -336,7 +336,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           description: editData.description.trim(),
           type: editData.type,
           status: editData.initialStatus,
-          dueDate: editData.dueDate || null,
+          dueDate: editData.dueDate ? localDateStringToUTCDate(editData.dueDate) : null,
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -422,7 +422,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           description: newPackage.description.trim(),
           type: newPackage.type.trim(),
           status: newPackage.initialStatus,
-          dueDate: newPackage.dueDate || null,
+          dueDate: newPackage.dueDate ? localDateStringToUTCDate(newPackage.dueDate) : null,
           teamMemberIds: newPackage.teamMemberIds,
         }),
       });
@@ -703,6 +703,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                     type="date"
                     value={newPackage.dueDate}
                     onChange={(e) => setNewPackage((prev) => ({ ...prev, dueDate: e.target.value }))}
+                    min={getTodayLocalDateString()}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   />
                 </div>
@@ -889,6 +890,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                     type="date"
                     value={editData.dueDate}
                     onChange={(e) => setEditData((p) => ({ ...p, dueDate: e.target.value }))}
+                    min={getTodayLocalDateString()}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   />
                 </div>

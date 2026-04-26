@@ -706,6 +706,9 @@ class TaskController {
 
             const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags } = req.body || {};
 
+            const oldAssigneeIds = [...(task.assigneeIds || [])];
+            const oldReviewerIds = [...(task.reviewerIds || [])];
+
             if (title !== undefined) task.title = title.trim();
             if (description !== undefined) task.description = description.trim();
             if (priority !== undefined) task.priority = normalizePriority(priority);
@@ -723,6 +726,60 @@ class TaskController {
             task.updatedAt = new Date();
 
             await task.save();
+
+            const newAssigneeIds = task.assigneeIds || [];
+            const newReviewerIds = task.reviewerIds || [];
+            const taskLink = getTaskLink(task.projectId, task.packageId, task.publicId);
+
+            // Notify newly added assignees
+            const addedAssignees = newAssigneeIds.filter(id => !oldAssigneeIds.includes(id) && id !== userId);
+            for (const assignee of addedAssignees) {
+                const notification = await NotificationRepository.create({
+                    userId: assignee,
+                    type: 'info',
+                    title: 'New task assigned',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                socketService.notifyUser(assignee, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'New task assigned',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
+
+            // Notify newly added reviewers
+            const addedReviewers = newReviewerIds.filter(id => !oldReviewerIds.includes(id) && id !== userId && !newAssigneeIds.includes(id));
+            for (const reviewer of addedReviewers) {
+                const notification = await NotificationRepository.create({
+                    userId: reviewer,
+                    type: 'info',
+                    title: 'You are a reviewer',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                socketService.notifyUser(reviewer, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'You are a reviewer',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
 
             // Log activity for field updates
             if (title !== undefined || priority !== undefined || assigneeIds !== undefined) {

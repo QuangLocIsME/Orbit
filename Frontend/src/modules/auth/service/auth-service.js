@@ -69,3 +69,35 @@ export async function logout() {
     credentials: "include",
   }).catch(() => {});
 }
+
+/**
+ * POST /api/auth/forgot-password — gui yeu cau dat lai mat khau
+ */
+export async function forgotPassword(email) {
+  const res = await fetch(apiUrl("/auth/forgot-password"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ email }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || "Failed to send reset email");
+  return data;
+}
+
+/**
+ * POST /api/auth/reset-password — dat lai mat khau bang token
+ */
+export async function resetPassword(token, newPassword, confirmPassword, email) {
+  const res = await fetch(apiUrl("/auth/reset-password"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ token, newPassword, confirmPassword, email }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || "Failed to reset password");
+  return data;
+}
