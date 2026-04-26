@@ -56,7 +56,7 @@ interface TaskMember {
   name: string;
   color: string;
   avatar: string;
-  avatarUrl?: string | null;
+  avatarUrl: string | null;
 }
 
 type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
@@ -263,28 +263,24 @@ function SortableTaskCard({
       {assignees.length > 0 && (
         <div className="flex -space-x-1.5 mt-2">
           {assignees.map((a) => (
-            a.avatarUrl ? (
-              <img
-                key={a.id}
-                src={a.avatarUrl}
-                alt={a.name}
-                className={cn(
-                  'h-6 w-6 rounded-full ring-2 ring-white object-cover',
-                )}
-                title={a.name}
-              />
-            ) : (
-              <div
-                key={a.id}
-                className={cn(
-                  'h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white ring-2 ring-white',
-                  a.color
-                )}
-                title={a.name}
-              >
-                {a.avatar}
-              </div>
-            )
+            <div
+              key={a.id}
+              className={cn(
+                'h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white ring-2 ring-white overflow-hidden',
+                !a.avatarUrl ? a.color : ''
+              )}
+              title={a.name}
+            >
+              {a.avatarUrl ? (
+                <img
+                  src={a.avatarUrl}
+                  alt={a.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                a.avatar
+              )}
+            </div>
           ))}
         </div>
       )}
