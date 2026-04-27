@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
-import { cn } from '@/lib/utils';
+import { cn, getTodayLocalDateString, localDateStringToUTCDate, utcDateStringToLocalDateString } from '@/lib/utils';
 import { PackagesSkeleton } from '@/components/ui/skeletons';
 import { Search, LayoutGrid, List, Plus, Calendar, Users, Pencil, Trash2 } from 'lucide-react';
 
@@ -70,11 +70,12 @@ const statusSummaryCard = {
 } as const;
 
 const packageProgressPercent = (pkg: PackageItem) => {
-  if (typeof pkg.progress === 'number') return Math.max(0, Math.min(100, Math.round(pkg.progress)));
+  if (typeof pkg.progress === 'number') {
+    return Math.max(0, Math.min(100, Math.round(pkg.progress)));
+  }
   if (pkg.lifecycleStatus === 'Archived' || pkg.status === 'Archived') return 100;
   if (pkg.lifecycleStatus === 'Draft' || pkg.status === 'Draft') return 0;
-  const seed = Array.from(pkg.publicId || '').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return 35 + (seed % 55);
+  return 0;
 };
 
 const SELECTED_PROJECT_KEY = 'orbit:selected-project-id';
@@ -83,6 +84,8 @@ interface PackagesManagerProps {
   fixedProjectId?: string;
   fixedProjectName?: string;
 }
+
+type StatusFilter = 'all' | 'active' | 'completed' | 'draft';
 
 export default function PackagesManager({ fixedProjectId, fixedProjectName }: PackagesManagerProps) {
   const [isHydrated, setIsHydrated] = useState(false);
@@ -94,6 +97,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -127,11 +131,20 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
 
   const filteredPackages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return packages;
-    return packages.filter((item) =>
-      `${item.name} ${item.description || ''} ${item.packageType || ''}`.toLowerCase().includes(q)
-    );
-  }, [packages, searchQuery]);
+    return packages.filter((item) => {
+      const lifecycle = (item.lifecycleStatus || item.status || '').toLowerCase();
+      const matchesStatus = statusFilter === 'all'
+        ? true
+        : statusFilter === 'draft'
+          ? lifecycle === 'draft'
+          : statusFilter === 'active'
+            ? lifecycle === 'active'
+            : lifecycle === 'completed';
+      if (!matchesStatus) return false;
+      if (!q) return true;
+      return `${item.name} ${item.description || ''} ${item.packageType || ''}`.toLowerCase().includes(q);
+    });
+  }, [packages, searchQuery, statusFilter]);
 
   const summaryStats = useMemo(() => {
     const total = packages.length;
@@ -309,7 +322,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       description: pkg.description || '',
       type: pkg.packageType || 'construction',
       initialStatus: pkg.status || 'Draft',
-      dueDate: pkg.dueDate ? String(pkg.dueDate).split('T')[0] : '',
+      dueDate: pkg.dueDate ? utcDateStringToLocalDateString(pkg.dueDate) : '',
     });
     setShowEditModal(true);
     setContextMenu(null);
@@ -336,7 +349,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           description: editData.description.trim(),
           type: editData.type,
           status: editData.initialStatus,
-          dueDate: editData.dueDate || null,
+          dueDate: editData.dueDate ? localDateStringToUTCDate(editData.dueDate) : null,
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -422,7 +435,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
           description: newPackage.description.trim(),
           type: newPackage.type.trim(),
           status: newPackage.initialStatus,
-          dueDate: newPackage.dueDate || null,
+          dueDate: newPackage.dueDate ? localDateStringToUTCDate(newPackage.dueDate) : null,
           teamMemberIds: newPackage.teamMemberIds,
         }),
       });
@@ -477,22 +490,54 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.total)}>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('all')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.total,
+            statusFilter === 'all' ? 'ring-2 ring-offset-1 ring-[#101828]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.total}</p>
           <p className="text-[14px]">Total</p>
-        </div>
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.active)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('active')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.active,
+            statusFilter === 'active' ? 'ring-2 ring-offset-1 ring-[#008236]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.active}</p>
           <p className="text-[14px]">Active</p>
-        </div>
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.completed)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('completed')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.completed,
+            statusFilter === 'completed' ? 'ring-2 ring-offset-1 ring-[#155DFC]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.completed}</p>
           <p className="text-[14px]">Completed</p>
-        </div>
-        <div className={cn('rounded-[10px] px-4 py-3', statusSummaryCard.onHold)}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('draft')}
+          className={cn(
+            'rounded-[10px] px-4 py-3 text-left transition-all',
+            statusSummaryCard.onHold,
+            statusFilter === 'draft' ? 'ring-2 ring-offset-1 ring-[#CA8A04]' : 'hover:opacity-90'
+          )}
+        >
           <p className="text-[28px] leading-[32px]">{summaryStats.onHold}</p>
           <p className="text-[14px]">Draft</p>
-        </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-4">
@@ -703,6 +748,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                     type="date"
                     value={newPackage.dueDate}
                     onChange={(e) => setNewPackage((prev) => ({ ...prev, dueDate: e.target.value }))}
+                    min={getTodayLocalDateString()}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   />
                 </div>
@@ -889,6 +935,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
                     type="date"
                     value={editData.dueDate}
                     onChange={(e) => setEditData((p) => ({ ...p, dueDate: e.target.value }))}
+                    min={getTodayLocalDateString()}
                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm sm:px-4 sm:py-3"
                   />
                 </div>

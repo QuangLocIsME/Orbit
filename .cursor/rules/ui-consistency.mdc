@@ -1,51 +1,80 @@
 ---
-description: UI consistency and component reuse
+description: UI consistency, component reuse, English language, and toast feedback
 alwaysApply: true
 ---
 
-# UI Consistency & Component Reuse
+# UI Consistency, Language & Component Reuse
 
-## Core Principles
+## 1. Language
 
-1. **Reuse existing components first** - Always check `src/components/ui/` and `src/components/features/` before writing new UI code.
+- **UI text must be in English** — all labels, placeholders, buttons, messages, errors, toasts, and any user-facing strings.
+- AI agent responses may be in Vietnamese.
 
-2. **Use shadcn/ui components** - The project uses shadcn/ui. Always prefer:
-   - `Button` from `@/components/ui/button`
-   - `Dialog`, `AlertDialog` from `@/components/ui/dialog`
-   - `Input`, `Label` from `@/components/ui/input`
-   - `DropdownMenu` from `@/components/ui/dropdown-menu`
-   - `Select` from `@/components/ui/select`
-   - `Toast` via `sonner`
-   - Existing skeleton components in `src/components/ui/skeletons/`
+## 2. Toast Feedback (Sonner)
 
-3. **Do not create custom modals, dialogs, or alerts** - Use `AlertDialog` or `Dialog` components instead of raw HTML/CSS overlays. See `AlertDialog` usage in `ProjectDocumentsManager.tsx` as reference.
+- Use `toast` from `sonner` for **all** user feedback — success, error, warning, loading, info.
+- Never use raw HTML/CSS alert boxes or inline messages for user feedback.
+- Import: `import { toast } from 'sonner';`
+- Examples:
 
-4. **Consistent styling** - Use Tailwind classes that match the project's design system:
-   - Colors: `text-[#101828]`, `text-gray-500`, `bg-white`, `border-gray-200`
-   - Spacing: `px-4 py-2`, `space-y-6`
-   - Typography: `text-sm font-medium`, `text-[24px]`
+```tsx
+// Success
+toast.success('Password reset successfully!');
 
-5. **Never write inline modal/dialog HTML** - Always wrap shadcn/ui components. The project already has all necessary dialog primitives.
+// Error
+toast.error('Failed to send reset email. Please try again.');
 
-6. **Check before adding icons** - Use `lucide-react` icons which are already imported across the project.
+// Loading
+toast.loading('Sending email...');
+
+// Info
+toast.info('Check your inbox for the reset link.');
+```
+
+## 3. Reuse Existing Components
+
+- Check `src/components/ui/` and `src/components/features/` before writing any new UI code.
+- Use shadcn/ui components:
+  - `Button` from `@/components/ui/button`
+  - `Dialog`, `AlertDialog` from `@/components/ui/dialog`
+  - `Input`, `Label` from `@/components/ui/input`
+  - `DropdownMenu` from `@/components/ui/dropdown-menu`
+  - `Select` from `@/components/ui/select`
+  - Skeleton components from `src/components/ui/skeletons/`
+- For icons: use `lucide-react` (already installed)
+
+## 4. Never Create New Components Unnecessarily
+
+- Do not create custom modals, dialogs, alerts, buttons, or toasts from scratch.
+- Wrap existing shadcn/ui primitives instead.
+- Only create a new component file when no existing component can be adapted.
 
 ## Anti-patterns
 
 ```tsx
-// ❌ BAD - Custom alert overlay
+// ❌ BAD — Custom alert overlay
 <div className="fixed inset-0 bg-black/40">
   <div className="bg-white p-4">Confirm?</div>
 </div>
 
-// ✅ GOOD - Reuse AlertDialog
+// ✅ GOOD — Reuse AlertDialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 ```
 
 ```tsx
-// ❌ BAD - Custom button
+// ❌ BAD — Inline error message
+<p className="text-red-500">Something went wrong.</p>
+
+// ✅ GOOD — Toast
+import { toast } from 'sonner';
+toast.error('Something went wrong.');
+```
+
+```tsx
+// ❌ BAD — Custom button
 <button className="px-4 py-2 bg-blue-600 text-white rounded-lg">Submit</button>
 
-// ✅ GOOD - Reuse Button component
+// ✅ GOOD — Reuse Button
 import { Button } from '@/components/ui/button';
 <Button>Submit</Button>
 ```

@@ -151,6 +151,17 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     });
   }, []);
 
+  // Sync avatar from appStore when it changes (WebSocket update)
+  const storeAuth = useAppStore((s) => s.auth);
+  useEffect(() => {
+    if (storeAuth?.avatar !== authUser?.avatar) {
+      setAuthUser((prev) => prev ? { ...prev, avatar: storeAuth?.avatar ?? null } : prev);
+      if (storeAuth) {
+        sidebarUserCache = { ...(sidebarUserCache ?? getCurrentUser()!), avatar: storeAuth.avatar ?? null };
+      }
+    }
+  }, [storeAuth?.avatar]);
+
   // Apply theme to <html> element
   useEffect(() => {
     const root = document.documentElement;
@@ -235,9 +246,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
         >
           {/* Expanded state */}
           <div className={cn('flex items-center gap-3', isCollapsed && 'hidden')}>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
-              {displayInitials}
-            </div>
+            {authUser?.avatar ? (
+              <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover flex-shrink-0" />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
+                {displayInitials}
+              </div>
+            )}
             <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
           </div>
           {!isCollapsed && (
@@ -253,9 +268,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
           {/* Collapsed state */}
           {isCollapsed && (
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
-              {displayInitials}
-            </div>
+            authUser?.avatar ? (
+              <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover" />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
+                {displayInitials}
+              </div>
+            )
           )}
         </button>
 
@@ -265,9 +284,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
             {/* User Info */}
             <div className="flex items-center gap-3 border-b border-gray-100 dark:border-zinc-700 px-4 pb-3">
               <div className="relative">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-sm font-medium text-white">
-                  {displayInitials}
-                </div>
+                {authUser?.avatar ? (
+                  <img src={authUser.avatar} alt={displayName} className="flex h-10 w-10 items-center justify-center rounded-full object-cover" />
+                ) : (
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-sm font-medium text-white">
+                    {displayInitials}
+                  </div>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -336,7 +359,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
               <button
                 onClick={() => {
                   setIsUserMenuOpen(false);
-                  setIsSettingsOpen(true);
+                  window.location.href = '/settings/my-account';
                 }}
                 className="flex w-full items-center gap-3 px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-gray-50 dark:hover:bg-zinc-800 hover:text-foreground"
               >
@@ -362,9 +385,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
               <div className="py-1 border-b border-gray-100 dark:border-zinc-700">
                 <p className="px-4 py-1 text-xs font-medium text-muted-foreground uppercase">Logged in as</p>
                 <div className="flex items-center gap-3 px-4 py-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
-                    {displayInitials}
-                  </div>
+                  {authUser?.avatar ? (
+                    <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
+                      {displayInitials}
+                    </div>
+                  )}
                   <div className="text-left min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{authUser.fullName}</p>
                     <p className="text-xs text-muted-foreground truncate">{authUser.email}</p>
@@ -480,9 +507,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
                   {/* Profile Section */}
                   <div className="flex items-start gap-4">
                     <div className="relative">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-indigo-600 text-xl font-medium text-white">
-                        {displayInitials}
-                      </div>
+                      {authUser?.avatar ? (
+                        <img src={authUser.avatar} alt={displayName} className="flex h-16 w-16 items-center justify-center rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-indigo-600 text-xl font-medium text-white">
+                          {displayInitials}
+                        </div>
+                      )}
                       <button className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-600 shadow-sm hover:bg-gray-50 dark:hover:bg-zinc-700">
                         <svg className="h-3.5 w-3.5 text-gray-600 dark:text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />

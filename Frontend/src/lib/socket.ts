@@ -14,6 +14,7 @@ import { io, type Socket } from 'socket.io-client';
 export interface ServerToClientEvents {
   'user:online': (data: { userId: string }) => void;
   'user:offline': (data: { userId: string }) => void;
+  'user:avatar:updated': (data: { userId: string; avatar: string }) => void;
   'notification:new': (data: Notification) => void;
   'invite:new': (data: InviteNotification) => void;
   'invite:accepted': (data: { projectId: string; inviteId: string; acceptedBy: string }) => void;

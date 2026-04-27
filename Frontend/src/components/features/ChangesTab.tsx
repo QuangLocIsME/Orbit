@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { getTodayLocalDateString, localDateStringToUTCDate, utcDateStringToLocalDateString } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from 'sonner';
+import { FileIcon, fmtSize, MAX_ATTACH_SIZE, Avatar } from './TaskFormShared';
+import { MemberPicker, AttachPicker } from './TaskFormShared';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,14 +66,8 @@ const PRIORITY_CFG = {
 
 const ICON_BG     = { pending:'bg-[#EEF2FF]', 'in-progress':'bg-[#EEF2FF]', approved:'bg-[#ECFDF5]', completed:'bg-[#ECFDF5]', rejected:'bg-[#FEE2E2]' } as const;
 const ICON_STROKE = { pending:'#4F39F6', 'in-progress':'#4F39F6', approved:'#009966', completed:'#009966', rejected:'#DC2626' } as const;
-const MAX_ATTACH_SIZE = 50 * 1024 * 1024; // 50 MB
 const MODEL_EXT = /\.(ifc|rvt|dwg|dxf|nwd|nwf|nwc|skp|fbx|obj|3ds|step|stp)$/i;
 
-function fmtSize(b: number) {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(1)} MB`;
-}
 function fmtRel(d: string) {
   const diff = Date.now() - new Date(d).getTime();
   const m = Math.floor(diff / 60000);
@@ -90,170 +87,6 @@ function CrIcon({ status }: { status: ChangeRequest['status'] }) {
       <path d="M14 2V7C14 7.26522 14.1054 7.51957 14.2929 7.70711C14.4804 7.89464 14.7348 8 15 8H20" stroke={s} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
       <path d="M10.378 12.6219C10.7762 12.224 11.3162 12.0007 11.8791 12.001C12.442 12.0013 12.9817 12.2251 13.3795 12.6234C13.7773 13.0216 14.0007 13.5615 14.0004 14.1244C14.0001 14.6873 13.7762 15.227 13.378 15.6249L8.36002 20.6369C8.1224 20.8746 7.82869 21.0486 7.50602 21.1429L4.63902 21.9799C4.55298 22.005 4.46176 22.0065 4.37493 21.9842C4.2881 21.962 4.20885 21.9168 4.14547 21.8534C4.08209 21.79 4.03691 21.7108 4.01467 21.6239C3.99242 21.5371 3.99393 21.4459 4.01902 21.3599L4.85502 18.4909C4.9494 18.1686 5.12341 17.8752 5.36102 17.6379L10.378 12.6219Z" stroke={s} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
-  );
-}
-
-function FileIcon({ className }: { className?: string }) {
-  return (
-    <svg className={cn('h-4 w-4', className)} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
-      <path d="M9.33333 1.33333H4C3.64638 1.33333 3.30724 1.47381 3.05719 1.72386C2.80714 1.97391 2.66667 2.31304 2.66667 2.66667V13.3333C2.66667 13.687 2.80714 14.0261 3.05719 14.2761C3.30724 14.5262 3.64638 14.6667 4 14.6667H12C12.3536 14.6667 12.6928 14.5262 12.9428 14.2761C13.1929 14.0261 13.3333 13.687 13.3333 13.3333V5.33333L9.33333 1.33333Z"/>
-      <path d="M9.33333 1.33333V5.33333H13.3333"/>
-    </svg>
-  );
-}
-
-/** Avatar initials chip */
-function Avatar({ name, color }: { name?: string; color?: string }) {
-  const initials = (name || '').split(' ').map(w => w?.[0]).join('').toUpperCase().slice(0, 2) || '?';
-  const bg = color || '#6366f1';
-  return (
-    <span
-      title={name}
-      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
-      style={{ backgroundColor: bg }}
-    >
-      {initials}
-    </span>
-  );
-}
-
-/** Member multi-select list */
-function MemberPicker({
-  label, members = [], selected, onChange,
-}: {
-  label: string;
-  members?: TeamMember[];
-  selected: string[];
-  onChange: (ids: string[]) => void;
-}) {
-  const toggle = (id: string) =>
-    onChange(selected.includes(id) ? selected.filter(s => s !== id) : [...selected, id]);
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[14px] font-medium text-[#101828]">{label}</label>
-      {!members || members.length === 0 ? (
-        <p className="text-[13px] text-[#6A7282]">No team members available.</p>
-      ) : (
-        <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#F3F4F6] max-h-[150px] overflow-y-auto">
-          {members.map(m => {
-            const checked = selected.includes(m.userId);
-            return (
-              <label key={m.userId} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[#F9FAFB]">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(m.userId)}
-                  className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]"
-                />
-                <Avatar name={m.user?.fullName} />
-                <div className="min-w-0">
-                  <p className="text-[14px] text-[#101828] truncate">{m.user?.fullName}</p>
-                  <p className="text-[11px] text-[#6A7282] truncate">{m.role}</p>
-                </div>
-              </label>
-            );
-          })}
-        </div>
-      )}
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map(id => {
-            const m = members.find(x => x.userId === id);
-            return m ? (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[11px] text-[#1D4ED8]">
-                <Avatar name={m.user?.fullName} color="#3B82F6" />
-                {m.user?.fullName}
-                <button type="button" onClick={() => toggle(id)} className="ml-0.5 text-[#93C5FD] hover:text-[#1D4ED8] font-bold">×</button>
-              </span>
-            ) : null;
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** File attachment drop zone */
-function AttachPicker({
-  files, onChange,
-}: {
-  files: File[];
-  onChange: (files: File[]) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [drag, setDrag] = useState(false);
-
-  const add = (incoming: FileList | null) => {
-    if (!incoming) return;
-    const valid: File[] = [];
-    Array.from(incoming).forEach(f => {
-      if (f.size > MAX_ATTACH_SIZE) {
-        toast.error(`"${f.name}" exceeds 50 MB limit`);
-      } else {
-        valid.push(f);
-      }
-    });
-    onChange([...files, ...valid]);
-  };
-
-  const remove = (idx: number) => onChange(files.filter((_, i) => i !== idx));
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[14px] font-medium text-[#101828]">
-        Attachments <span className="font-normal text-[#6A7282]">(max 50 MB each)</span>
-      </label>
-
-      {files.length > 0 && (
-        <div className="rounded-[10px] border border-[#E5E7EB] divide-y divide-[#F3F4F6] bg-white">
-          {files.map((f, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-              <FileIcon className="shrink-0 text-[#6A7282]" />
-              <div className="min-w-0 flex-1">
-                <p className="text-[14px] text-[#101828] truncate">{f.name}</p>
-                <p className="text-[11px] text-[#6A7282]">{fmtSize(f.size)}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => remove(i)}
-                className="shrink-0 p-1 text-[#99A1AF] hover:text-[#DC2626] transition-colors rounded"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
-                </svg>
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div
-        onDragOver={e => { e.preventDefault(); setDrag(true); }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={e => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files); }}
-        onClick={() => inputRef.current?.click()}
-        className={cn(
-          'flex flex-col items-center justify-center gap-2 rounded-[10px] border-2 border-dashed py-6 cursor-pointer transition-colors',
-          drag ? 'border-[#155DFC] bg-[#EFF6FF]' : 'border-[#D1D5DC] bg-[#F9FAFB] hover:border-[#155DFC] hover:bg-[#F0F6FF]'
-        )}
-      >
-        <svg className="h-8 w-8 text-[#99A1AF]" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth={1.5}>
-          <path d="M21.333 21.333L16 16L10.667 21.333" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M16 16V28" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M27.187 24.52C28.458 23.787 29.431 22.63 29.936 21.246C30.441 19.862 30.447 18.34 29.953 16.952C29.459 15.564 28.495 14.399 27.229 13.656C25.964 12.913 24.477 12.641 23.04 12.88H21.467C21.029 11.207 20.207 9.66 19.067 8.368C17.927 7.077 16.502 6.078 14.905 5.454C13.309 4.829 11.586 4.598 9.879 4.778C8.172 4.959 6.531 5.546 5.096 6.489C3.66 7.433 2.471 8.707 1.626 10.207C0.78 11.707 0.304 13.39 0.238 15.114C0.172 16.839 0.519 18.555 1.249 20.117C1.979 21.68 3.069 23.043 4.427 24.093" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-        <p className="text-[14px] text-[#364153]">Drop files here or <span className="text-[#155DFC] font-medium">browse</span></p>
-        <p className="text-[12px] text-[#6A7282]">PDF, DWG, RVT, IFC, JPG, PNG — max 50 MB</p>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={e => { add(e.target.files); e.target.value = ''; }}
-        />
-      </div>
-    </div>
   );
 }
 
@@ -306,7 +139,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
         if (detailedDescription.trim()) form.append('detailedDescription', detailedDescription.trim());
         if (estimatedCost.trim()) form.append('estimatedCost', estimatedCost.trim());
         if (estimatedDuration.trim()) form.append('estimatedDuration', estimatedDuration.trim());
-        if (deadline) form.append('deadline', deadline);
+        if (deadline) form.append('deadline', localDateStringToUTCDate(deadline));
         if (disciplineId) form.append('disciplineId', disciplineId);
         affectedModels.forEach(m => form.append('affectedModels[]', m));
         assignedTo.forEach(a => form.append('assignedTo[]', a));
@@ -325,7 +158,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
             detailedDescription: detailedDescription.trim() || undefined,
             estimatedCost: estimatedCost.trim() ? Number(estimatedCost) : undefined,
             estimatedDuration: estimatedDuration.trim() || undefined,
-            deadline: deadline || undefined,
+            deadline: deadline ? localDateStringToUTCDate(deadline) : undefined,
             disciplineId: disciplineId || null,
             affectedModels,
             assignedTo,
@@ -498,6 +331,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
                 type="date"
                 value={deadline}
                 onChange={e => setDeadline(e.target.value)}
+                min={getTodayLocalDateString()}
                 className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]"
               />
             </div>
@@ -614,7 +448,7 @@ function EditModal({ cr, disciplines, modelFiles, teamMembers, loadingFiles, onC
   const [detailedDescription, setDetailedDesc]    = useState(cr.detailedDescription ?? '');
   const [estimatedCost, setEstimatedCost]         = useState(cr.estimatedCost != null ? String(cr.estimatedCost) : '');
   const [estimatedDuration, setEstimatedDuration] = useState(cr.estimatedDuration ?? '');
-  const [deadline, setDeadline]                   = useState(cr.deadline ? cr.deadline.slice(0, 10) : '');
+  const [deadline, setDeadline]                   = useState(cr.deadline ? utcDateStringToLocalDateString(cr.deadline) : '');
   const [disciplineId, setDisciplineId]           = useState(cr.disciplineId ?? '');
   const [affectedModels, setAffectedModels]       = useState<string[]>(cr.affectedModels);
   const [assignedTo, setAssignedTo]               = useState<string[]>(cr.assignedTo);
@@ -643,7 +477,7 @@ function EditModal({ cr, disciplines, modelFiles, teamMembers, loadingFiles, onC
           detailedDescription: detailedDescription.trim() || undefined,
           estimatedCost: estimatedCost.trim() ? Number(estimatedCost) : null,
           estimatedDuration: estimatedDuration.trim() || undefined,
-          deadline: deadline || null,
+          deadline: deadline ? localDateStringToUTCDate(deadline) : null,
           disciplineId: disciplineId || null,
           affectedModels,
           assignedTo,
@@ -776,6 +610,7 @@ function EditModal({ cr, disciplines, modelFiles, teamMembers, loadingFiles, onC
             <div className="flex flex-col gap-1.5">
               <label className="text-[14px] font-medium text-[#101828]">Deadline</label>
               <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)}
+                min={getTodayLocalDateString()}
                 className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]" />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -931,6 +766,7 @@ interface CRComment {
   publicId: string;
   authorId: string;
   authorName: string;
+  avatar?: string;
   content: string;
   createdAt: string;
   updatedAt?: string;
@@ -1159,7 +995,7 @@ function DetailModal({
                   const m = teamMembers.find(x => x.userId === id);
                   return m ? (
                     <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2.5 py-0.5 text-[12px] text-[#1D4ED8]">
-                      <Avatar name={m.user?.fullName} color="#3B82F6" />{m.user?.fullName}
+                      <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />{m.user?.fullName}
                     </span>
                   ) : <span key={id} className="text-[13px] text-[#6A7282]">{id}</span>;
                 })}
@@ -1175,7 +1011,7 @@ function DetailModal({
                   const m = teamMembers.find(x => x.userId === id);
                   return m ? (
                     <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-1 pr-2.5 py-0.5 text-[12px] text-[#166534]">
-                      <Avatar name={m.user?.fullName} color="#22C55E" />{m.user?.fullName}
+                      <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />{m.user?.fullName}
                     </span>
                   ) : <span key={id} className="text-[13px] text-[#6A7282]">{id}</span>;
                 })}
@@ -1300,12 +1136,20 @@ function DetailModal({
               <div className="space-y-1 pt-1">
                 {comments.map(c => (
                   <div key={c.publicId} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30 group">
-                    <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-                      style={{ backgroundColor: nameToColor(c.authorName) }}
-                    >
-                      {c.authorName.charAt(0).toUpperCase()}
-                    </div>
+                    {c.avatar ? (
+                      <img
+                        src={c.avatar}
+                        alt={c.authorName}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full object-cover text-xs font-semibold text-white"
+                      />
+                    ) : (
+                      <div
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+                        style={{ backgroundColor: nameToColor(c.authorName) }}
+                      >
+                        {c.authorName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] font-semibold text-foreground">{c.authorName}</span>
@@ -1636,7 +1480,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
                         <div className="flex flex-wrap gap-1.5">
                           {assigneeMembers.slice(0, 4).map(m => (
                             <span key={m.userId} className="inline-flex items-center gap-1.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-0.5 pr-2.5 py-0.5 text-[11px] text-[#1D4ED8]">
-                              <Avatar name={m.user?.fullName} color="#3B82F6" />
+                              <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />
                               <span className="font-medium">{m.user?.fullName}</span>
                             </span>
                           ))}
@@ -1652,7 +1496,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
                         <div className="flex flex-wrap gap-1.5">
                           {reviewerMembers.slice(0, 4).map(m => (
                             <span key={m.userId} className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-0.5 pr-2.5 py-0.5 text-[11px] text-[#166534]">
-                              <Avatar name={m.user?.fullName} color="#22C55E" />
+                              <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />
                               <span className="font-medium">{m.user?.fullName}</span>
                             </span>
                           ))}

@@ -29,9 +29,13 @@ interface TeamMemberView {
   name: string;
   role: string;
   avatar: string;
+  avatarUrl: string | null;
   color: string;
   isOnline: boolean;
 }
+
+interface ModelFile { id: string; name: string; folderPath?: string; }
+interface TeamMemberForTask { userId: string; user?: { fullName: string }; role: string; }
 
 interface TaskItem {
   id: string;
@@ -90,6 +94,9 @@ const formatIsoDate = (dateStr: string) => {
 
 export default function ScopedTasksPanel({ scope, projectRole = 'member' }: ScopedTasksPanelProps) {
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
+  const [modelFiles, setModelFiles] = useState<ModelFile[]>([]);
+  const [loadingModelFiles, setLoadingModelFiles] = useState(false);
+  const [teamMembersForTask, setTeamMembersForTask] = useState<TeamMemberForTask[]>([]);
   const [tasksViewMode, setTasksViewMode] = useState<'board' | 'list' | 'calendar'>('board');
   const [tasksSearchQuery, setTasksSearchQuery] = useState('');
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
@@ -161,6 +168,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
             name,
             role: m?.role || 'member',
             avatar: getInitials(name),
+            avatarUrl: m?.user?.avatar || null,
             color: avatarColors[index % avatarColors.length],
             isOnline: m?.status === 'accepted',
           };
@@ -181,6 +189,50 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
       cancelled = true;
     };
   }, [scope.projectId]);
+
+  // Load model files for Affected Models picker
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingModelFiles(true);
+
+    const loadModelFiles = async () => {
+      try {
+        const url = scope.type === 'package' && scope.packageId
+          ? `/api/projects/${scope.projectId}/packages/${scope.packageId}/documents?types=ifc,rvt,dwg`
+          : `/api/projects/${scope.projectId}/documents?types=ifc,rvt,dwg`;
+
+        const res = await apiFetch(url);
+        if (!res.ok) return;
+
+        const payload = await res.json();
+        const docs: any[] = Array.isArray(payload?.data) ? payload.data : [];
+
+        if (!cancelled) {
+          setModelFiles(docs.map((d: any) => ({
+            id: d.publicId || d.id || String(d._id),
+            name: d.name || d.fileName || 'Untitled',
+            folderPath: d.folderPath || d.folder?.name,
+          })));
+        }
+      } catch {
+        if (!cancelled) setModelFiles([]);
+      } finally {
+        if (!cancelled) setLoadingModelFiles(false);
+      }
+    };
+
+    loadModelFiles();
+    return () => { cancelled = true; };
+  }, [scope.projectId, scope.packageId, scope.type]);
+
+  // Map team members for CreateTaskModal's MemberPicker from existing teamMembers
+  useEffect(() => {
+    setTeamMembersForTask(teamMembers.map((m) => ({
+      userId: m.id,
+      user: { fullName: m.name },
+      role: m.role,
+    })));
+  }, [teamMembers]);
 
   const loadTasks = useCallback(async () => {
     setIsTasksLoading(true);
@@ -267,6 +319,60 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
       // CreateTaskModal already has fallback stages.
     }
   }, [scope.projectId]);
+
+  const persistNewTaskTags = useCallback(async (submittedTags: string[]) => {
+    const normalizedSubmittedTags = Array.from(
+      new Set((submittedTags || []).map((t) => String(t || '').trim().toLowerCase()).filter(Boolean))
+    );
+    if (normalizedSubmittedTags.length === 0) return;
+
+    const knownTags = new Set(projectTaskTags.map((t) => String(t || '').trim().toLowerCase()).filter(Boolean));
+    const newTags = normalizedSubmittedTags.filter((t) => !knownTags.has(t));
+    if (newTags.length === 0) return;
+
+    try {
+      const workflowRes = await apiFetch('/api/projects/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: scope.projectId }),
+      });
+      if (!workflowRes.ok) return;
+
+      const workflowPayload = await workflowRes.json().catch(() => null);
+      const workflowData = workflowPayload?.data || {};
+      const existingTaskTags = Array.isArray(workflowData?.taskTags) ? workflowData.taskTags : [];
+      const existingNames = new Set(
+        existingTaskTags.map((tag: any) => String(tag?.name || '').trim().toLowerCase()).filter(Boolean)
+      );
+
+      const tagsToAppend = newTags
+        .filter((name) => !existingNames.has(name))
+        .map((name) => ({
+          id: `tag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name,
+          description: '',
+          color: '#6366F1',
+        }));
+      if (tagsToAppend.length === 0) return;
+
+      const updateRes = await apiFetch('/api/projects/workflow/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: scope.projectId,
+          template: workflowData?.template,
+          stages: workflowData?.stages,
+          settings: workflowData?.settings,
+          taskTags: [...existingTaskTags, ...tagsToAppend],
+        }),
+      });
+      if (!updateRes.ok) return;
+
+      setProjectTaskTags((prev) => Array.from(new Set([...prev, ...newTags])));
+    } catch {
+      // Non-blocking: task create/update should still continue.
+    }
+  }, [projectTaskTags, scope.projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -503,8 +609,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
 
   if (isPackageScope) {
     return (
-      <div className="flex h-full flex-col py-6 px-6 lg:px-[80px] xl:px-[160px]">
-        <div className="flex items-center justify-between gap-4 py-2">
+      <div className="flex h-full flex-col py-1 px-6 lg:px-[80px] xl:px-[160px]">
+        <div className="flex items-center justify-between gap-4 pt-0 pb-6">
           <div className="relative flex-1 max-w-md">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -573,9 +679,13 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                     <div className="flex items-center gap-2">
                       {assignee ? (
                         <>
-                          <span className={cn('inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium text-white', assignee.color)}>
-                            {assignee.avatar}
-                          </span>
+                          {assignee.avatarUrl ? (
+                            <img src={assignee.avatarUrl} alt={assignee.name} className="inline-flex h-5 w-5 items-center justify-center rounded-full object-cover" />
+                          ) : (
+                            <span className={cn('inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium text-white', assignee.color)}>
+                              {assignee.avatar}
+                            </span>
+                          )}
                           <span className="text-[12px] text-[#4A5565]">{assignee.name}</span>
                         </>
                       ) : (
@@ -625,6 +735,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
           editTask={editingTask}
           onUpdate={async (taskId, task) => {
             try {
+              await persistNewTaskTags(task.tags);
               const res = await apiFetch('/api/tasks/', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -653,13 +764,16 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
               toast.error('Failed to update task');
             }
           }}
-          assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
           tagOptions={projectTaskTags}
           linkedItemSuggestions={linkedItemSuggestions}
           workflowStages={selectedWorkflowStages}
           defaultStageId={pendingTaskStageId}
+          modelFiles={modelFiles}
+          loadingFiles={loadingModelFiles}
+          teamMembers={teamMembersForTask}
           onSubmit={async (task) => {
             try {
+              await persistNewTaskTags(task.tags);
               const response = await apiFetch('/api/tasks/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -880,9 +994,13 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
                   <div>
                     {assignee && (
                       <div className="flex items-center gap-2">
-                        <div className={cn('h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white', assignee.color)}>
-                          {assignee.avatar}
-                        </div>
+                        {assignee.avatarUrl ? (
+                          <img src={assignee.avatarUrl} alt={assignee.name} className="h-6 w-6 rounded-full object-cover" />
+                        ) : (
+                          <div className={cn('h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white', assignee.color)}>
+                            {assignee.avatar}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -972,6 +1090,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
         editTask={editingTask}
         onUpdate={async (taskId, task) => {
           try {
+            await persistNewTaskTags(task.tags);
             const res = await apiFetch('/api/tasks/', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
@@ -1000,17 +1119,20 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
             toast.error('Failed to update task');
           }
         }}
-        assigneeOptions={teamMembers.map((m) => ({ id: m.id, name: m.name }))}
         tagOptions={projectTaskTags}
         linkedItemSuggestions={linkedItemSuggestions}
         workflowStages={selectedWorkflowStages}
-        defaultStageId={pendingTaskStageId}
-        onSubmit={async (task) => {
-          try {
-            const response = await apiFetch('/api/tasks/create', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-              body: JSON.stringify({
+          defaultStageId={pendingTaskStageId}
+          modelFiles={modelFiles}
+          loadingFiles={loadingModelFiles}
+          teamMembers={teamMembersForTask}
+          onSubmit={async (task) => {
+            try {
+              await persistNewTaskTags(task.tags);
+              const response = await apiFetch('/api/tasks/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({
                 ...scopeRequestBody,
                 title: task.title,
                 status: task.status,

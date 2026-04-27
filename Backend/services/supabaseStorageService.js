@@ -6,6 +6,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_XKT_BUCKET = process.env.SUPABASE_XKT_BUCKET || 'xkt-models';
 const SUPABASE_IFC_BUCKET = process.env.SUPABASE_IFC_BUCKET || 'ifc-files';
 const SUPABASE_ATTACHMENT_BUCKET = process.env.SUPABASE_ATTACHMENT_BUCKET || 'cr-attachments';
+const SUPABASE_AVATAR_BUCKET = process.env.SUPABASE_AVATAR_BUCKET || 'avatars';
 const S3_BUCKET = process.env.S3_BUCKET || 'orbit-files';
 const S3_ENDPOINT = process.env.S3_ENDPOINT || '';
 const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || '';
@@ -310,22 +311,75 @@ function assertS3Configured() {
     }
 }
 
+function buildUserAvatarPath({ userId, fileName }) {
+    const safeName = (fileName || 'avatar')
+        .replace(/[^a-zA-Z0-9._-]/g, '-')
+        .replace(/\s+/g, '-')
+        .substring(0, 200);
+    const timestamp = Date.now();
+    return `users/${userId}/avatar/${timestamp}-${safeName}`;
+}
+
+async function uploadUserAvatarBuffer(buffer, storagePath) {
+    assertSupabaseConfigured();
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${storagePath}`;
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            'Content-Type': 'image/jpeg',
+            'x-upsert': 'true',
+        },
+        body: buffer,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase avatar upload failed: ${res.status} ${text}`);
+    }
+    return {
+        bucket: SUPABASE_AVATAR_BUCKET,
+        key: storagePath,
+        publicUrl: `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_AVATAR_BUCKET}/${storagePath}`,
+    };
+}
+
+async function deleteUserAvatarFile(storagePath) {
+    if (!storagePath) return;
+    try {
+        const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${storagePath}`;
+        await fetch(endpoint, {
+            method: 'DELETE',
+            headers: {
+                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                apikey: SUPABASE_SERVICE_ROLE_KEY,
+            },
+        });
+    } catch (err) {
+        console.warn('[Avatar] Delete failed:', err.message);
+    }
+}
+
 module.exports = {
     SUPABASE_XKT_BUCKET,
     SUPABASE_IFC_BUCKET,
     SUPABASE_ATTACHMENT_BUCKET,
+    SUPABASE_AVATAR_BUCKET,
     buildSupabaseStoragePath,
     buildSupabaseIfcPath,
     buildSupabaseAttachmentPath,
     buildSupabaseThumbnailPath,
     buildSupabaseAvatarPath,
+    buildUserAvatarPath,
     uploadXktFile,
     uploadIfcBuffer,
     downloadIfcBuffer,
     uploadAttachmentBuffer,
     uploadProjectThumbnailBuffer,
     uploadAvatarBuffer,
+    uploadUserAvatarBuffer,
     deleteAvatarFile,
+    deleteUserAvatarFile,
     createSignedXktUrl,
     createSignedAttachmentUrl,
     assertSupabaseConfigured,

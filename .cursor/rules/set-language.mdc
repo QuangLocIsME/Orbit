@@ -1,5 +1,7 @@
 ---
 alwaysApply: true
 ---
- Always think and respond in Vietnamese.
- 
+# Language
+
+- AI agent responses: Vietnamese (feel free to respond in Vietnamese).
+- UI text (labels, placeholders, buttons, toasts, errors): English only.

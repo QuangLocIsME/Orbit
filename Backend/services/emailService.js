@@ -78,37 +78,96 @@ async function sendEmail(to, subject, message) {
 }
 
 /**
- * Gửi email mã đặt lại mật khẩu. Chỉ dùng SMTP từ .env.
+ * Gửi email mã đặt lại mật khẩu kèm link reset trong HTML.
+ * Link dẫn tới frontend /reset-password?token=xxx (dùng secure token, không dùng 6-digit code)
  */
-async function sendResetCodeEmail(toEmail, code) {
+async function sendResetCodeEmail(toEmail, resetToken) {
     const resetPageUrl =
         process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321';
-    const resetPasswordUrl = `${resetPageUrl.replace(/\/$/, '')}/reset-password`;
+    const baseUrl = resetPageUrl.replace(/\/$/, '');
+    const emailParam = Buffer.from(toEmail).toString('base64');
+    const resetPasswordUrl = `${baseUrl}/reset-password?token=${resetToken}&email=${emailParam}`;
 
-    const subject = 'Mã xác nhận đặt lại mật khẩu - Orbit';
+    const subject = 'Reset your ORBIT password';
     const text = [
-        'Bạn đã yêu cầu đặt lại mật khẩu.',
-        `Mã xác nhận của bạn: ${code}.`,
-        
+        'You requested a password reset for your ORBIT account.',
+        '',
+        `Click the button below to reset your password:`,
+        resetPasswordUrl,
+        '',
+        'This link expires in 15 minutes.',
+        'If you did not request this, you can safely ignore this email.',
     ].join('\n');
 
     const html = `
-      <div style="font-family: sans-serif; max-width: 480px;">
-        <p>Bạn đã yêu cầu đặt lại mật khẩu.</p>
-        <p><strong>Mã xác nhận của bạn:</strong></p>
-        <p style="font-size: 24px; letter-spacing: 6px; font-weight: bold; margin: 16px 0;">${code}</p>
-      </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reset your ORBIT password</title>
+</head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:48px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:440px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="padding:40px 40px 24px;text-align:center;border-bottom:1px solid #E5E7EB;">
+              <p style="margin:0 0 16px;">
+                <svg width="48" height="48" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="22" cy="22" r="16" stroke="#1F4CB1" stroke-width="5" fill="none"/>
+                  <path d="M24.5 13C30.5 15.5 33 18.5 32 20.5C31 22.5 26 23 20 25.5C14 28 10.5 31 11.5 33C12.5 35 17.5 34.5 24.5 30.5" stroke="#1F4CB1" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+                </svg>
+              </p>
+              <h1 style="margin:0;font-size:20px;font-weight:700;color:#111827;">Reset your password</h1>
+              <p style="margin:8px 0 0;font-size:14px;color:#6B7280;line-height:1.5;">
+                You requested a password reset for your ORBIT account.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Button -->
+          <tr>
+            <td style="padding:40px 40px 32px;">
+              <a href="${resetPasswordUrl}"
+                 style="display:block;text-align:center;background:#2563EB;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:14px 24px;border-radius:8px;">
+                Reset Password
+              </a>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:0 40px 32px;">
+              <p style="margin:0;font-size:13px;color:#9CA3AF;line-height:1.6;text-align:center;">
+                This link expires in <strong>15 minutes</strong>.<br>
+                If you did not request a password reset, ignore this email.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+        <p style="margin:24px 0 0;font-size:12px;color:#9CA3AF;text-align:center;">
+          &copy; ${new Date().getFullYear()} ORBIT. All rights reserved.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
     `;
 
     const result = await sendEmail(toEmail, subject, { text, html });
 
     if (result.success) return;
 
-    // Không có SMTP hoặc lỗi gửi: log và throw để API trả lỗi rõ ràng
-    console.log('--- Email không gửi được ---');
-    console.log('Lỗi:', result.error);
+    console.log('--- Email khong gui duoc ---');
+    console.log('Loi:', result.error);
     console.log('--------------------------------');
-    throw new Error(result.error || 'Không gửi được email. Kiểm tra SMTP trong .env (Gmail cần App Password).');
+    throw new Error(result.error || 'Khong gui duoc email. Kiem tra SMTP trong .env (Gmail can App Password).');
 }
 
 /**

@@ -43,6 +43,14 @@ const UserSchema = new mongoose.Schema({
     // Forgot password: mã 6 số gửi qua email (lưu hash)
     resetCode: { type: String, default: null },
     resetCodeExpiresAt: { type: Date, default: null },
+    twoFactorSecret: { type: String, default: null },
+    twoFactorPendingSecret: { type: String, default: null },
+    twoFactorVerified: { type: Boolean, default: false },
+    jobTitle: { type: String, default: null, trim: true },
+    company: { type: String, default: null, trim: true },
+    bio: { type: String, default: null, trim: true },
+    avatarStoragePath: { type: String, default: null },
+    isDeleted: { type: Boolean, default: false },
     // Link đặt lại mật khẩu dùng 1 lần (lưu hash token)
     resetPasswordToken: { type: String, default: null },
     resetPasswordTokenExpiresAt: { type: Date, default: null },

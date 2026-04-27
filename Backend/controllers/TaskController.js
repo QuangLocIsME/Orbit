@@ -263,6 +263,17 @@ class TaskController {
                 assignees: assigneeNames,
             });
 
+            // Broadcast to package room for real-time stat updates
+            if (packageId) {
+                socketService.broadcastPackage(packageId, 'package:task-count-changed', {
+                    projectId,
+                    packageId,
+                    action: 'created',
+                    taskId: task.publicId,
+                    status: task.status,
+                });
+            }
+
             return res.status(201).json({ success: true, data: task });
         } catch {
             return serverError(res, 'Create task failed');
@@ -409,6 +420,17 @@ class TaskController {
                 status,
             });
 
+            // Also broadcast to package room for real-time stat updates
+            if (packageId) {
+                socketService.broadcastPackage(packageId, 'package:task-count-changed', {
+                    projectId,
+                    packageId,
+                    action: 'status-changed',
+                    taskId,
+                    status,
+                });
+            }
+
             // Notify all assignees and reviewers when task stage changes
             const assigneeIds = currentTask.assigneeIds || [];
             const reviewerIds = currentTask.reviewerIds || [];
@@ -506,13 +528,14 @@ class TaskController {
 
             const authorIds = [...new Set(comments.map((c) => c.authorId).filter(Boolean))];
             const users = authorIds.length
-                ? await User.find({ _id: { $in: authorIds } }).select('_id fullName email').lean()
+                ? await User.find({ _id: { $in: authorIds } }).select('_id fullName email avatar').lean()
                 : [];
             const map = new Map(users.map((u) => [String(u._id), u]));
 
             const data = comments.map((c) => ({
                 ...c,
                 authorName: map.get(String(c.authorId))?.fullName || map.get(String(c.authorId))?.email || 'Unknown',
+                avatar: map.get(String(c.authorId))?.avatar || '',
             }));
 
             return res.status(200).json({ success: true, data });
@@ -572,8 +595,9 @@ class TaskController {
             });
 
             // Notify all assignees and reviewers when someone comments on their task
-            const author = await User.findById(userId).select('_id fullName email').lean();
+            const author = await User.findById(userId).select('_id fullName email avatar').lean();
             const authorName = author?.fullName || author?.email || 'Someone';
+            const authorAvatar = author?.avatar || '';
             const taskLink = getTaskLink(projectId, task.packageId, taskId);
             const message = `${authorName} commented: "${content.substring(0, 80)}${content.length > 80 ? '...' : ''}"`;
 
@@ -611,6 +635,7 @@ class TaskController {
                 data: {
                     ...comment.toObject(),
                     authorName: author?.fullName || author?.email || 'You',
+                    avatar: author?.avatar || '',
                 },
             });
         } catch {
@@ -706,6 +731,9 @@ class TaskController {
 
             const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags } = req.body || {};
 
+            const oldAssigneeIds = [...(task.assigneeIds || [])];
+            const oldReviewerIds = [...(task.reviewerIds || [])];
+
             if (title !== undefined) task.title = title.trim();
             if (description !== undefined) task.description = description.trim();
             if (priority !== undefined) task.priority = normalizePriority(priority);
@@ -723,6 +751,60 @@ class TaskController {
             task.updatedAt = new Date();
 
             await task.save();
+
+            const newAssigneeIds = task.assigneeIds || [];
+            const newReviewerIds = task.reviewerIds || [];
+            const taskLink = getTaskLink(task.projectId, task.packageId, task.publicId);
+
+            // Notify newly added assignees
+            const addedAssignees = newAssigneeIds.filter(id => !oldAssigneeIds.includes(id) && id !== userId);
+            for (const assignee of addedAssignees) {
+                const notification = await NotificationRepository.create({
+                    userId: assignee,
+                    type: 'info',
+                    title: 'New task assigned',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                socketService.notifyUser(assignee, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'New task assigned',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
+
+            // Notify newly added reviewers
+            const addedReviewers = newReviewerIds.filter(id => !oldReviewerIds.includes(id) && id !== userId && !newAssigneeIds.includes(id));
+            for (const reviewer of addedReviewers) {
+                const notification = await NotificationRepository.create({
+                    userId: reviewer,
+                    type: 'info',
+                    title: 'You are a reviewer',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: task.publicId,
+                });
+
+                socketService.notifyUser(reviewer, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'You are a reviewer',
+                    message: task.title,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
 
             // Log activity for field updates
             if (title !== undefined || priority !== undefined || assigneeIds !== undefined) {
@@ -742,6 +824,17 @@ class TaskController {
                 await sendDiscordNotification(task.projectId, userId, 'task_updated', task.title, {
                     priority: task.priority,
                     taskStatus: task.status,
+                });
+            }
+
+            // Broadcast to package room for real-time stat updates
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'package:task-count-changed', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    action: 'updated',
+                    taskId: task.publicId,
+                    status: task.status,
                 });
             }
 
@@ -783,6 +876,16 @@ class TaskController {
             });
 
             await sendDiscordNotification(deletedProjectId, userId, 'task_deleted', deletedTitle, {});
+
+            // Broadcast to package room for real-time stat updates
+            if (deletedPackageId) {
+                socketService.broadcastPackage(deletedPackageId, 'package:task-count-changed', {
+                    projectId: deletedProjectId,
+                    packageId: deletedPackageId,
+                    action: 'deleted',
+                    taskId,
+                });
+            }
 
             return res.status(200).json({ success: true, message: 'Task deleted' });
         } catch {

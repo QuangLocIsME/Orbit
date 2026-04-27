@@ -542,11 +542,11 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   };
 
   if (loading) {
-    return <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px] text-sm text-gray-500">Loading documents...</div>;
+    return <div className="space-y-6 py-1 px-6 lg:px-[80px] xl:px-[160px] text-sm text-gray-500">Loading documents...</div>;
   }
 
   return (
-    <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+    <div className="space-y-6 py-1 px-6 lg:px-[80px] xl:px-[160px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {!isPackageMode && <h2 className="text-[24px] font-normal text-[#101828]">Documents & Drawings</h2>}
 

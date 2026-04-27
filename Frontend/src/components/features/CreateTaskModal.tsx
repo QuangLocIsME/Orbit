@@ -1,140 +1,30 @@
 'use client';
 
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { getTodayLocalDateString, utcDateStringToLocalDateString } from '@/lib/utils';
+import { MemberPicker, AffectedModelsPicker, AttachPicker } from './TaskFormShared';
 
-// ─── MemberMultiSelect ─────────────────────────────────────────────────────────
-
-interface MemberOption {
+interface Discipline {
   id: string;
   name: string;
-}
-
-interface MemberMultiSelectProps {
-  options: MemberOption[];
-  selected: string[];
-  onChange: (ids: string[]) => void;
-  badgeClass: string;
-}
-
-function MemberMultiSelect({ options, selected, onChange, badgeClass }: MemberMultiSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const ref = useRef<HTMLDivElement>(null);
-
-  const selectedMembers = options.filter((m) => selected.includes(m.id));
-  const filtered = options.filter((m) =>
-    m.name.toLowerCase().includes(search.toLowerCase())
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setSearch('');
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const toggleMember = (id: string) => {
-    if (selected.includes(id)) {
-      onChange(selected.filter((x) => x !== id));
-    } else {
-      onChange([...selected, id]);
-    }
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      {/* Trigger */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] text-left hover:border-[#D0D5DD] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF] min-h-[40px]"
-      >
-        <svg className="h-4 w-4 text-[#99A1AF] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-        </svg>
-        {selectedMembers.length === 0 ? (
-          <span className="text-[#99A1AF]">Select members...</span>
-        ) : (
-          <div className="flex flex-wrap gap-1 flex-1">
-            {selectedMembers.map((m) => (
-              <span
-                key={m.id}
-                className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] border', badgeClass)}
-              >
-                {m.name}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); toggleMember(m.id); }}
-                  className="hover:opacity-70"
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <svg className="h-4 w-4 text-[#99A1AF] shrink-0 ml-auto pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-[10px] border border-[#E5E7EB] shadow-lg z-50 py-1 max-h-[200px] overflow-y-auto">
-          <div className="px-2 pb-2">
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search members..."
-              autoFocus
-              className="w-full px-3 py-1.5 rounded-[8px] border border-[#E5E7EB] text-[13px] text-[#101828] placeholder:text-[#99A1AF] focus:border-[#2B7FFF] focus:outline-none"
-            />
-          </div>
-          {filtered.length === 0 ? (
-            <div className="px-3 py-2 text-[13px] text-[#6A7282]">No members found</div>
-          ) : (
-            filtered.map((m) => {
-              const isSelected = selected.includes(m.id);
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => toggleMember(m.id)}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-[#101828] hover:bg-gray-50 text-left"
-                >
-                  <div className={cn(
-                    'h-4 w-4 rounded border flex items-center justify-center shrink-0',
-                    isSelected ? 'bg-[#2B7FFF] border-[#2B7FFF]' : 'border-[#D1D5DC]'
-                  )}>
-                    {isSelected && (
-                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </div>
-                  {m.name}
-                </button>
-              );
-            })
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 interface WorkflowStage {
   id: string;
   name: string;
+}
+
+interface ModelFile {
+  id: string;
+  name: string;
+  folderPath?: string;
+}
+
+interface TeamMember {
+  userId: string;
+  user?: { fullName: string };
+  role: string;
 }
 
 interface CreateTaskModalProps {
@@ -155,11 +45,14 @@ interface CreateTaskModalProps {
     tags: string[];
     linkedItems?: string;
   } | null;
-  assigneeOptions?: { id: string; name: string }[];
   tagOptions?: string[];
   linkedItemSuggestions?: { label: string; value: string }[];
   workflowStages?: WorkflowStage[];
   defaultStageId?: string;
+  modelFiles?: ModelFile[];
+  loadingFiles?: boolean;
+  teamMembers?: TeamMember[];
+  disciplines?: Discipline[];
 }
 
 interface TaskFormData {
@@ -172,6 +65,8 @@ interface TaskFormData {
   dueDate: string;
   tags: string[];
   linkedItems: string;
+  affectedModels: string[];
+  attachments: File[];
 }
 
 const defaultStages: WorkflowStage[] = [
@@ -183,18 +78,31 @@ const defaultStages: WorkflowStage[] = [
 ];
 
 const priorityOptions = [
-  { id: 'low', label: 'Low' },
-  { id: 'medium', label: 'Medium' },
-  { id: 'high', label: 'High' },
-  { id: 'urgent', label: 'Urgent' },
+  { id: 'low',    label: 'Low',    activeClass: 'bg-[#F0FDF4] border-[#22C55E] text-[#15803D]', dotClass: 'bg-[#22C55E]' },
+  { id: 'medium', label: 'Medium', activeClass: 'bg-[#FFFBEB] border-[#F59E0B] text-[#B45309]', dotClass: 'bg-[#F59E0B]' },
+  { id: 'high',   label: 'High',  activeClass: 'bg-[#FFF1F2] border-[#F43F5E] text-[#C70036]', dotClass: 'bg-[#F43F5E]' },
+  { id: 'urgent', label: 'Urgent', activeClass: 'bg-[#FEF3C7] border-[#D97706] text-[#92400E]', dotClass: 'bg-[#D97706]' },
 ];
 
-export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, editTask, assigneeOptions, tagOptions, linkedItemSuggestions, workflowStages, defaultStageId }: CreateTaskModalProps) {
+export default function CreateTaskModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  onUpdate,
+  editTask,
+  tagOptions,
+  linkedItemSuggestions,
+  workflowStages,
+  defaultStageId,
+  modelFiles = [],
+  loadingFiles = false,
+  teamMembers = [],
+}: CreateTaskModalProps) {
   const isEditMode = Boolean(editTask);
 
-  const resolvedTagOptions = Array.isArray(tagOptions)
-    ? tagOptions
-    : [];
+  const resolvedTagOptions = Array.isArray(tagOptions) ? tagOptions : [];
+  const [customTagOptions, setCustomTagOptions] = useState<string[]>([]);
+  const [newTagInput, setNewTagInput] = useState('');
   const linkedSuggestions = useMemo(
     () => (linkedItemSuggestions || [])
       .map((item) => ({ label: String(item?.label || '').trim(), value: String(item?.value || '').trim() }))
@@ -202,20 +110,64 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
       .slice(0, 100),
     [linkedItemSuggestions]
   );
-  const linkedSuggestionsListId = useId();
+  const changeRequestSuggestions = useMemo(
+    () => linkedSuggestions.filter((item) => item.label.toLowerCase().startsWith('[change request]')),
+    [linkedSuggestions]
+  );
 
   const stages = workflowStages && workflowStages.length > 0 ? workflowStages : defaultStages;
 
-  // Resolve initial status: use defaultStageId if it exists and is valid, otherwise first stage
   const resolvedInitialStageId = (() => {
-    if (isEditMode && editTask.status) return editTask.status;
+    if (isEditMode && editTask?.status) return editTask.status;
     if (defaultStageId && stages.some(s => s.id === defaultStageId)) return defaultStageId;
     return stages[0]?.id || 'backlog';
   })();
 
-  // Sync full form when modal opens — fill from editTask in edit mode, reset in create mode
+  const [formData, setFormData] = useState<TaskFormData>(() => {
+    const base = {
+      title: '',
+      status: resolvedInitialStageId,
+      priority: 'medium',
+      description: '',
+      assigneeIds: [] as string[],
+      reviewerIds: [] as string[],
+      dueDate: '',
+      tags: [] as string[],
+      linkedItems: '',
+      affectedModels: [] as string[],
+      attachments: [] as File[],
+    };
+    if (editTask) {
+      return {
+        ...base,
+        title: editTask.title,
+        status: editTask.status || resolvedInitialStageId,
+        priority: editTask.priority || 'medium',
+        description: editTask.description || '',
+        assigneeIds: editTask.assigneeIds || (editTask.assigneeId ? [editTask.assigneeId] : []),
+        reviewerIds: editTask.reviewerIds || [],
+        dueDate: editTask.dueDate ? utcDateStringToLocalDateString(editTask.dueDate) : '',
+        tags: editTask.tags || [],
+        linkedItems: editTask.linkedItems || '',
+      };
+    }
+    return base;
+  });
+  const allTagOptions = useMemo(() => {
+    const merged = [...resolvedTagOptions, ...customTagOptions, ...formData.tags];
+    return Array.from(
+      new Set(
+        merged
+          .map((tag) => String(tag || '').trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+  }, [customTagOptions, formData.tags, resolvedTagOptions]);
+
   useEffect(() => {
     if (!isOpen) return;
+    setCustomTagOptions([]);
+    setNewTagInput('');
     if (editTask) {
       setFormData({
         title: editTask.title,
@@ -224,9 +176,11 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
         description: editTask.description || '',
         assigneeIds: editTask.assigneeIds || (editTask.assigneeId ? [editTask.assigneeId] : []),
         reviewerIds: editTask.reviewerIds || [],
-        dueDate: editTask.dueDate ? new Date(editTask.dueDate).toISOString().slice(0, 10) : '',
+        dueDate: editTask.dueDate ? utcDateStringToLocalDateString(editTask.dueDate) : '',
         tags: editTask.tags || [],
         linkedItems: editTask.linkedItems || '',
+        affectedModels: [],
+        attachments: [],
       });
     } else {
       setFormData({
@@ -239,36 +193,11 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
         dueDate: '',
         tags: [],
         linkedItems: '',
+        affectedModels: [],
+        attachments: [],
       });
     }
   }, [isOpen, editTask, resolvedInitialStageId]);
-
-  const [formData, setFormData] = useState<TaskFormData>(() => {
-    if (editTask) {
-      return {
-        title: editTask.title,
-        status: editTask.status || resolvedInitialStageId,
-        priority: editTask.priority || 'medium',
-        description: editTask.description || '',
-        assigneeIds: editTask.assigneeIds || (editTask.assigneeId ? [editTask.assigneeId] : []),
-        reviewerIds: editTask.reviewerIds || [],
-        dueDate: editTask.dueDate ? new Date(editTask.dueDate).toISOString().slice(0, 10) : '',
-        tags: editTask.tags || [],
-        linkedItems: editTask.linkedItems || '',
-      };
-    }
-    return {
-      title: '',
-      status: resolvedInitialStageId,
-      priority: 'medium',
-      description: '',
-      assigneeIds: [],
-      reviewerIds: [],
-      dueDate: '',
-      tags: [],
-      linkedItems: '',
-    };
-  });
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
@@ -287,18 +216,17 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
     }));
   };
 
-  const resetForm = () => {
-    setFormData({
-      title: '',
-      status: resolvedInitialStageId,
-      priority: 'medium',
-      description: '',
-      assigneeIds: [],
-      reviewerIds: [],
-      dueDate: '',
-      tags: [],
-      linkedItems: '',
-    });
+  const handleAddNewTag = () => {
+    const normalized = newTagInput.trim().toLowerCase();
+    if (!normalized) return;
+    if (!allTagOptions.includes(normalized)) {
+      setCustomTagOptions((prev) => [...prev, normalized]);
+    }
+    setFormData((prev) => ({
+      ...prev,
+      tags: prev.tags.includes(normalized) ? prev.tags : [...prev.tags, normalized],
+    }));
+    setNewTagInput('');
   };
 
   const handleSubmit = () => {
@@ -309,28 +237,22 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
       return;
     }
     onSubmit?.(formData);
-    resetForm();
     onClose();
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onClick={handleBackdropClick}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/25" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={handleBackdropClick}>
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
 
-      {/* Modal */}
-      <div 
-        className="relative z-10 w-full max-w-[768px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[90vh] overflow-y-auto"
+      <div
+        className="relative z-10 w-full max-w-[680px] mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5E7EB]">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-[#E5E7EB] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 bg-[#EFF6FF] rounded-[10px]">
-              <svg className="w-5 h-5 text-[#155DFC]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.67}>
+            <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[#EFF6FF]">
+              <svg className="h-5 w-5 text-[#155DFC]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.67}>
                 {isEditMode ? (
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
                 ) : (
@@ -339,52 +261,50 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
               </svg>
             </div>
             <div>
-              <h2 className="text-[18px] font-normal text-[#101828]">{isEditMode ? 'Edit Task' : 'Create New Task'}</h2>
+              <h2 className="text-[18px] font-semibold text-[#101828]">{isEditMode ? 'Edit Task' : 'Create New Task'}</h2>
               <p className="text-[12px] text-[#6A7282]">{isEditMode ? 'Update task information' : 'Add a task to your project'}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-[#6A7282] hover:text-gray-600 rounded-[10px] hover:bg-gray-50 transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.67}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          <button onClick={onClose} className="p-2 text-[#6A7282] hover:text-gray-700 rounded-[10px] hover:bg-gray-100 transition-colors">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
             </svg>
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-6 space-y-6">
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
           {/* Task Title */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">
               Task Title<span className="text-[#FF2056]">*</span>
             </label>
             <input
               type="text"
+              placeholder="Enter task title..."
               value={formData.title}
               onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-              placeholder="Enter task title..."
-              className="w-full px-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
+              className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
             />
           </div>
 
           {/* Status */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">
               Status<span className="text-[#FF2056]">*</span>
             </label>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-5 gap-2">
               {stages.map((status) => (
                 <button
                   key={status.id}
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, status: status.id }))}
                   className={cn(
-                    "flex-1 min-w-[100px] px-3 py-2.5 rounded-[10px] text-[14px] text-center transition-all",
+                    'h-9 rounded-[10px] text-[13px] text-center transition-all',
                     formData.status === status.id
-                      ? "bg-[#EFF6FF] border-2 border-[#2B7FFF] text-[#1447E6]"
-                      : "bg-white border border-[#E5E7EB] text-[#4A5565] hover:border-gray-300"
+                      ? 'bg-[#EFF6FF] border-2 border-[#155DFC] text-[#1447E6]'
+                      : 'bg-white border border-[#E5E7EB] text-[#4A5565] hover:border-gray-300'
                   )}
                 >
                   {status.name}
@@ -394,23 +314,24 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
           </div>
 
           {/* Priority */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">
               Priority<span className="text-[#FF2056]">*</span>
             </label>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-4 gap-2">
               {priorityOptions.map((priority) => (
                 <button
                   key={priority.id}
                   type="button"
                   onClick={() => setFormData(prev => ({ ...prev, priority: priority.id }))}
                   className={cn(
-                    "flex-1 px-3 py-2.5 rounded-[10px] text-[14px] text-center transition-all",
+                    'h-10 rounded-[10px] text-[14px] capitalize transition-colors border flex items-center justify-center gap-2',
                     formData.priority === priority.id
-                      ? "bg-[#F0F9FF] border-2 border-[#00A6F4] text-[#0069A8]"
-                      : "bg-white border border-[#E5E7EB] text-[#4A5565] hover:border-gray-300"
+                      ? priority.activeClass
+                      : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
                   )}
                 >
+                  <span className={cn('h-2 w-2 rounded-full', formData.priority === priority.id ? priority.dotClass : 'bg-[#D1D5DC]')} />
                   {priority.label}
                 </button>
               ))}
@@ -418,151 +339,160 @@ export default function CreateTaskModal({ isOpen, onClose, onSubmit, onUpdate, e
           </div>
 
           {/* Description */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">Description</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Description</label>
             <textarea
               value={formData.description}
               onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
               placeholder="Add a detailed description..."
-              rows={4}
-              className="w-full px-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF] resize-none"
+              rows={3}
+              className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
             />
           </div>
 
-          {/* Assignees and Reviewers */}
+          {/* Due Date + Linked Items — 2 col */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Assignees */}
-            <div className="space-y-2">
-              <label className="text-[14px] text-[#101828]">Assignees</label>
-              <MemberMultiSelect
-                options={assigneeOptions || []}
-                selected={formData.assigneeIds}
-                onChange={(ids) => setFormData(prev => ({ ...prev, assigneeIds: ids }))}
-                badgeClass="bg-[#EFF6FF] border-[#2B7FFF] text-[#1447E6]"
-              />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Due Date</label>
+              <div className="relative">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <input
+                  type="date"
+                  value={formData.dueDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))}
+                  min={getTodayLocalDateString()}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-9 pr-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]"
+                />
+              </div>
             </div>
 
-            {/* Reviewers */}
-            <div className="space-y-2">
-              <label className="text-[14px] text-[#101828]">Reviewers</label>
-              <MemberMultiSelect
-                options={assigneeOptions || []}
-                selected={formData.reviewerIds}
-                onChange={(ids) => setFormData(prev => ({ ...prev, reviewerIds: ids }))}
-                badgeClass="bg-[#FEF9C3] border-[#CA8A04] text-[#A16207]"
-              />
+            {/* Linked Items */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Link Change Request</label>
+              <select
+                value={changeRequestSuggestions.some(item => item.value === formData.linkedItems) ? formData.linkedItems : ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
+                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+              >
+                <option value="">{changeRequestSuggestions.length > 0 ? 'Select a change request...' : 'No change requests available'}</option>
+                {changeRequestSuggestions.map((item) => (
+                  <option key={`${item.value}-${item.label}`} value={item.value}>
+                    {item.label.replace(/^\[Change Request\]\s*/i, '')}
+                  </option>
+                ))}
+              </select>
+              {changeRequestSuggestions.length === 0 && (
+                <p className="text-[12px] text-[#6A7282]">Create a change request first to link it here.</p>
+              )}
             </div>
           </div>
 
-          {/* Due Date */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">Due Date</label>
-            <div className="relative">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <input
-                type="date"
-                value={formData.dueDate}
-                onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))}
-                className="w-full pl-10 pr-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
-              />
-            </div>
+          {/* Assignees + Reviewers — 2 col */}
+          <div className="grid grid-cols-2 gap-4">
+            <MemberPicker
+              label="Assignees"
+              members={teamMembers}
+              selected={formData.assigneeIds}
+              onChange={(ids) => setFormData(prev => ({ ...prev, assigneeIds: ids }))}
+            />
+            <MemberPicker
+              label="Reviewers"
+              members={teamMembers}
+              selected={formData.reviewerIds}
+              onChange={(ids) => setFormData(prev => ({ ...prev, reviewerIds: ids }))}
+            />
           </div>
 
           {/* Tags */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">Tags</label>
-            <div className="flex flex-wrap gap-2">
-              {resolvedTagOptions.length === 0 ? (
-                <span className="text-[12px] text-[#6A7282]">No task tags configured. Add tags in Settings → Tasks.</span>
-              ) : (
-                resolvedTagOptions.map((tag) => (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[14px] font-medium text-[#101828]">Tags</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newTagInput}
+                onChange={(e) => setNewTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddNewTag();
+                  }
+                }}
+                placeholder="Enter new tag and press Enter"
+                className="h-[38px] flex-1 rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+              />
+              <button
+                type="button"
+                onClick={handleAddNewTag}
+                disabled={!newTagInput.trim()}
+                className="inline-flex h-[38px] items-center rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[13px] text-[#364153] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Add
+              </button>
+            </div>
+            {allTagOptions.length === 0 ? (
+              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[13px] text-[#6A7282]">
+                No tags yet. Create your first tag above.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {allTagOptions.map((tag) => (
                   <button
                     key={tag}
                     type="button"
                     onClick={() => handleTagToggle(tag)}
                     className={cn(
-                      "px-3 py-1.5 rounded-full text-[12px] transition-all",
+                      'h-10 rounded-[10px] border px-3 text-[14px] capitalize transition-colors active:scale-[0.98] flex items-center justify-center',
                       formData.tags.includes(tag)
-                        ? "bg-[#1F2937] text-white"
-                        : "bg-[#F3F4F6] text-[#4A5565] hover:bg-gray-200"
+                        ? 'bg-[#EFF6FF] border-2 border-[#155DFC] text-[#1447E6]'
+                        : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
                     )}
                   >
                     {tag}
                   </button>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Linked Drawings & Models */}
-          <div className="space-y-2">
-            <label className="text-[14px] text-[#101828]">Linked Drawings & Models</label>
-            {linkedSuggestions.length > 0 && (
-              <select
-                value={linkedSuggestions.some((item) => item.value === formData.linkedItems) ? formData.linkedItems : ''}
-                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
-                className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] text-[#101828] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
-              >
-                <option value="">Select from documents, change requests, or clashes...</option>
-                {linkedSuggestions.map((item) => (
-                  <option key={`${item.value}-${item.label}`} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            )}
-            <div className="relative">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.33}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-              <input
-                type="text"
-                list={linkedSuggestions.length > 0 ? linkedSuggestionsListId : undefined}
-                value={formData.linkedItems}
-                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
-                placeholder={linkedSuggestions.length > 0 ? 'Or paste a custom link...' : 'Link to drawings, change requests, or clashes...'}
-                className="w-full pl-10 pr-4 py-2 rounded-[10px] border border-[#E5E7EB] bg-white text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#2B7FFF] focus:outline-none focus:ring-1 focus:ring-[#2B7FFF]"
-              />
-              {linkedSuggestions.length > 0 && (
-                <datalist id={linkedSuggestionsListId}>
-                  {linkedSuggestions.map((item) => (
-                    <option key={`${item.value}-${item.label}`} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </datalist>
-              )}
-            </div>
-            {linkedSuggestions.length > 0 && (
-              <p className="text-[12px] text-[#6A7282]">Suggestions are loaded from documents, change requests, and clashes.</p>
-            )}
-          </div>
+          {/* Affected Models */}
+          <AffectedModelsPicker
+            modelFiles={modelFiles}
+            loadingFiles={loadingFiles}
+            selected={formData.affectedModels}
+            onChange={(ids) => setFormData(prev => ({ ...prev, affectedModels: ids }))}
+          />
+
+          {/* Attachments */}
+          <AttachPicker
+            files={formData.attachments}
+            onChange={(files) => setFormData(prev => ({ ...prev, attachments: files }))}
+          />
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-[#E5E7EB]">
-          <button
-            onClick={onClose}
-            className="text-[14px] text-[#101828] hover:text-gray-600 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!formData.title.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#155DFC] text-[14px] text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              {isEditMode ? (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              )}
-            </svg>
-            {isEditMode ? 'Save Changes' : 'Create Task'}
-          </button>
+        <div className="flex items-center justify-between px-6 py-4 border-t border-[#E5E7EB] shrink-0">
+          <p className="text-[12px] text-[#6A7282]">
+            {formData.attachments.length > 0
+              ? `${formData.attachments.length} file${formData.attachments.length > 1 ? 's' : ''} attached`
+              : ''}
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!formData.title.trim()}
+              className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-5 py-2 text-[14px] font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isEditMode ? 'Save Changes' : 'Create Task'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

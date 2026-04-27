@@ -31,6 +31,7 @@ const trashRoutes = require('./routes/trash.routes');
 const workflowTemplateRoutes = require('./routes/workflowTemplate.routes');
 const roleRoutes = require('./routes/roleRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const userSettingsRoutes = require('./routes/userSettingsRoutes');
 const connectDB = require('./config/database');
 const { attachSocket } = require('./services/socketService');
 
@@ -95,6 +96,7 @@ app.use('/api/trash', trashRoutes);
 app.use('/api/workflow-templates', workflowTemplateRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/user-settings', userSettingsRoutes);
 
 app.use((err, req, res, nextHandler) => {
     if (err instanceof SyntaxError) {

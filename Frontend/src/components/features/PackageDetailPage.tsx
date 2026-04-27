@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
-import { cn } from '@/lib/utils';
-import { CheckCircle, Clock, FileText, Users, ChevronRight, Plus } from 'lucide-react';
+import { cn, localDateStringToUTCDate, utcDateStringToLocalDateString } from '@/lib/utils';
+import { useSocket } from '@/hooks/useSocket';
+import { getSocket } from '@/lib/socket';
+import { CheckCircle, Clock, FileText, Users, ChevronRight, Plus, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
 import ScopedTasksPanel from './ScopedTasksPanel';
@@ -41,6 +43,7 @@ interface TeamMemberView {
   email: string;
   role: string;
   avatar: string;
+  avatarUrl: string | null;
 }
 
 interface TaskSummary {
@@ -73,8 +76,25 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [savingMembers, setSavingMembers] = useState(false);
+  const [workflowStages, setWorkflowStages] = useState<{ id: string; name: string }[]>([]);
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [descriptionInput, setDescriptionInput] = useState('');
+  const [savingDescription, setSavingDescription] = useState(false);
+  const [isEditingStatus, setIsEditingStatus] = useState(false);
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [isEditingDueDate, setIsEditingDueDate] = useState(false);
+  const [dueDateInput, setDueDateInput] = useState('');
+  const [savingDueDate, setSavingDueDate] = useState(false);
   const canManagePackageMembers = projectRole === 'owner' || projectRole === 'admin';
   const canManagePackageDocuments = projectRole !== 'viewer';
+  const canEditPackageMeta = canManagePackageMembers;
+  const canEditPackageDueDate = canManagePackageMembers;
+  const canEditPackageStatus = canManagePackageMembers;
+  const backToPackagesHref = projectPublicId ? `/projects/${projectPublicId}` : '/packages';
 
   useEffect(() => {
     let cancelled = false;
@@ -122,7 +142,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
 
         setPkg(found);
 
-        const [projectsRes, membersRes, tasksRes, documentsRes] = await Promise.all([
+        const [projectsRes, membersRes, tasksRes, documentsRes, workflowRes] = await Promise.all([
           apiFetch('/api/projects/me'),
           fetch('/api/projects/member-list', {
             method: 'POST',
@@ -139,6 +159,11 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({ projectId: found.projectId, packageId }),
+          }),
+          apiFetch('/api/projects/workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId: found.projectId }),
           }),
         ]);
 
@@ -161,6 +186,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
               email: String(member?.user?.email || ''),
               role: String(member?.role || 'member'),
               avatar: getInitials(name),
+              avatarUrl: member?.user?.avatar || null,
             });
           });
           const mappedMembers = [...memberMap.values()];
@@ -180,11 +206,19 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
           setTeamMembers([]);
         }
 
+        const stages = Array.isArray(workflowRes?.data?.stages) ? workflowRes.data.stages : [];
+        setWorkflowStages(stages);
+        const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
+
         if (tasksRes.ok) {
           const payload = await tasksRes.json();
           const tasks = Array.isArray(payload?.data) ? payload.data : [];
           setTotalTasksCount(tasks.length);
-          const completedCount = tasks.filter((task: any) => ['done', 'completed', 'approved'].includes(String(task?.status || '').toLowerCase())).length;
+          const completedCount = tasks.filter((task: any) => {
+            const status = String(task?.status || '').toLowerCase();
+            const lastStageLower = lastStageId.toLowerCase();
+            return ['done', 'completed', 'approved'].includes(status) || status === lastStageLower;
+          }).length;
           setCompletedTasksCount(completedCount);
           setRecentTasks(
             tasks.slice(0, 5).map((task: any) => ({
@@ -217,11 +251,103 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
       }
     };
 
+    const refreshTasksAndDocuments = async (projectId: string) => {
+      if (cancelled) return;
+      try {
+        const memberMap = new Map<string, TeamMemberView>();
+        allProjectMembers.forEach((m) => memberMap.set(m.id, m));
+
+        const stages = workflowStages;
+        const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
+
+        const [tasksRes, documentsRes] = await Promise.all([
+          apiFetch('/api/tasks/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId, packageId }),
+          }),
+          apiFetch('/api/projects/packages/documents/package/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ projectId, packageId }),
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        if (tasksRes.ok) {
+          const payload = await tasksRes.json();
+          const tasks = Array.isArray(payload?.data) ? payload.data : [];
+          setTotalTasksCount(tasks.length);
+          const completedCount = tasks.filter((task: any) => {
+            const status = String(task?.status || '').toLowerCase();
+            const lastStageLower = lastStageId.toLowerCase();
+            return ['done', 'completed', 'approved'].includes(status) || status === lastStageLower;
+          }).length;
+          setCompletedTasksCount(completedCount);
+          setRecentTasks(
+            tasks.slice(0, 5).map((task: any) => ({
+              id: String(task.publicId || task.id || ''),
+              title: String(task.title || 'Untitled task'),
+              status: String(task.status || 'backlog'),
+              assigneeName: memberMap.get(String(task.assigneeId || ''))?.name || 'Unassigned',
+            }))
+          );
+        }
+
+        if (documentsRes.ok) {
+          const payload = await documentsRes.json();
+          setDocumentsCount(Number(payload?.data?.total || 0));
+        }
+      } catch { /* silent refresh */ }
+    };
+
     refresh();
+
+    (window as any).__refreshPackageTasks = async () => {
+      if (cancelled || !pkg) return;
+      await refreshTasksAndDocuments(pkg.projectId);
+    };
+
     return () => {
       cancelled = true;
+      delete (window as any).__refreshPackageTasks;
     };
   }, [packageId, projectPublicId]);
+
+  useEffect(() => {
+    setDueDateInput(pkg?.dueDate ? utcDateStringToLocalDateString(String(pkg.dueDate)) : '');
+    setIsEditingDueDate(false);
+  }, [pkg?.dueDate]);
+
+  useEffect(() => {
+    setNameInput(pkg?.name || '');
+    setDescriptionInput(pkg?.description || '');
+    setIsEditingName(false);
+    setIsEditingDescription(false);
+  }, [pkg?.description, pkg?.name]);
+
+  useEffect(() => {
+    setIsEditingStatus(false);
+  }, [pkg?.lifecycleStatus, pkg?.status]);
+
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleTaskCountChanged = (data: { packageId: string; projectId: string }) => {
+      if (data.packageId !== packageId) return;
+      const refresh = (window as any).__refreshPackageTasks;
+      if (refresh) refresh();
+    };
+
+    socket.on('package:task-count-changed', handleTaskCountChanged);
+    socket.emit('package:join', { packageId });
+
+    return () => {
+      socket.off('package:task-count-changed', handleTaskCountChanged);
+      socket.emit('package:leave', { packageId });
+    };
+  }, [packageId]);
 
   const stats = useMemo(() => {
     const total = Math.max(totalTasksCount, 0);
@@ -235,6 +361,14 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
       completionPercent: Math.round((completed / Math.max(total, 1)) * 100),
     };
   }, [completedTasksCount, documentsCount, teamMembers.length, totalTasksCount]);
+
+  const filteredTeamMembers = useMemo(() => {
+    const q = teamSearchQuery.trim().toLowerCase();
+    if (!q) return teamMembers;
+    return teamMembers.filter((member) =>
+      `${member.name} ${member.email || ''} ${member.role || ''}`.toLowerCase().includes(q)
+    );
+  }, [teamMembers, teamSearchQuery]);
 
   if (loading) {
     return (
@@ -324,13 +458,168 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
     }
   };
 
+  const handleSaveDueDate = async () => {
+    if (!pkg) return;
+    if (!canEditPackageDueDate) {
+      toast.error('Only owner/admin can update due date');
+      return;
+    }
+    const currentDueDate = pkg?.dueDate ? utcDateStringToLocalDateString(String(pkg.dueDate)) : '';
+    if (currentDueDate === dueDateInput) {
+      return;
+    }
+    if (!dueDateInput) {
+      toast.error('Please select a due date');
+      return;
+    }
+
+    setSavingDueDate(true);
+    try {
+      const res = await apiFetch('/api/projects/packages/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: pkg.projectId,
+          packageId: pkg.publicId,
+          dueDate: localDateStringToUTCDate(dueDateInput),
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.message || 'Failed to update due date');
+      }
+
+      setPkg((prev) => (prev ? { ...prev, dueDate: localDateStringToUTCDate(dueDateInput) } : prev));
+      setIsEditingDueDate(false);
+      toast.success('Due date updated');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update due date');
+    } finally {
+      setSavingDueDate(false);
+    }
+  };
+
+  const handleSaveStatus = async (nextStatus: 'Draft' | 'Active' | 'Completed' | 'Archived') => {
+    if (!pkg) return;
+    if (!canEditPackageStatus) {
+      toast.error('Only owner/admin can update status');
+      return;
+    }
+
+    const currentStatus = String(pkg.lifecycleStatus || pkg.status || '');
+    if (currentStatus.toLowerCase() === nextStatus.toLowerCase()) {
+      setIsEditingStatus(false);
+      return;
+    }
+
+    setSavingStatus(true);
+    try {
+      const res = await apiFetch('/api/projects/packages/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: pkg.projectId,
+          packageId: pkg.publicId,
+          status: nextStatus,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) {
+        throw new Error(payload?.message || 'Failed to update status');
+      }
+
+      setPkg((prev) => (prev ? { ...prev, status: nextStatus, lifecycleStatus: nextStatus } : prev));
+      setIsEditingStatus(false);
+      toast.success('Status updated');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update status');
+    } finally {
+      setSavingStatus(false);
+    }
+  };
+
+  const handleSaveName = async () => {
+    if (!pkg) return;
+    if (!canEditPackageMeta) {
+      toast.error('Only owner/admin can update package details');
+      return;
+    }
+    const nextName = nameInput.trim();
+    if (!nextName) {
+      toast.error('Package name is required');
+      return;
+    }
+    if (nextName === (pkg.name || '').trim()) {
+      setIsEditingName(false);
+      return;
+    }
+
+    setSavingName(true);
+    try {
+      const res = await apiFetch('/api/projects/packages/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: pkg.projectId,
+          packageId: pkg.publicId,
+          name: nextName,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) throw new Error(payload?.message || 'Failed to update package name');
+      setPkg((prev) => (prev ? { ...prev, name: nextName } : prev));
+      setIsEditingName(false);
+      toast.success('Package name updated');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update package name');
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const handleSaveDescription = async () => {
+    if (!pkg) return;
+    if (!canEditPackageMeta) {
+      toast.error('Only owner/admin can update package details');
+      return;
+    }
+    const nextDescription = descriptionInput.trim();
+    const currentDescription = (pkg.description || '').trim();
+    if (nextDescription === currentDescription) {
+      setIsEditingDescription(false);
+      return;
+    }
+
+    setSavingDescription(true);
+    try {
+      const res = await apiFetch('/api/projects/packages/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          projectId: pkg.projectId,
+          packageId: pkg.publicId,
+          description: nextDescription,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.success) throw new Error(payload?.message || 'Failed to update package description');
+      setPkg((prev) => (prev ? { ...prev, description: nextDescription } : prev));
+      setIsEditingDescription(false);
+      toast.success('Package description updated');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update package description');
+    } finally {
+      setSavingDescription(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white">
       <div className="bg-white">
-        <div className="px-[300px] py-6">
-        <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+        <div className="px-[300px] py-3">
+        <div className="space-y-6 py-3 px-6 lg:px-[80px] xl:px-[160px]">
           <div className="flex items-center justify-between mb-4">
-            <a href={pkg.projectId ? `/projects/${pkg.projectId}` : '/dashboard'} className="inline-flex items-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
+            <a href={backToPackagesHref} className="inline-flex items-center justify-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
               <ChevronRight className="h-4 w-4 rotate-180" />
               Back to Packages
             </a>
@@ -339,30 +628,185 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
           <div className="mb-4 flex flex-wrap items-start justify-between gap-6">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-3 mb-1">
-                <h1 className="text-[24px] font-normal text-[#101828]">{pkg.name}</h1>
+                {isEditingName ? (
+                  <input
+                    type="text"
+                    value={nameInput}
+                    autoFocus
+                    disabled={savingName}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onBlur={() => {
+                      if (!savingName) void handleSaveName();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (!savingName) void handleSaveName();
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setNameInput(pkg?.name || '');
+                        setIsEditingName(false);
+                      }
+                    }}
+                    className="w-full max-w-[560px] rounded-md border border-gray-200 bg-white px-2 py-1 text-[24px] font-normal text-[#101828] outline-none focus:border-indigo-400"
+                  />
+                ) : (
+                  <h1
+                    className={cn(
+                      'text-[24px] font-normal text-[#101828]',
+                      canEditPackageMeta && 'cursor-text'
+                    )}
+                    onDoubleClick={() => {
+                      if (!canEditPackageMeta) return;
+                      setNameInput(pkg.name || '');
+                      setIsEditingName(true);
+                    }}
+                    title={canEditPackageMeta ? 'Double click to edit name' : undefined}
+                  >
+                    {pkg.name}
+                  </h1>
+                )}
               </div>
-              <p className="text-[14px] text-[#4A5565]">{pkg.description || 'No description'}</p>
+              {isEditingDescription ? (
+                <textarea
+                  value={descriptionInput}
+                  autoFocus
+                  rows={2}
+                  disabled={savingDescription}
+                  onChange={(e) => setDescriptionInput(e.target.value)}
+                  onBlur={() => {
+                    if (!savingDescription) void handleSaveDescription();
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      if (!savingDescription) void handleSaveDescription();
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setDescriptionInput(pkg?.description || '');
+                      setIsEditingDescription(false);
+                    }
+                  }}
+                  className="w-full max-w-[700px] rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[14px] text-[#4A5565] outline-none focus:border-indigo-400"
+                />
+              ) : (
+                <p
+                  className={cn(
+                    'text-[14px] text-[#4A5565]',
+                    canEditPackageMeta && 'cursor-text'
+                  )}
+                  onDoubleClick={() => {
+                    if (!canEditPackageMeta) return;
+                    setDescriptionInput(pkg.description || '');
+                    setIsEditingDescription(true);
+                  }}
+                  title={canEditPackageMeta ? 'Double click to edit description' : undefined}
+                >
+                  {pkg.description || 'No description'}
+                </p>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-3 text-[12px] text-[#4A5565]">
-                <span className={cn('inline-flex items-center rounded px-2 py-1 text-xs font-normal capitalize', statusColor(displayStatus))}>
-                  {displayStatus}
-                </span>
-                {pkg.dueDate && (
+                {isEditingStatus ? (
+                  <select
+                    value={displayStatus}
+                    autoFocus
+                    disabled={savingStatus}
+                    onChange={(e) => {
+                      const next = e.target.value as 'Draft' | 'Active' | 'Completed' | 'Archived';
+                      void handleSaveStatus(next);
+                    }}
+                    onBlur={() => setIsEditingStatus(false)}
+                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-sm font-medium text-foreground outline-none focus:border-indigo-400"
+                  >
+                    <option value="Draft">Draft</option>
+                    <option value="Active">Active</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Archived">Archived</option>
+                  </select>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!canEditPackageStatus || savingStatus}
+                    onDoubleClick={() => {
+                      if (!canEditPackageStatus) return;
+                      setIsEditingStatus(true);
+                    }}
+                    className={cn(
+                      'inline-flex items-center rounded px-2 py-1 text-xs font-normal capitalize transition hover:opacity-90 active:scale-[0.98]',
+                      statusColor(displayStatus),
+                      !canEditPackageStatus && 'cursor-default'
+                    )}
+                    title={canEditPackageStatus ? 'Double click to edit status' : undefined}
+                  >
+                    {displayStatus}
+                  </button>
+                )}
+                {(pkg.dueDate || canEditPackageDueDate) && (
                   <span className="inline-flex items-center gap-1">
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1">
+                    <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1}>
                       <rect x="1.5" y="2" width="9" height="8.5" rx="1" />
                       <line x1="4" y1="1" x2="4" y2="3" />
                       <line x1="8" y1="1" x2="8" y2="3" />
                       <line x1="1.5" y1="5" x2="10.5" y2="5" />
                     </svg>
-                    Due {String(pkg.dueDate).slice(0, 10)}
+                    {isEditingDueDate ? (
+                      <input
+                        type="date"
+                        value={dueDateInput}
+                        autoFocus
+                        onChange={(e) => setDueDateInput(e.target.value)}
+                        onBlur={() => {
+                          setIsEditingDueDate(false);
+                          if (!savingDueDate) {
+                            void handleSaveDueDate();
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            setIsEditingDueDate(false);
+                            if (!savingDueDate) {
+                              void handleSaveDueDate();
+                            }
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setDueDateInput(pkg?.dueDate ? utcDateStringToLocalDateString(String(pkg.dueDate)) : '');
+                            setIsEditingDueDate(false);
+                          }
+                        }}
+                        className="w-full max-w-[140px] rounded-md border border-gray-200 bg-white px-2 py-1 text-sm font-medium text-foreground outline-none focus:border-indigo-400"
+                        disabled={savingDueDate}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onDoubleClick={() => {
+                          if (!canEditPackageDueDate) return;
+                          setDueDateInput(pkg?.dueDate ? utcDateStringToLocalDateString(String(pkg.dueDate)) : '');
+                          setIsEditingDueDate(true);
+                        }}
+                        className={cn(
+                          'rounded px-1 text-sm font-medium text-foreground transition hover:bg-gray-100 active:scale-[0.98]',
+                          !canEditPackageDueDate && 'cursor-default hover:bg-transparent'
+                        )}
+                        title={canEditPackageDueDate ? 'Double click to edit due date' : undefined}
+                      >
+                        {pkg.dueDate ? new Date(String(pkg.dueDate)).toLocaleDateString() : 'Not set'}
+                      </button>
+                    )}
                   </span>
                 )}
                 <span className="inline-flex items-center gap-1">
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75h6m-6 4.5h6m-3 4.5H9m8.25 3H6.75A2.25 2.25 0 014.5 16.5V7.5a2.25 2.25 0 012.25-2.25h10.5A2.25 2.25 0 0119.5 7.5v9a2.25 2.25 0 01-2.25 2.25z" />
                   </svg>
-                  {stats.completed}/{stats.totalTasks} tasks
+                  <span className="rounded px-1 text-sm font-medium text-foreground">
+                    {stats.completed}/{stats.totalTasks} tasks
+                  </span>
                 </span>
               </div>
             </div>
@@ -391,14 +835,24 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                 {teamMembers.slice(0, 4).map((member, index) => {
                   const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
                   return (
-                    <span
-                      key={member.id}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white text-[11px] text-white"
-                      style={{ backgroundColor: avatarBg }}
-                      title={member.name}
-                    >
-                      {member.avatar}
-                    </span>
+                    member.avatarUrl ? (
+                      <img
+                        key={member.id}
+                        src={member.avatarUrl}
+                        alt={member.name}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white object-cover text-[11px] text-white"
+                        title={member.name}
+                      />
+                    ) : (
+                      <span
+                        key={member.id}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-white text-[11px] text-white"
+                        style={{ backgroundColor: avatarBg }}
+                        title={member.name}
+                      >
+                        {member.avatar}
+                      </span>
+                    )
                   );
                 })}
               </div>
@@ -482,34 +936,36 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                 title="Recent Activity"
               />
 
-              <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <div className="flex h-[300px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <CheckCircle className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold text-foreground">Recent Tasks</h3>
                 </div>
-                {recentTasks.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-center">
-                    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-                      <CheckCircle className="h-6 w-6 text-gray-400" />
-                    </div>
-                    <p className="text-sm font-medium text-gray-700">No tasks yet</p>
-                    <p className="text-xs text-gray-400 mt-1">Tasks created in this package will appear here</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {recentTasks.map((task) => (
-                      <div key={task.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{task.title}</p>
-                          <p className="text-xs text-muted-foreground">{task.assigneeName}</p>
-                        </div>
-                        <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize bg-[#F3F4F6] text-[#364153]">
-                          {task.status}
-                        </span>
+                <div className="flex-1 overflow-y-auto pr-1">
+                  {recentTasks.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-center">
+                      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+                        <CheckCircle className="h-6 w-6 text-gray-400" />
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <p className="text-sm font-medium text-gray-700">No tasks yet</p>
+                      <p className="text-xs text-gray-400 mt-1">Tasks created in this package will appear here</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {recentTasks.map((task) => (
+                        <div key={task.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{task.title}</p>
+                            <p className="text-xs text-muted-foreground">{task.assigneeName}</p>
+                          </div>
+                          <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize bg-[#F3F4F6] text-[#364153]">
+                            {task.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -536,8 +992,18 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
 
         {activeTab === 'team' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-[14px] font-normal text-[#101828]">Team Members ({teamMembers.length})</h2>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="relative w-full max-w-md">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#99A1AF]" />
+                <input
+                  type="text"
+                  value={teamSearchQuery}
+                  onChange={(e) => setTeamSearchQuery(e.target.value)}
+                  placeholder="Search team members..."
+                  className="h-10 w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] pl-9 pr-3 text-sm text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <p className="text-[13px] text-[#6A7282]">Total members: <span className="font-medium text-[#101828]">{teamMembers.length}</span></p>
               <button
                 type="button"
                 disabled={!canManagePackageMembers}
@@ -558,18 +1024,30 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                 <h3 className="text-lg font-medium text-gray-900 mb-1">No team members</h3>
                 <p className="text-sm text-gray-500">This package has no assigned members yet</p>
               </div>
+            ) : filteredTeamMembers.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-gray-50/50 py-16">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+                  <Search className="h-6 w-6 text-gray-400" />
+                </div>
+                <h3 className="text-base font-medium text-gray-900">No matching members</h3>
+                <p className="mt-1 text-sm text-gray-500">Try another name, email, or role</p>
+              </div>
             ) : (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-3">
-                {teamMembers.map((member, index) => {
+                {filteredTeamMembers.map((member, index) => {
                   const avatarBg = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00'][index % 4];
                   return (
                   <div key={member.id} className="flex h-[81px] items-center gap-3 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-4">
-                    <div
-                      className="flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-normal text-white"
-                      style={{ backgroundColor: avatarBg }}
-                    >
-                      {member.avatar}
-                    </div>
+                    {member.avatarUrl ? (
+                      <img src={member.avatarUrl} alt={member.name} className="h-12 w-12 rounded-full object-cover flex items-center justify-center text-[16px] font-normal text-white" style={{ backgroundColor: avatarBg }} />
+                    ) : (
+                      <div
+                        className="flex h-12 w-12 items-center justify-center rounded-full text-[16px] font-normal text-white"
+                        style={{ backgroundColor: avatarBg }}
+                      >
+                        {member.avatar}
+                      </div>
+                    )}
                     <div className="min-w-0">
                       <p className="truncate text-[14px] text-[#101828]">{member.name}</p>
                       <p className="truncate text-[12px] text-[#6A7282] capitalize">{member.role}</p>
@@ -584,7 +1062,6 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
         {activeTab === 'activity' && (
           <ScopedActivityPanel
             scope={{ type: 'package', projectId: pkg.projectId, packageId }}
-            title="Activity Feed"
           />
         )}
         </div>
@@ -612,12 +1089,16 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                       checked ? 'border-[#155DFC] bg-blue-50' : 'border-[#E5E7EB] bg-white hover:bg-gray-50'
                     )}
                   >
-                    <span
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs text-white"
-                      style={{ backgroundColor: avatarBg }}
-                    >
-                      {member.avatar}
-                    </span>
+                    {member.avatarUrl ? (
+                      <img src={member.avatarUrl} alt={member.name} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full object-cover text-xs text-white" />
+                    ) : (
+                      <span
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs text-white"
+                        style={{ backgroundColor: avatarBg }}
+                      >
+                        {member.avatar}
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-[#101828]">{member.name}</span>
                       <span className="block truncate text-xs text-[#6A7282]">{member.email}</span>
