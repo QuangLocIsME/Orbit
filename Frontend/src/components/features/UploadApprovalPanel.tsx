@@ -8,8 +8,9 @@ import { getSocket } from '@/lib/socket';
 import {
   CheckCircle, XCircle, Clock, FileText, Image as ImageIcon,
   Download, Eye, ChevronDown, ChevronUp, Loader2,
-  AlertCircle, MessageSquare, Send, Trash2
+  AlertCircle, MessageSquare, Send, Trash2, Box
 } from 'lucide-react';
+import XktViewerDialog from './XktViewerDialog';
 
 interface ApprovalUploader {
   id: string;
@@ -41,6 +42,7 @@ interface ApprovalItem {
   rejectionReason: string;
   approvedAt: string | null;
   uploader: ApprovalUploader | null;
+  conversionStatus: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -117,6 +119,47 @@ function Avatar({ name, avatar, size = 'sm' }: { name: string; avatar: string | 
   );
 }
 
+function isIfcFile(mimeType: string, fileName: string): boolean {
+  return mimeType?.includes('ifc') || /\.(ifc|rvt|dwg)$/i.test(fileName);
+}
+
+function ConversionStatusBadge({ status }: { status: string | null }) {
+  if (!status) return null;
+  if (status === 'READY') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#ECFDF5] text-[#007A55] font-medium">
+        <CheckCircle className="h-3 w-3" />
+        Ready to View
+      </span>
+    );
+  }
+  if (status === 'PROCESSING') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#EEF2FF] text-[#4F39F6] font-medium">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Converting to XKT...
+      </span>
+    );
+  }
+  if (status === 'FAILED') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#FEE2E2] text-[#DC2626] font-medium">
+        <AlertCircle className="h-3 w-3" />
+        Conversion Failed
+      </span>
+    );
+  }
+  if (status === 'PENDING') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#FEF3C7] text-[#B45309] font-medium">
+        <Clock className="h-3 w-3" />
+        Queued for conversion
+      </span>
+    );
+  }
+  return null;
+}
+
 function ApprovalStatusBadge({ status }: { status: string }) {
   if (status === 'pending') {
     return (
@@ -157,6 +200,12 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
   const [commentsExpanded, setCommentsExpanded] = useState<Record<string, boolean>>({});
   const [newComment, setNewComment] = useState<Record<string, string>>({});
   const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
+  const [xktViewerState, setXktViewerState] = useState<{
+    projectId: string;
+    fileId: string;
+    versionId: string;
+    fileName: string;
+  } | null>(null);
 
   const ITEMS_PER_PAGE = 10;
   const [currentPage, setCurrentPage] = useState(1);
@@ -252,8 +301,13 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       const data = await res.json();
       if (data.success) {
         toast.success(`Approved: ${approval.originalName}`);
+        const isIcf = isIfcFile(approval.mimeType, approval.originalName);
         setApprovals(prev =>
-          prev.map(a => a.publicId === approval.publicId ? { ...a, status: 'approved' as const } : a)
+          prev.map(a => a.publicId === approval.publicId ? {
+            ...a,
+            status: 'approved' as const,
+            conversionStatus: isIcf ? (a.conversionStatus || 'PENDING') : a.conversionStatus,
+          } : a)
         );
       } else {
         toast.error(data.message || 'Failed to approve');
@@ -512,35 +566,75 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
                       )}
                     </div>
 
+                    {isIfcFile(approval.mimeType, approval.originalName) && approval.conversionStatus && (
+                      <div className="mb-4 p-3 rounded-[8px] bg-[#F9FAFB] border border-[#E5E7EB]">
+                        <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold mb-2">Model Preview Conversion</p>
+                        <ConversionStatusBadge status={approval.conversionStatus} />
+                      </div>
+                    )}
+
                     <div className="flex gap-2 mb-4">
-                      {approval.fileUrl && (
-                        /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) ? (
-                          <button
-                            onClick={async () => {
-                              setIsLoadingTextPreview(true);
-                              setPreviewTextFileName(approval.originalName);
-                              try {
-                                const res = await fetch(approval.fileUrl);
-                                if (!res.ok) throw new Error('Failed to load file');
-                                const text = await res.text();
-                                setPreviewTextContent(text);
-                              } catch {
-                                setPreviewTextContent('Failed to load file content.');
-                              } finally {
-                                setIsLoadingTextPreview(false);
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
-                          >
-                            <Eye className="h-3.5 w-3.5" />Preview
-                          </button>
-                        ) : (
-                          <a href={approval.fileUrl} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
-                            <Eye className="h-3.5 w-3.5" />Preview
-                          </a>
-                        )
+                      {/* IFC 3D Model Preview button */}
+                      {isIfcFile(approval.mimeType, approval.originalName) && (
+                        <button
+                          onClick={() => {
+                            if (approval.conversionStatus === 'READY') {
+                              setXktViewerState({
+                                projectId,
+                                fileId: approval.documentId,
+                                versionId: approval.documentId,
+                                fileName: approval.originalName,
+                              });
+                            } else {
+                              toast.error('Model is not ready yet. Please wait for conversion to complete.');
+                            }
+                          }}
+                          disabled={approval.conversionStatus === 'PROCESSING'}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-[12px] transition-colors',
+                            approval.conversionStatus === 'READY'
+                              ? 'border-[#155DFC] bg-[#155DFC]/5 text-[#155DFC] hover:bg-[#155DFC]/10 font-medium'
+                              : 'border-[#E5E7EB] bg-white text-[#6A7282] cursor-not-allowed opacity-60'
+                          )}
+                        >
+                          <Box className="h-3.5 w-3.5" />
+                          {approval.conversionStatus === 'READY' ? '3D Preview' : '3D Preview'}
+                          {approval.conversionStatus === 'PROCESSING' && <Loader2 className="h-3 w-3 animate-spin" />}
+                        </button>
                       )}
+
+                      {/* Text file preview */}
+                      {approval.fileUrl && /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) && !isIfcFile(approval.mimeType, approval.originalName) ? (
+                        <button
+                          onClick={async () => {
+                            setIsLoadingTextPreview(true);
+                            setPreviewTextFileName(approval.originalName);
+                            try {
+                              const res = await fetch(approval.fileUrl);
+                              if (!res.ok) throw new Error('Failed to load file');
+                              const text = await res.text();
+                              setPreviewTextContent(text);
+                            } catch {
+                              setPreviewTextContent('Failed to load file content.');
+                            } finally {
+                              setIsLoadingTextPreview(false);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" />Preview
+                        </button>
+                      ) : null}
+
+                      {/* Generic file preview (non-IFC, non-text) */}
+                      {approval.fileUrl && !isIfcFile(approval.mimeType, approval.originalName) && !/\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) ? (
+                        <a href={approval.fileUrl} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
+                          <Eye className="h-3.5 w-3.5" />Preview
+                        </a>
+                      ) : null}
+
+                      {/* Download */}
                       {approval.fileUrl && (
                         <a href={approval.fileUrl} download={approval.originalName}
                           className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
@@ -727,6 +821,17 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
             </button>
           </div>
         </div>
+      )}
+
+      {/* XKT 3D Viewer Dialog */}
+      {xktViewerState && (
+        <XktViewerDialog
+          projectId={xktViewerState.projectId}
+          fileId={xktViewerState.fileId}
+          versionId={xktViewerState.versionId}
+          fileName={xktViewerState.fileName}
+          onClose={() => setXktViewerState(null)}
+        />
       )}
 
       {previewTextContent !== '' && (

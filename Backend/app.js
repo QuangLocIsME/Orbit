@@ -35,6 +35,8 @@ const userSettingsRoutes = require('./routes/userSettingsRoutes');
 const uploadApprovalRoutes = require('./routes/uploadApproval.routes');
 const connectDB = require('./config/database');
 const { attachSocket } = require('./services/socketService');
+const { createChannelWithRetry: createIfcChannel } = require('./queues/ifcConversionQueue');
+const { createChannelWithRetry: createUploadChannel } = require('./queues/packageUploadQueue');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -114,8 +116,14 @@ app.use((err, req, res, nextHandler) => {
 });
 
 const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+(async () => {
+    console.log('[RabbitMQ] Connecting channels...');
+    await Promise.all([createIfcChannel(), createUploadChannel()]);
+    console.log('[RabbitMQ] Channels ready');
+
+    httpServer.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+    });
+})();
 
 module.exports = { app, httpServer };

@@ -1,5 +1,6 @@
 const { errorResponse } = require('../utils/response');
 const { normalizeString } = require('../utils/sanitize');
+const path = require('path');
 
 const UploadApprovalRepository = require('../repositories/UploadApprovalRepository');
 const UploadApprovalComment = require('../models/UploadApprovalComment');
@@ -8,6 +9,7 @@ const ProjectMemberRepository = require('../repositories/ProjectMemberRepository
 const User = require('../models/User');
 const ActivityService = require('../services/activityService');
 const { broadcastProject } = require('../services/socketService');
+const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
 const unauthorized = (res) => errorResponse(res, 401, 'Unauthorized');
@@ -38,6 +40,16 @@ class UploadApprovalController {
                 status: normalizedStatus || undefined,
             });
 
+            // Batch-fetch documents to get conversionStatus for each approval
+            const documentIds = approvals.map((a) => a.documentId).filter(Boolean);
+            let docMap = new Map();
+            if (documentIds.length > 0) {
+                const docs = await DocumentRepository.findByPublicIds(documentIds);
+                for (const doc of docs) {
+                    if (doc) docMap.set(doc.publicId, doc);
+                }
+            }
+
             const uploaderIds = [...new Set(approvals.map((a) => a.uploaderId))];
             const validIds = uploaderIds.filter((id) => {
                 try {
@@ -61,6 +73,7 @@ class UploadApprovalController {
                 data: {
                     approvals: approvals.map((a) => {
                         const uploader = userMap.get(String(a.uploaderId));
+                        const doc = docMap.get(a.documentId);
                         return {
                             publicId: a.publicId,
                             documentId: a.documentId,
@@ -91,6 +104,7 @@ class UploadApprovalController {
                                       avatar: uploader.avatar || null,
                                   }
                                 : null,
+                            conversionStatus: doc ? doc.conversionStatus : null,
                             createdAt: a.createdAt,
                             updatedAt: a.updatedAt,
                         };
@@ -164,6 +178,26 @@ class UploadApprovalController {
             const updated = await UploadApprovalRepository.approve(normalizedApprovalId, userId);
 
             await DocumentRepository.updateApprovalStatus(approval.documentId, 'approved');
+
+            // Trigger IFC-to-XKT conversion for approved IFC files
+            const doc = await DocumentRepository.findByPublicId(approval.documentId);
+            if (doc) {
+                const ext = path.extname(doc.originalName || '').toLowerCase();
+                if (ext === '.ifc') {
+                    try {
+                        await publishIfcConversionJob({
+                            projectId: doc.projectId,
+                            documentId: doc.publicId,
+                            versionId: doc.publicId,
+                            ifcS3Bucket: doc.s3Bucket,
+                            ifcS3Key: doc.s3Key,
+                            requestedBy: userId,
+                        });
+                    } catch (convErr) {
+                        console.error('[UploadApprovalController.approve] IFC conversion job publish failed:', convErr.message);
+                    }
+                }
+            }
 
             await ActivityService.log({
                 projectId: normalizedProjectId,

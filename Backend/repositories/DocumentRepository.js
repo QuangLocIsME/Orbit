@@ -13,6 +13,11 @@ class DocumentRepository {
         return await Document.findOne({ publicId: documentPublicId });
     }
 
+    async findByPublicIds(documentPublicIds) {
+        if (!documentPublicIds || documentPublicIds.length === 0) return [];
+        return await Document.find({ publicId: { $in: documentPublicIds } }).lean();
+    }
+
     async findLatestInVersionGroup(versionGroupId) {
         return await Document.findOne({ versionGroupId }).sort({ versionNumber: -1, createdAt: -1 });
     }
@@ -92,6 +97,19 @@ class DocumentRepository {
         return await Document.findOneAndUpdate(
             { publicId },
             { approvalStatus, updatedAt: new Date() },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async updateConversionStateByPublicId(publicId, update) {
+        return await Document.findOneAndUpdate(
+            { publicId },
+            {
+                $set: {
+                    ...update,
+                    updatedAt: new Date(),
+                },
+            },
             { returnDocument: 'after' }
         );
     }

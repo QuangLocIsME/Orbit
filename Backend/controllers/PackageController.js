@@ -1647,6 +1647,22 @@ class PackageController {
                     supabaseFileKey: supaFilePath,
                 });
 
+                // Trigger IFC-to-XKT conversion immediately on upload (preview available before approval)
+                if (isIfcFile) {
+                    try {
+                        await publishIfcConversionJob({
+                            projectId: normalizedProjectId,
+                            documentId: document.publicId,
+                            versionId: document.publicId,
+                            ifcS3Bucket: S3_BUCKET,
+                            ifcS3Key: s3Key,
+                            requestedBy: userId,
+                        });
+                    } catch (convErr) {
+                        console.error('[PackageController] IFC conversion job publish failed:', convErr.message);
+                    }
+                }
+
                 broadcastProject(normalizedProjectId, 'approval:new', {
                     projectId: normalizedProjectId,
                     approvalId: newApproval.publicId,

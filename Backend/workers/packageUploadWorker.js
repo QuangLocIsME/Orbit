@@ -198,9 +198,21 @@ async function runConsumer() {
     await startPackageUploadConsumer(async (parsed) => {
         const jobId = parsed?.jobId;
         if (!jobId) return;
-        await processJob(jobId);
+        try {
+            await processJob(jobId);
+        } catch (err) {
+            console.error('[packageUploadWorker] processJob error:', err);
+        }
     });
 }
+
+process.on('uncaughtException', (err) => {
+    console.error('[packageUploadWorker] Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[packageUploadWorker] Unhandled rejection:', reason);
+});
 
 function startWorkerCluster() {
     const cpuCount = os.cpus()?.length || 1;
