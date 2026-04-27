@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
 import { toast } from 'sonner';
 import Sidebar from './Sidebar';
+import { Bell } from 'lucide-react';
 
 interface OpenProject {
   id: string;
@@ -37,6 +39,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
   const [isTogglingFavorite, setIsTogglingFavorite] = useState(false);
   const [displayProjectName, setDisplayProjectName] = useState(projectName);
   const [internalActiveTab, setInternalActiveTab] = useState('overview');
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const activeTab = (externalActiveTab ?? internalActiveTab);
 
   // Get current userId from localStorage to scope open-projects per user
@@ -97,13 +100,79 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
     setDisplayProjectName(projectName);
   }, [projectName]);
 
+  // Fetch pending approval count
+  useEffect(() => {
+    if (!projectSlug) return;
+    const fetchPendingCount = async () => {
+      try {
+        const res = await apiFetch('/api/approvals/pending/count', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: projectSlug }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setPendingApprovalCount(data.data?.count || 0);
+        }
+      } catch {
+        // silent
+      }
+    };
+    fetchPendingCount();
+    const interval = setInterval(fetchPendingCount, 30000);
+    return () => clearInterval(interval);
+  }, [projectSlug]);
+
+  // WebSocket realtime — refresh badge when approval count changes
+  useEffect(() => {
+    if (!projectSlug) return;
+    const socket = getSocket();
+
+    const handleApprovalNew = ({ projectId }: { projectId: string }) => {
+      if (projectId === projectSlug) {
+        setPendingApprovalCount(prev => prev + 1);
+      }
+    };
+    const handleApprovalUpdated = ({ projectId }: { projectId: string; status?: string }) => {
+      if (projectId === projectSlug) {
+        if (status === 'approved' || status === 'rejected') {
+          setPendingApprovalCount(prev => Math.max(0, prev - 1));
+        } else {
+          // Status change that doesn't remove from pending — fetch to be safe
+          apiFetch('/api/approvals/pending/count', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: projectSlug }),
+          }).then(res => res.json()).then(data => {
+            if (data.success) setPendingApprovalCount(data.data?.count || 0);
+          }).catch(() => {});
+        }
+      }
+    };
+    const handleApprovalDeleted = ({ projectId }: { projectId: string }) => {
+      if (projectId === projectSlug) {
+        setPendingApprovalCount(prev => Math.max(0, prev - 1));
+      }
+    };
+
+    socket.on('approval:new', handleApprovalNew);
+    socket.on('approval:updated', handleApprovalUpdated);
+    socket.on('approval:deleted', handleApprovalDeleted);
+
+    return () => {
+      socket.off('approval:new', handleApprovalNew);
+      socket.off('approval:updated', handleApprovalUpdated);
+      socket.off('approval:deleted', handleApprovalDeleted);
+    };
+  }, [projectSlug]);
+
   const closeProject = (projectId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const newProjects = openProjects.filter(p => p.id !== projectId);
     setOpenProjects(newProjects);
     localStorage.setItem(storageKey, JSON.stringify(newProjects));
-    
+
     // Navigate to home when closing current project
     if (projectId === projectSlug) {
       navigate('/');
@@ -347,9 +416,9 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
           {(tabs ?? [
             { id: 'overview', label: 'Overview' },
             ...(packageName ? [] : [{ id: 'packages', label: 'Packages' }]),
+            { id: 'versions', label: 'Versions' },
             { id: 'documents', label: 'Documents' },
             ...(packageName ? [] : [
-              { id: 'versions', label: 'Versions' },
               { id: 'changes', label: 'Changes' },
             ]),
             { id: 'tasks', label: 'Tasks' },
@@ -379,18 +448,24 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, a
                   onTabChange?.(tab.id);
                   window.dispatchEvent(new CustomEvent('orbit:topbar-tab-change', { detail: { tabId: tab.id } }));
                 }}
-                className={`px-3 py-2 text-sm transition-colors ${
+                className={`px-3 py-2 text-sm transition-colors flex items-center gap-1.5 ${
                   isActive
                     ? 'text-blue-600 border-b-2 border-blue-600 -mb-px'
                     : 'text-gray-500 hover:text-gray-900'
                 }`}
               >
                 {tab.label}
+                {tab.id === 'versions' && pendingApprovalCount > 0 && (
+                  <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800 min-w-[18px]">
+                    {pendingApprovalCount}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
       </div>
+
     </div>
     </>
   );

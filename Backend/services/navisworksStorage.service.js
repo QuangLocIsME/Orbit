@@ -119,7 +119,7 @@ const writeWorkspace = async (projectSlug, workspace) => {
     await NavisworksWorkspace.findOneAndUpdate(
         { projectPublicId: key },
         { $set: { projectPublicId: key, document: nextWorkspace } },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
     );
     writeWorkspaceToDisk(key, nextWorkspace);
     return nextWorkspace;

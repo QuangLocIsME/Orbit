@@ -31,6 +31,9 @@ export interface ServerToClientEvents {
   'documents:refresh': (data: { projectId: string; packageId: string }) => void;
   'task:assigned': (data: { taskId: string; projectId: string; assignedTo: string; title: string }) => void;
   'task:completed': (data: { taskId: string; projectId: string; completedBy: string }) => void;
+  'approval:new': (data: { projectId: string; approvalId: string }) => void;
+  'approval:updated': (data: { projectId: string; approvalId: string; status: string }) => void;
+  'approval:deleted': (data: { projectId: string; approvalId: string }) => void;
 }
 
 // Client-emitted events

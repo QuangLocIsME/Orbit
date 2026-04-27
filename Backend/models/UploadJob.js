@@ -22,6 +22,23 @@ const UploadJobSchema = new mongoose.Schema({
 
     s3Bucket: { type: String, required: true },
     s3Key: { type: String, required: true },
+    folderType: { type: String, default: 'files' },
+    folderPath: { type: String, default: '' },
+    storageProvider: { type: String, default: 's3' },
+    storageEndpoint: { type: String, default: '' },
+
+    // Versioning fields
+    versionGroupId: { type: String, default: null },
+    versionNumber: { type: Number, default: 1 },
+    versionLabel: { type: String, default: '' },
+    versionDescription: { type: String, default: '' },
+    isNewVersion: { type: Boolean, default: false },
+
+    // uuidv7 for time-ordered file naming and version sorting
+    uuidv7: { type: String, default: null },
+
+    // Supabase storage path for queued uploads
+    supaFilePath: { type: String, default: '' },
 
     status: {
         type: String,

@@ -29,18 +29,7 @@ class DocumentRepository {
         return await Document.findOneAndUpdate(
             { publicId },
             { originalName, updatedAt: new Date() },
-            { new: true }
-        );
-    }
-
-    async updateConversionStateByPublicId(publicId, update = {}) {
-        return await Document.findOneAndUpdate(
-            { publicId },
-            {
-                ...update,
-                updatedAt: new Date(),
-            },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 
@@ -87,6 +76,38 @@ class DocumentRepository {
         return await Document.find({
             projectId,
             originalName: { $regex: /\.ifc$/i },
+        }).sort({ createdAt: -1 });
+    }
+
+    async countVersionsByVersionGroupIds(versionGroupIds) {
+        if (!versionGroupIds || versionGroupIds.length === 0) return new Map();
+        const agg = await Document.aggregate([
+            { $match: { versionGroupId: { $in: versionGroupIds } } },
+            { $group: { _id: '$versionGroupId', count: { $sum: 1 } } },
+        ]);
+        return new Map(agg.map((r) => [r._id, r.count]));
+    }
+
+    async updateApprovalStatus(publicId, approvalStatus) {
+        return await Document.findOneAndUpdate(
+            { publicId },
+            { approvalStatus, updatedAt: new Date() },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async listApprovedByProjectAndPackage(projectId, packageId) {
+        return await Document.find({
+            projectId,
+            packageId,
+            approvalStatus: 'approved',
+        }).sort({ createdAt: -1 });
+    }
+
+    async listApprovedByProject(projectId) {
+        return await Document.find({
+            projectId,
+            approvalStatus: 'approved',
         }).sort({ createdAt: -1 });
     }
 }

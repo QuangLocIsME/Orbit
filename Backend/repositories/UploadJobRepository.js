@@ -14,7 +14,7 @@ class UploadJobRepository {
                     updatedAt: new Date(),
                 },
             },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 
@@ -31,7 +31,7 @@ class UploadJobRepository {
         return await UploadJob.findOneAndUpdate(
             { publicId: jobPublicId },
             { $set },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 }

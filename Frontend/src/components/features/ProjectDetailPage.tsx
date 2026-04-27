@@ -17,6 +17,7 @@ import TeamsTab from './TeamsTab';
 import ExtensionsTab from './ExtensionsTab';
 import SettingsTab from './SettingsTab';
 import ChangesTab from './ChangesTab';
+import UploadApprovalPanel from './UploadApprovalPanel';
 import type { WorkflowStage } from './TaskBoard';
 import { getSocket } from '@/lib/socket';
 import {
@@ -1137,8 +1138,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     versions: 124,
     teamMembers: teamMembers.length,
     openClashes: clashCount,
-    startDate: new Date(`${overviewEditable.startDate}T00:00:00`).toLocaleDateString(),
-    deadline: new Date(`${overviewEditable.deadline}T00:00:00`).toLocaleDateString(),
+    startDate: formatDate(overviewEditable.startDate),
+    deadline: formatDate(overviewEditable.deadline),
   };
 
   const visibleTeamMembers = teamMembers.slice(0, 3);
@@ -1666,143 +1667,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Versions Tab */}
         {activeTab === 'versions' && (
-          <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-<div>
-            <h2 className="text-[24px] font-normal text-[#101828]">Version Control</h2>
-          </div>
-              {mockVersions.length > 0 && (
-                <button 
-                  onClick={() => setIsCompareModalOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[14px] font-normal text-[#364153] transition-colors hover:bg-gray-50"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                  Compare Versions
-                </button>
-              )}
-            </div>
-
-            {/* Empty State - Only show when no versions */}
-            {mockVersions.length === 0 && (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-gray-50/50 py-16">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 mb-4">
-                  <svg className="h-8 w-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-1">This section is under development</h3>
-                <p className="text-sm text-gray-500">Version control features will be available soon</p>
-              </div>
-            )}
-
-            {/* Versions List with Timeline */}
-            {mockVersions.length > 0 && (
-            <div className="relative">
-              {/* Timeline connector line */}
-              <div className="absolute left-[47px] top-[60px] bottom-[60px] w-[2px] bg-[#E5E7EB]" />
-              
-              <div className="space-y-0">
-                {mockVersions.map((version, index) => (
-                  <div
-                    key={version.id}
-                    className="relative rounded-[10px] border border-[#E5E7EB] bg-white px-6 py-6 mb-4"
-                  >
-                    <div className="flex items-start gap-4">
-                      {/* Version Icon - Blue for current, Green for approved */}
-                      <div className={cn(
-                        "relative z-10 flex h-12 w-12 items-center justify-center rounded-full shrink-0",
-                        version.status === 'current' ? "bg-[#155DFC]" : "bg-[#DCFCE7]"
-                      )}>
-                        {/* Git branch icon */}
-                        <svg className={cn("h-6 w-6", version.status === 'current' ? "text-white" : "text-[#00A63E]")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                          <circle cx="12" cy="12" r="3" />
-                          <line x1="3" y1="12" x2="9" y2="12" />
-                          <line x1="15" y1="12" x2="21" y2="12" />
-                        </svg>
-                      </div>
-
-                      {/* Version Info */}
-                      <div className="flex-1 min-w-0">
-                        {/* Title row with badge */}
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-[18px] font-normal text-[#101828]">Version {version.version}</h3>
-                          <span className={cn(
-                            "inline-flex items-center rounded-full px-3 py-1 text-xs font-normal",
-                            version.status === 'current' && "bg-[#DBEAFE] text-[#1447E6]",
-                            version.status === 'approved' && "bg-[#DCFCE7] text-[#008236]",
-                            version.status === 'pending' && "bg-[#FEF3C7] text-[#B45309]",
-                            version.status === 'rejected' && "bg-[#FEE2E2] text-[#DC2626]"
-                          )}>
-                            {version.status}
-                          </span>
-                        </div>
-                        
-                        {/* Filename */}
-                        <p className="text-[14px] text-[#4A5565] mb-1">{version.filename}</p>
-                        
-                        {/* Description */}
-                        <p className="text-[14px] text-[#101828] mb-4">{version.description}</p>
-                        
-                        {/* Metadata row */}
-                        <div className="flex items-center gap-4">
-                          {/* Author */}
-                          <span className="flex items-center gap-2 text-[12px] text-[#6A7282]">
-                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1}>
-                              <path d="M6 5.5a2 2 0 100-4 2 2 0 000 4z" />
-                              <path d="M2.5 10.5v-1a3.5 3.5 0 017 0v1" />
-                            </svg>
-                            {version.author}
-                          </span>
-                          
-                          {/* Date */}
-                          <span className="flex items-center gap-2 text-[12px] text-[#6A7282]">
-                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1}>
-                              <rect x="1.5" y="2" width="9" height="8.5" rx="1" />
-                              <line x1="4" y1="1" x2="4" y2="3" />
-                              <line x1="8" y1="1" x2="8" y2="3" />
-                              <line x1="1.5" y1="5" x2="10.5" y2="5" />
-                            </svg>
-                            {version.updatedAt}
-                          </span>
-                          
-                          {/* Revisions */}
-                          <span className="flex items-center gap-2 text-[12px] text-[#6A7282]">
-                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1}>
-                              <path d="M3 1.5v3m0 0L1.5 3m1.5 1.5L4.5 3" />
-                              <path d="M9 10.5v-3m0 0l1.5 1.5M9 7.5L7.5 9" />
-                              <path d="M4.5 4.5l3 3" />
-                            </svg>
-                            {version.revisions} revisions
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* View Details Button */}
-                      <button
-                        onClick={() => {
-                          setSelectedVersion(version);
-                          setIsVersionDetailOpen(true);
-                        }}
-                        className="inline-flex items-center gap-2 text-[12px] font-normal text-[#155DFC] hover:text-blue-700 shrink-0"
-                      >
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.17}>
-                          <circle cx="7" cy="7" r="2.5" />
-                          <path d="M1 7c1.5-3.5 3.5-5 6-5s4.5 1.5 6 5c-1.5 3.5-3.5 5-6 5s-4.5-1.5-6-5z" />
-                        </svg>
-                        View Details
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            )}
-          </div>
+          <UploadApprovalPanel projectId={project.publicId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
         )}
-
         {/* Changes Tab */}
         {activeTab === 'changes' && (
           <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} />

@@ -72,9 +72,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [activePath, setActivePath] = useState(() =>
     typeof window === 'undefined' ? currentPath : window.location.pathname
   );
-  const [authUser, setAuthUser] = useState<User | null>(() =>
-    typeof window === 'undefined' ? null : getCurrentUser()
-  );
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {

@@ -611,7 +611,7 @@ function getCustomIconById(iconId: string): React.ReactNode {
 }
 
 // Project List Item Component (for list view)
-function ProjectListItem({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
+function ProjectListItem({ project, isDragging = false, memberCounts }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number> }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -662,7 +662,7 @@ function ProjectListItem({ project, isDragging = false }: { project: Project; is
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            {project.teamMembers || 0}
+            {memberCounts[project.id] ?? project.teamMembers ?? 0}
           </span>
           
           {/* Issues */}
@@ -697,7 +697,7 @@ function ProjectListItem({ project, isDragging = false }: { project: Project; is
 }
 
 // Project Grid Card Component (for grid view)
-function ProjectGridCard({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
+function ProjectGridCard({ project, isDragging = false, memberCounts }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number> }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -797,7 +797,7 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            {project.teamMembers || 0}
+            {memberCounts[project.id] ?? project.teamMembers ?? 0}
           </span>
           <span className="flex items-center gap-1">
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -836,6 +836,9 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isTrashing, setIsTrashing] = useState(false);
+  const [memberCounts, setMemberCounts] = useState<Record<string, number>>({});
+
+  const memberCountsCacheRef = useRef<{ data: Record<string, number>; expiresAt: number } | null>(null);
 
   // Persist viewMode to localStorage
   useEffect(() => {
@@ -1011,6 +1014,33 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     }
   }, []); // deps intentionally empty — all reads via getState() / stable refs
   loadProjectsRef.current = loadProjects;
+
+  const loadMemberCounts = useCallback(async (projectsSource: Project[]) => {
+    if (projectsSource.length === 0) return;
+
+    if (memberCountsCacheRef.current && memberCountsCacheRef.current.expiresAt > Date.now()) {
+      setMemberCounts(memberCountsCacheRef.current.data);
+      return;
+    }
+
+    try {
+      const projectIds = projectsSource.map((p) => p.id);
+      const res = await fetch('/api/projects/member-counts', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectIds }),
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        setMemberCounts(data.data);
+        memberCountsCacheRef.current = {
+          data: data.data,
+          expiresAt: Date.now() + 60000,
+        };
+      }
+    } catch { /* silent */ }
+  }, []);
 
   const loadFolders = useCallback(async (
     projectsSource: Project[],
@@ -1193,6 +1223,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       loadProjects(false, { force: true }).then((fresh) => {
         const source = fresh.length > 0 ? fresh : mapped;
         if (source.length > 0) loadFolders(source, { force: true });
+        loadMemberCounts(source);
       });
       return;
     }
@@ -1201,6 +1232,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     // Fetch from network so the skeleton resolves instead of hanging forever.
     loadProjects(true, { force: true }).then((fetched) => {
       if (fetched.length > 0) loadFolders(fetched, { force: true });
+      loadMemberCounts(fetched);
     });
   }, [storeProjectsLen]); // fires on mount (0) and again when hydration populates the store (N)
 
@@ -1240,6 +1272,16 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     socket.on('project:created', handleCreated);
     socket.on('project:updated', handleUpdated);
 
+    // Refresh member counts when team membership changes
+    const handleMemberJoined = (payload: { projectId: string }) => {
+      if (!payload?.projectId) return;
+      setMemberCounts(prev => ({ ...prev, [payload.projectId]: (prev[payload.projectId] || 0) + 1 }));
+      memberCountsCacheRef.current = null;
+      loadProjectsRef.current(false, { force: true });
+    };
+
+    socket.on('project:member:joined', handleMemberJoined);
+
     // Reload projects when cache is invalidated (e.g. invite accepted, member removed)
     const handleCacheInvalidate = (payload: { data: { cacheTypes: string[]; userId: string } }) => {
       const { cacheTypes } = payload.data ?? {};
@@ -1256,7 +1298,13 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     const handleMemberRemoved = (payload: { projectId: string }) => {
       if (!payload?.projectId) return;
       setProjects((prev) => prev.filter((p) => p.id !== payload.projectId));
+      setMemberCounts(prev => {
+        const next = { ...prev };
+        delete next[payload.projectId];
+        return next;
+      });
       projectsCacheRef.current = null;
+      memberCountsCacheRef.current = null;
       loadProjectsRef.current(false, { force: true });
     };
 
@@ -1266,8 +1314,9 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     return () => {
       socket.off('project:created', handleCreated);
       socket.off('project:updated', handleUpdated);
-      socket.off('cache:invalidate', handleCacheInvalidate);
+      socket.off('project:member:joined', handleMemberJoined);
       socket.off('member:removed', handleMemberRemoved);
+      socket.off('cache:invalidate', handleCacheInvalidate);
     };
   }, []); // intentionally empty — socket events handle their own lifecycle
 
@@ -1439,8 +1488,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                 )}>
                   {starredProjects.map((project) => (
                     viewMode === 'grid'
-                      ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                      : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                      ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                      : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
                   ))}
                 </div>
               </SortableContext>
@@ -1464,8 +1513,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
               )}>
                 {priorityProjects.map((project) => (
                   viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
                 ))}
               </div>
               </SortableContext>
@@ -1481,8 +1530,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
               )}>
                 {allProjects.filter(p => !p.isFavorite).map((project) => (
                   viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
                 ))}
               </div>
               </SortableContext>
@@ -1511,8 +1560,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
             )}>
               {currentFolderProjects.map((project) => (
                 viewMode === 'grid'
-                  ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                  : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                  ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                  : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
               ))}
             </div>
             </SortableContext>
@@ -1549,11 +1598,11 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         {activeProject ? (
           viewMode === 'grid' ? (
             <div className="w-[280px] opacity-80">
-              <ProjectGridCard project={activeProject} />
+              <ProjectGridCard project={activeProject} memberCounts={memberCounts} />
             </div>
           ) : (
             <div className="w-full max-w-[760px] opacity-80">
-              <ProjectListItem project={activeProject} />
+              <ProjectListItem project={activeProject} memberCounts={memberCounts} />
             </div>
           )
         ) : null}
