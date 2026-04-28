@@ -23,8 +23,9 @@ interface ModelFile {
 
 interface TeamMember {
   userId: string;
-  user?: { fullName: string };
+  user?: { fullName: string; avatar?: string | null };
   role: string;
+  avatarUrl?: string | null;
 }
 
 interface CreateTaskModalProps {

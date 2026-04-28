@@ -9,55 +9,47 @@ async function retryIfcConversion() {
     const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
     const IFC_QUEUE_NAME = process.env.RABBITMQ_IFC_CONVERSION_QUEUE || 'ifc_to_xkt';
 
-    // Tìm document IFC đang ở trạng thái FAILED
-    const doc = await mongoose.connection.db.collection('documents').findOne({
-        conversionStatus: 'FAILED',
+    // Tìm tất cả document IFC ở trạng thái PENDING hoặc FAILED (chưa convert thành công)
+    const docs = await mongoose.connection.db.collection('documents').find({
+        conversionStatus: { $in: ['PENDING', 'FAILED'] },
         originalName: { $regex: /\.ifc$/i }
-    });
+    }).toArray();
 
-    if (!doc) {
-        console.log('Không tìm thấy document IFC nào ở trạng thái FAILED');
+    if (!docs.length) {
+        console.log('Khong co document IFC nao o trang thai PENDING hoac FAILED');
         await mongoose.disconnect();
         return;
     }
 
-    console.log(`\n=== Retrying conversion for: ${doc.originalName} ===`);
-    console.log(`Document ID: ${doc.publicId}`);
-    console.log(`Project ID: ${doc.projectId}`);
-    console.log(`S3 Bucket: ${doc.s3Bucket}`);
-    console.log(`S3 Key: ${doc.s3Key}`);
+    console.log(`Tim thay ${docs.length} document(s) can retry\n`);
 
-    // Cập nhật trạng thái thành PENDING
-    await mongoose.connection.db.collection('documents').updateOne(
-        { _id: doc._id },
-        {
-            $set: {
-                conversionStatus: 'PENDING',
-                conversionError: '',
-                updatedAt: new Date()
-            }
-        }
-    );
-
-    // Publish job vào RabbitMQ
+    // Kết nối RabbitMQ
     const conn = await amqp.connect(RABBITMQ_URL);
     const channel = await conn.createChannel();
     await channel.assertQueue(IFC_QUEUE_NAME, { durable: true });
 
-    const job = {
-        projectId: doc.projectId,
-        documentId: doc.publicId,
-        versionId: doc.publicId,
-        ifcS3Bucket: doc.s3Bucket,
-        ifcS3Key: doc.s3Key,
-        requestedBy: doc.uploadedBy || 'system',
-    };
+    for (const doc of docs) {
+        console.log(`=== Republishing: ${doc.originalName} (${doc.conversionStatus}) ===`);
 
-    channel.sendToQueue(IFC_QUEUE_NAME, Buffer.from(JSON.stringify(job)), { persistent: true });
+        await mongoose.connection.db.collection('documents').updateOne(
+            { _id: doc._id },
+            { $set: { conversionStatus: 'PENDING', conversionError: '', updatedAt: new Date() } }
+        );
 
-    console.log(`\n✅ Đã publish job vào queue '${IFC_QUEUE_NAME}'`);
-    console.log(`Job data:`, JSON.stringify(job, null, 2));
+        const job = {
+            projectId: doc.projectId,
+            documentId: doc.publicId,
+            versionId: doc.publicId,
+            ifcS3Bucket: doc.s3Bucket,
+            ifcS3Key: doc.s3Key,
+            requestedBy: doc.uploadedBy || 'system',
+        };
 
+        channel.sendToQueue(IFC_QUEUE_NAME, Buffer.from(JSON.stringify(job)), { persistent: true });
+        console.log(`  Queued: ${doc.publicId}`);
+    }
+
+    console.log(`\nDa publish ${docs.length} job(s) vao queue '${IFC_QUEUE_NAME}'`);
     await channel.close();
     await conn.close();
     await mongoose.disconnect();

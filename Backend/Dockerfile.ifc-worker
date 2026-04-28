@@ -1,0 +1,45 @@
+# ============================================================
+# Dockerfile — IFC Conversion Worker
+# ============================================================
+FROM node:20-alpine
+
+LABEL maintainer="orbit-team"
+LABEL service="ifc-worker"
+
+# Install build tools needed for native modules
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git \
+    curl
+
+# Create app directory
+WORKDIR /app
+
+# Copy package files first (for better Docker layer caching)
+COPY package*.json ./
+
+# Install all dependencies (including @xeokit/xeokit-convert which bundles xeokit-convert CLI)
+RUN npm install --production=false
+
+# Copy the rest of the app source
+COPY . .
+
+# Copy and make entrypoint executable
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# Create temp directory for IFC conversion work
+RUN mkdir -p /tmp/orbit-ifc-worker && chown -R node:node /tmp/orbit-ifc-worker
+
+# ── Patch @loaders.gl polyfills ─────────────────────────────────────────────
+# Fix ERR_MODULE_NOT_FOUND for .node extension imports that Node.js ESM cannot resolve.
+COPY patch-loaders-gl.js /tmp/patch-loaders-gl.js
+RUN APP_DIR=/app node /tmp/patch-loaders-gl.js
+
+# Use non-root user for security
+USER node
+
+# Entrypoint validates env vars then starts the worker
+ENTRYPOINT ["sh", "/docker-entrypoint.sh"]

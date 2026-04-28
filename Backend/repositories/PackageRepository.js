@@ -37,7 +37,7 @@ class PackageRepository {
         return await Package.findOneAndUpdate(
             { publicId: packagePublicId, projectId },
             { status: 'Archived', archivedAt: new Date(), updatedAt: new Date() },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 
@@ -49,7 +49,7 @@ class PackageRepository {
         return await Package.findOneAndUpdate(
             { publicId: packagePublicId, projectId },
             { ...updateFields, updatedAt: new Date() },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 

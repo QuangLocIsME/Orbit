@@ -76,4 +76,16 @@ router.get('/upload-jobs/:jobId', authenticate, (req, res) =>
     PackageController.getUploadJobStatus(req, res)
 );
 
+router.post('/documents/suggest-version', authenticate, (req, res) =>
+    PackageController.getSuggestedVersion(req, res)
+);
+
+router.get('/documents/:projectId/versions/:versionGroupId', authenticate, (req, res) =>
+    PackageController.getDocumentVersions(req, res)
+);
+
+router.post('/documents/:projectId/versions/:versionGroupId/restore/:documentPublicId', authenticate, (req, res) =>
+    PackageController.restoreVersion(req, res)
+);
+
 module.exports = router;

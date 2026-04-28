@@ -1,9 +1,11 @@
 const { errorResponse } = require('../utils/response');
 const { normalizeString } = require('../utils/sanitize');
+const { generateUUIDv7 } = require('../utils/cryptoUtils');
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const ProjectRepository = require('../repositories/ProjectRepository');
@@ -12,9 +14,10 @@ const PackageRepository = require('../repositories/PackageRepository');
 const DocumentRepository = require('../repositories/DocumentRepository');
 const DocumentFolderRepository = require('../repositories/DocumentFolderRepository');
 const UploadJobRepository = require('../repositories/UploadJobRepository');
+const UploadApprovalRepository = require('../repositories/UploadApprovalRepository');
 const { publishPackageUpload } = require('../queues/packageUploadQueue');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
-const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath } = require('../services/supabaseStorageService');
+const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath, uploadProjectFileBuffer, buildProjectFilePath, SUPABASE_URL } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 const { broadcastProject } = require('../services/socketService');
 const ActivityService = require('../services/activityService');
@@ -63,6 +66,103 @@ function parseDueDate(dueDate) {
 
 const SYNC_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const IFC_EXTENSION = '.ifc';
+
+/**
+ * Reads IFC file header to extract lightweight metadata for duplicate detection.
+ * Reads only the first ~20KB which contains schema name, project name, and other identifiers.
+ * This avoids loading the entire file into memory for large IFC files.
+ */
+function extractIfcMetadata(buffer) {
+    try {
+        const readSize = Math.min(buffer.length, 20 * 1024);
+        const content = buffer.toString('utf8', 0, readSize);
+        const result = { schema: '', projectName: '', creator: '', fileDescription: '' };
+
+        // Extract FILE_SCHEMA — handle both IFC2X3 and IFC4X3 RC4 etc.
+        const schemaMatch = content.match(/FILE_SCHEMA\s*\(\s*IFC([A-Za-z0-9_xX]+)/i);
+        if (schemaMatch) result.schema = `IFC${schemaMatch[1].toUpperCase()}`;
+
+        // Extract IFCPROJECT name
+        const projectNameMatch = content.match(/IFCPROJECT[^\(]*\([^\)]*NAME\s*\(\s*'([^']*)'/i);
+        if (projectNameMatch) result.projectName = projectNameMatch[1].trim();
+
+        // Extract FILE_NAME for creator/author
+        const creatorMatch = content.match(/FILE_NAME\s*\([^,]*,\s*'([^']*)'/i);
+        if (creatorMatch) result.creator = creatorMatch[1].trim();
+
+        // Extract FILE_DESCRIPTION for additional context
+        const descMatch = content.match(/FILE_DESCRIPTION\s*\([^)]*DESCRIPTION\s*\(\s*\(\s*'([^']*)'/i);
+        if (descMatch) result.fileDescription = descMatch[1].trim();
+
+        return result;
+    } catch {
+        return { schema: '', projectName: '', creator: '', fileDescription: '' };
+    }
+}
+
+/**
+ * Compares two IFC metadata objects. Returns true if files are functionally identical.
+ * Uses normalized comparison to be more tolerant of whitespace/case differences.
+ */
+function ifcMetadataEqual(a, b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    return (
+        norm(a.schema) === norm(b.schema) &&
+        norm(a.projectName) === norm(b.projectName) &&
+        norm(a.creator) === norm(b.creator)
+    );
+}
+
+/**
+ * Finds an existing document with the same name in the same folder scope.
+ * Groups files with the same name into the same version group (regardless of size).
+ */
+async function findDuplicateDocument({ projectId, packageId, folderPath, fileName, fileSize, fileBuffer, isIfc }) {
+    const existingDocs = await DocumentRepository.listByProjectPackageAndPath({ projectId, packageId, folderPath });
+
+    for (const doc of existingDocs) {
+        if (doc.originalName.toLowerCase() !== fileName.toLowerCase()) continue;
+
+        if (isIfc) {
+            const docMeta = doc._ifcMeta || { schema: '', projectName: '', creator: '' };
+            const newMeta = extractIfcMetadata(fileBuffer);
+            if (ifcMetadataEqual(docMeta, newMeta)) return doc;
+        } else {
+            return doc;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Formats a version number (float) into a display label.
+ * e.g. 1.0 → "v1.0.2", 1.1 → "v1.0.2", 1.02 → "v1.0.2", 1.2 → "v1.0.2"
+ * Uses versionLabel from DB if available, otherwise derives from versionNumber.
+ */
+function formatVersionLabel(versionNumber, dbVersionLabel) {
+    if (dbVersionLabel && dbVersionLabel.trim()) return dbVersionLabel.trim();
+    if (!versionNumber) return 'v1.0.2';
+    const major = Math.floor(versionNumber);
+    const minor = Math.round((versionNumber - major) * 100);
+    const safeMinor = Math.min(99, Math.max(0, minor));
+    return `v${major}.${safeMinor}`;
+}
+
+/**
+ * Computes the next semantic version number.
+ * Supports major.minor format (e.g. 1.0→1.1, 1.9→2.0, 1.99→2.0).
+ * Max minor is 99; when reaching 99, increments major.
+ */
+function nextVersion(prevNumber) {
+    if (!prevNumber || prevNumber < 1) return 1.2;
+    const major = Math.floor(prevNumber);
+    const minor = Math.round((prevNumber - major) * 100);
+    if (minor >= 99) return major + 1.2;
+    return parseFloat(`${major}.${minor + 1}`);
+}
 
 async function buildPackageLifecycleMap(projectId, packageIds = [], packageRows = []) {
     const normalizedIds = [...new Set((packageIds || []).filter(Boolean))];
@@ -296,7 +396,7 @@ async function validatePackageDocumentAccess({ projectId, packageId, userId, all
     return { ok: true, member, pkg };
 }
 
-function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'root' }) {
+function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'root', versionCounts = new Map() }) {
     const treeMap = new Map();
     treeMap.set(rootId, {
         id: rootId,
@@ -345,8 +445,19 @@ function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'r
         resolveFolderChain(folder.folderPath || '');
     }
 
+    // Group docs by versionGroupId so we only show the latest version in the tree
+    const latestByVersionGroup = new Map();
     for (const doc of docs || []) {
+        const vgId = doc.versionGroupId || doc.publicId;
+        const existing = latestByVersionGroup.get(vgId);
+        if (!existing || doc.versionNumber > existing.versionNumber) {
+            latestByVersionGroup.set(vgId, doc);
+        }
+    }
+
+    for (const doc of latestByVersionGroup.values()) {
         const parentKey = resolveFolderChain(doc.folderPath || '');
+        const vgId = doc.versionGroupId || doc.publicId;
         treeMap.get(parentKey).children.push({
             id: doc.publicId,
             name: doc.originalName,
@@ -360,10 +471,15 @@ function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'r
             s3Key: doc.s3Key,
             s3Url: doc.s3Url,
             versionNumber: doc.versionNumber || 1,
+            versionLabel: doc.versionLabel || '',
+            versionDescription: doc.versionDescription || '',
+            versionGroupId: vgId,
             versionId: doc.publicId,
+            versionCount: versionCounts.get(vgId) || 1,
             conversionStatus: doc.conversionStatus || 'NOT_SUPPORTED',
             conversionError: doc.conversionError || '',
             isIfc: path.extname(doc.originalName || '').toLowerCase() === IFC_EXTENSION,
+            approvalStatus: doc.approvalStatus || 'approved',
         });
     }
 
@@ -384,6 +500,253 @@ function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'r
 }
 
 class PackageController {
+/**
+ * Returns all versions of a document given its versionGroupId.
+ */
+    async getDocumentVersions(req, res) {
+        try {
+            const { projectId, versionGroupId } = req.params || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedVersionGroupId = normalizeString(versionGroupId);
+
+            if (!normalizedProjectId || !normalizedVersionGroupId) {
+                return badRequest(res, 'projectId and versionGroupId are required');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can view document versions');
+            }
+
+            const Document = require('../models/Document');
+            const User = require('../models/User');
+            const versions = await Document.find({
+                projectId: normalizedProjectId,
+                versionGroupId: normalizedVersionGroupId,
+            }).sort({ versionNumber: -1, _id: -1 });
+
+            if (!versions || versions.length === 0) {
+                return notFound(res, 'No versions found');
+            }
+
+            const uploaderIds = [...new Set(versions.map((v) => v.uploadedBy))];
+            const validUploaderIds = uploaderIds.filter((id) => {
+                try { return mongoose.Types.ObjectId.isValid(id); } catch { return false; }
+            });
+            let userMap = new Map();
+            if (validUploaderIds.length > 0) {
+                const users = await User.find({ _id: { $in: validUploaderIds } })
+                    .select('publicId fullName avatar')
+                    .lean();
+                for (const u of users) userMap.set(String(u._id), u);
+            }
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    versions: versions.map((v) => {
+                        const uploader = userMap.get(String(v.uploadedBy));
+                        return {
+                            publicId: v.publicId,
+                            originalName: v.originalName,
+                            versionNumber: v.versionNumber,
+                            versionLabel: formatVersionLabel(v.versionNumber, v.versionLabel),
+                            versionDescription: v.versionDescription || '',
+                            versionGroupId: v.versionGroupId,
+                            uuidv7: v.uuidv7 || null,
+                            size: v.size,
+                            mimeType: v.mimeType,
+                            s3Url: v.s3Url,
+                            supabaseFileUrl: v.supabaseFileUrl || v.s3Url,
+                            uploadedBy: v.uploadedBy,
+                            uploadedByUser: uploader
+                                ? {
+                                      id: uploader.publicId,
+                                      name: uploader.fullName,
+                                      avatar: uploader.avatar || null,
+                                  }
+                                : null,
+                            conversionStatus: v.conversionStatus,
+                            createdAt: v.createdAt,
+                            updatedAt: v.updatedAt,
+                        };
+                    }),
+                },
+            });
+        } catch (error) {
+            console.error('[getDocumentVersions] error:', error);
+            return serverError(res, error.message || 'Failed to get document versions');
+        }
+    }
+
+    /**
+     * Restores a document to a previous version by creating a new version
+     * that copies the content from the selected version.
+     *
+     * @param {boolean} skipIntermediate - When true, the new version number is computed as
+     *   (source version number + 1), effectively placing the restored copy right after
+     *   the source version. When false (default), the new version becomes (latest + 1),
+     *   placing it after the current latest version.
+     *   Example (v1, v2, v3, v4, v5 → restore v2):
+     *   - skipIntermediate=false → creates v6 (after v5)
+     *   - skipIntermediate=true  → creates v3 (after v2, preserving v3, v4, v5)
+     */
+    async restoreVersion(req, res) {
+        try {
+            const { projectId, versionGroupId, documentPublicId } = req.params || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedVersionGroupId = normalizeString(versionGroupId);
+            const normalizedDocumentPublicId = normalizeString(documentPublicId);
+
+            if (!normalizedProjectId || !normalizedVersionGroupId || !normalizedDocumentPublicId) {
+                return badRequest(res, 'projectId, versionGroupId, and documentPublicId are required');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can restore document versions');
+            }
+
+            const Document = require('../models/Document');
+            const sourceDoc = await Document.findOne({
+                publicId: normalizedDocumentPublicId,
+                versionGroupId: normalizedVersionGroupId,
+                projectId: normalizedProjectId,
+            });
+
+            if (!sourceDoc) {
+                return notFound(res, 'Source version not found');
+            }
+
+            let nextVersionNumber;
+
+            if (req.query.skipIntermediate === 'true') {
+                nextVersionNumber = sourceDoc.versionNumber + 1;
+            } else {
+                const latest = await Document.findOne({ versionGroupId: normalizedVersionGroupId })
+                    .sort({ versionNumber: -1 })
+                    .lean();
+                nextVersionNumber = latest ? latest.versionNumber + 1 : 1;
+            }
+
+            const newDoc = await Document.create({
+                projectId: sourceDoc.projectId,
+                packageId: sourceDoc.packageId,
+                folderType: sourceDoc.folderType,
+                folderPath: sourceDoc.folderPath,
+                originalName: sourceDoc.originalName,
+                storedName: sourceDoc.storedName,
+                mimeType: sourceDoc.mimeType,
+                size: sourceDoc.size,
+                s3Bucket: sourceDoc.s3Bucket,
+                s3Key: sourceDoc.s3Key,
+                s3Url: sourceDoc.s3Url,
+                supabaseFileKey: sourceDoc.supabaseFileKey,
+                supabaseFileUrl: sourceDoc.supabaseFileUrl,
+                uploadedBy: userId,
+                versionGroupId: sourceDoc.versionGroupId,
+                versionNumber: nextVersionNumber,
+                versionLabel: formatVersionLabel(nextVersionNumber, ''),
+                uuidv7: generateUUIDv7(),
+                conversionStatus: sourceDoc.conversionStatus,
+                xktBucket: sourceDoc.xktBucket,
+                xktKey: sourceDoc.xktKey,
+                xktUrl: sourceDoc.xktUrl,
+                supabaseIfcKey: sourceDoc.supabaseIfcKey,
+                conversionAttempts: 0,
+                conversionError: '',
+                convertedAt: null,
+                approvalStatus: 'pending',
+            });
+
+            if (sourceDoc.conversionStatus === 'READY') {
+                publishIfcConversionJob({
+                    documentPublicId: newDoc.publicId,
+                    projectId: newDoc.projectId,
+                    skipIfExists: true,
+                });
+            }
+
+            await sendDiscordForDoc(
+                normalizedProjectId,
+                userId,
+                'DOCUMENT_RESTORED',
+                sourceDoc.originalName,
+                { restoredFromVersion: sourceDoc.versionNumber, newVersion: nextVersionNumber }
+            );
+
+            return res.status(200).json({
+                success: true,
+                message: `Restored to version ${sourceDoc.versionNumber} as version ${nextVersionNumber}`,
+                data: {
+                    publicId: newDoc.publicId,
+                    versionNumber: newDoc.versionNumber,
+                    versionLabel: formatVersionLabel(newDoc.versionNumber, newDoc.versionLabel),
+                    versionGroupId: newDoc.versionGroupId,
+                },
+            });
+        } catch (error) {
+            console.error('[restoreVersion] error:', error);
+            return serverError(res, error.message || 'Failed to restore version');
+        }
+    }
+
+    /**
+     * Returns the suggested next version number and label for a given file.
+     * Looks up the latest version by versionGroupId (from fileId) and computes nextVersion.
+     * Falls back to "v1.0" for new files.
+     */
+    async getSuggestedVersion(req, res) {
+        try {
+            const { projectId, fileId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedFileId = normalizeString(fileId);
+
+            if (!normalizedProjectId) return badRequest(res, 'projectId is required');
+
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can view documents');
+            }
+
+            const Document = require('../models/Document');
+
+            let versionNumber = 1;
+            let versionLabel = 'v1.0.2';
+            let versionGroupId = null;
+
+            if (normalizedFileId) {
+                const doc = await DocumentRepository.findByPublicId(normalizedFileId);
+                if (doc && doc.projectId === normalizedProjectId) {
+                    versionNumber = nextVersion(doc.versionNumber);
+                    versionLabel = `v${versionNumber}`;
+                    versionGroupId = doc.versionGroupId;
+                }
+            }
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    versionNumber,
+                    versionLabel,
+                    versionGroupId,
+                },
+            });
+        } catch (error) {
+            console.error('[getSuggestedVersion] error:', error);
+            return serverError(res, error.message || 'Failed to get suggested version');
+        }
+    }
+
     /**
      * UC-PKG-001: Create New Package
      */
@@ -588,13 +951,21 @@ class PackageController {
             let filteredFolders;
             if (wantAllPackages) {
                 filteredDocs = (docs || []).filter(
-                    (doc) => !doc.packageId || visiblePackageIds.has(doc.packageId)
+                    (doc) =>
+                        (!doc.packageId || visiblePackageIds.has(doc.packageId)) &&
+                        doc.approvalStatus !== 'pending' &&
+                        doc.approvalStatus !== 'rejected'
                 );
                 filteredFolders = (emptyFolders || []).filter(
                     (folder) => !folder.packageId || visiblePackageIds.has(folder.packageId)
                 );
             } else {
-                filteredDocs = (docs || []).filter(isProjectRootScope);
+                filteredDocs = (docs || []).filter(
+                    (doc) =>
+                        isProjectRootScope(doc) &&
+                        doc.approvalStatus !== 'pending' &&
+                        doc.approvalStatus !== 'rejected'
+                );
                 filteredFolders = (emptyFolders || []).filter(isProjectRootScope);
             }
 
@@ -680,8 +1051,23 @@ class PackageController {
                 resolveFolderChain(folder.packageId || null, folder.folderPath || '');
             }
 
+            // Group docs by versionGroupId so we only show the latest version in the tree.
+            // This avoids flooding the tree with multiple versions of the same file.
+            const latestByVersionGroup = new Map();
             for (const doc of filteredDocs) {
+                const vgId = doc.versionGroupId || doc.publicId;
+                const existing = latestByVersionGroup.get(vgId);
+                if (!existing || doc.versionNumber > existing.versionNumber) {
+                    latestByVersionGroup.set(vgId, doc);
+                }
+            }
+
+            // Compute version count per versionGroupId
+            const versionCounts = await DocumentRepository.countVersionsByVersionGroupIds([...latestByVersionGroup.keys()]);
+
+            for (const doc of latestByVersionGroup.values()) {
                 const parentKey = resolveFolderChain(doc.packageId || null, doc.folderPath || '');
+                const vgId = doc.versionGroupId || doc.publicId;
 
                 treeMap.get(parentKey).children.push({
                     id: doc.publicId,
@@ -695,11 +1081,16 @@ class PackageController {
                     folderPath: doc.folderPath || '',
                     s3Key: doc.s3Key,
                     s3Url: doc.s3Url,
-                    versionNumber: doc.versionNumber || 1,
-                    versionId: doc.publicId,
+            versionNumber: doc.versionNumber || 1,
+            versionLabel: doc.versionLabel || '',
+            versionDescription: doc.versionDescription || '',
+            versionGroupId: vgId,
+            versionId: doc.publicId,
+            versionCount: versionCounts.get(vgId) || 1,
                     conversionStatus: doc.conversionStatus || 'NOT_SUPPORTED',
                     conversionError: doc.conversionError || '',
                     isIfc: path.extname(doc.originalName || '').toLowerCase() === IFC_EXTENSION,
+                    approvalStatus: doc.approvalStatus || 'approved',
                 });
             }
 
@@ -758,20 +1149,36 @@ class PackageController {
                 DocumentFolderRepository.listByProjectAndPackage(normalizedProjectId, normalizedPackageId),
             ]);
 
+            const approvedDocs = (docs || []).filter(
+                (doc) => doc.approvalStatus !== 'pending' && doc.approvalStatus !== 'rejected'
+            );
+
+            // Compute version counts and latest version per group
+            const allVgIds = [...new Set((docs || []).map((d) => d.versionGroupId || d.publicId))];
+            const versionCounts = await DocumentRepository.countVersionsByVersionGroupIds(allVgIds);
+
             const rootId = `root/pkg/${normalizedPackageId}`;
             const root = buildDocumentsTree({
-                docs,
+                docs: approvedDocs,
                 folders,
                 rootId,
                 rootName: access.pkg?.name || 'Package Files',
+                versionCounts,
             });
             root.icon = 'package';
+
+            // Count unique files (latest versions only, approved only)
+            const uniqueFileCount = (approvedDocs || []).filter((doc) => {
+                const vgId = doc.versionGroupId || doc.publicId;
+                const siblings = (approvedDocs || []).filter((d) => (d.versionGroupId || d.publicId) === vgId);
+                return doc.versionNumber === Math.max(...siblings.map((d) => d.versionNumber));
+            }).length;
 
             return res.status(200).json({
                 success: true,
                 data: {
                     tree: root,
-                    total: docs.length,
+                    total: uniqueFileCount,
                 },
             });
         } catch (error) {
@@ -1115,53 +1522,150 @@ class PackageController {
 
             const folderType = normalizeFolderType(req.body?.folderType);
             const folderPath = normalizeFolderPath(req.body?.folderPath);
+            const ext = path.extname(file.originalname || '').toLowerCase();
+            const isIfcFile = ext === IFC_EXTENSION;
+
+            // Read file buffer early — needed for duplicate detection and IFC metadata
+            const fileBuffer = fs.readFileSync(file.path);
+
+            // ── Duplicate Detection ──────────────────────────────────────────────
+            const duplicate = await findDuplicateDocument({
+                projectId: normalizedProjectId,
+                packageId: targetPackageId,
+                folderPath,
+                fileName: file.originalname,
+                fileSize: file.size,
+                fileBuffer,
+                isIfc: isIfcFile,
+            });
+
+            let versionGroupId;
+            let versionNumber;
+            let isNewVersion = false;
+            const uuidv7 = generateUUIDv7();
+
+            if (duplicate) {
+                // Upload is a new version of an existing file
+                versionGroupId = duplicate.versionGroupId;
+                versionNumber = nextVersion(duplicate.versionNumber);
+                isNewVersion = true;
+            } else {
+                versionGroupId = crypto.randomUUID();
+                versionNumber = 1;
+            }
+
+            // Build S3 key — include version number in the key for versioned files
+            const versionedName = isNewVersion
+                ? `${path.basename(file.originalname, ext)}_v${versionNumber}${ext}`
+                : file.originalname;
+
             const s3Key = buildStorageKey({
                 projectId: normalizedProjectId,
                 packageId: targetPackageId,
                 packageName: null,
                 folderType,
                 folderPath,
-                originalName: file.originalname,
+                originalName: versionedName,
             });
 
             if (file.size <= SYNC_UPLOAD_MAX_BYTES) {
-                const body = fs.readFileSync(file.path);
-                await s3Client.send(
-                    new PutObjectCommand({
-                        Bucket: S3_BUCKET,
-                        Key: s3Key,
-                        Body: body,
-                        ContentType: file.mimetype || undefined,
-                    })
-                );
+                // ── Sync Upload (≤20MB) — store on Supabase ────────────────────────
+                const supaFilePath = buildProjectFilePath({
+                    projectId: normalizedProjectId,
+                    versionGroupId,
+                    originalName: file.originalname,
+                    uuidv7,
+                });
 
-                const ext = path.extname(file.originalname || '').toLowerCase();
-                const versionGroupId = crypto.randomUUID();
-                const isIfcFile = ext === IFC_EXTENSION;
+                let supaFileUrl = '';
+                try {
+                    const supaResult = await uploadProjectFileBuffer(fileBuffer, supaFilePath);
+                    supaFileUrl = supaResult.publicUrl || '';
+                } catch (supaErr) {
+                    console.warn('[PackageController] Supabase file upload failed, continuing without Supabase:', supaErr.message);
+                }
 
+                const versionLabel = normalizeString(req.body?.versionLabel);
+                const versionDescription = normalizeString(req.body?.versionDescription) || '';
+
+                if (!versionLabel) {
+                    fs.unlink(file.path, () => {});
+                    return badRequest(res, 'versionLabel is required (e.g. v1.0.0)');
+                }
+
+                const ifcMeta = isIfcFile ? extractIfcMetadata(fileBuffer) : {};
                 const document = await DocumentRepository.createDocument({
                     projectId: normalizedProjectId,
                     packageId: targetPackageId,
                     folderType,
                     folderPath,
                     originalName: file.originalname,
-                    storedName: path.basename(s3Key),
+                    storedName: path.basename(supaFilePath),
                     mimeType: file.mimetype || '',
                     size: file.size || 0,
-                    extension: path.extname(file.originalname || '').replace('.', '').toLowerCase(),
-                    storageProvider: getStorageProvider(),
-                    storageEndpoint: S3_ENDPOINT || '',
+                    extension: ext.replace('.', ''),
+                    storageProvider: 'supabase',
+                    storageEndpoint: SUPABASE_URL || '',
                     s3Bucket: S3_BUCKET,
                     s3Key,
-                    s3Url: buildS3Url(s3Key),
+                    s3Url: supaFileUrl || buildS3Url(s3Key),
+                    supabaseFileKey: supaFilePath,
+                    supabaseFileUrl: supaFileUrl,
                     uploadedBy: userId,
                     versionGroupId,
-                    versionNumber: 1,
+                    versionNumber,
+                    uuidv7,
+                    versionLabel,
+                    versionDescription,
+                    _ifcMeta: ifcMeta,
                     conversionStatus: isIfcFile ? 'PENDING' : 'NOT_SUPPORTED',
                     conversionAttempts: 0,
                     conversionError: '',
+                    approvalStatus: 'pending',
                     createdAt: new Date(),
                     updatedAt: new Date(),
+                });
+
+                const newApproval = await UploadApprovalRepository.create({
+                    projectId: normalizedProjectId,
+                    documentId: document.publicId,
+                    jobId: null,
+                    uploaderId: userId,
+                    originalName: file.originalname,
+                    mimeType: file.mimetype || '',
+                    size: file.size || 0,
+                    folderType,
+                    folderPath,
+                    versionGroupId,
+                    versionNumber,
+                    versionLabel,
+                    versionDescription,
+                    isNewVersion,
+                    status: 'pending',
+                    fileUrl: supaFileUrl || buildS3Url(s3Key),
+                    s3Key,
+                    supabaseFileKey: supaFilePath,
+                });
+
+                // Trigger IFC-to-XKT conversion immediately on upload (preview available before approval)
+                if (isIfcFile) {
+                    try {
+                        await publishIfcConversionJob({
+                            projectId: normalizedProjectId,
+                            documentId: document.publicId,
+                            versionId: document.publicId,
+                            ifcS3Bucket: S3_BUCKET,
+                            ifcS3Key: s3Key,
+                            requestedBy: userId,
+                        });
+                    } catch (convErr) {
+                        console.error('[PackageController] IFC conversion job publish failed:', convErr.message);
+                    }
+                }
+
+                broadcastProject(normalizedProjectId, 'approval:new', {
+                    projectId: normalizedProjectId,
+                    approvalId: newApproval.publicId,
                 });
 
                 if (targetPackageId) {
@@ -1172,93 +1676,84 @@ class PackageController {
                     );
                 }
 
-                // Log activity + Discord notification
-                await ActivityService.log({
-                    projectId: normalizedProjectId,
-                    packageId: targetPackageId,
-                    userId,
-                    type: 'file_uploaded',
-                    targetId: document.publicId,
-                    targetName: file.originalname,
-                    metadata: { size: file.size, mimeType: file.mimetype },
-                });
-
-                await sendDiscordForDoc(normalizedProjectId, userId, 'file_uploaded', file.originalname, {
-                    size: file.size,
-                    mimeType: file.mimetype,
-                });
-
-                if (isIfcFile) {
-                    // Upload IFC lên Supabase để clash detection dùng (không cần MinIO)
-                    try {
-                        const ifcPath = buildSupabaseIfcPath({
-                            projectId: normalizedProjectId,
-                            documentId: document.publicId,
-                            originalName: file.originalname,
-                        });
-                        await uploadIfcBuffer(body, ifcPath);
-                        await DocumentRepository.updateConversionStateByPublicId(document.publicId, { supabaseIfcKey: ifcPath });
-                    } catch (supaErr) {
-                        console.warn('[PackageController] Supabase IFC upload skipped:', supaErr.message);
-                    }
-
-                    await publishIfcConversionJob({
-                        projectId: normalizedProjectId,
-                        documentId: document.publicId,
-                        versionId: document.publicId,
-                        ifcS3Bucket: document.s3Bucket,
-                        ifcS3Key: document.s3Key,
-                    });
-                }
-
                 fs.unlink(file.path, () => {});
 
-                return res.status(201).json({
+                return res.status(202).json({
                     success: true,
                     mode: 'sync',
-                    message: 'Upload completed',
+                    message: `Upload submitted for approval: ${versionLabel}`,
                     data: {
                         documentPublicId: document.publicId,
                         folderType: document.folderType,
                         folderPath: document.folderPath,
                         s3Key: document.s3Key,
                         s3Url: document.s3Url,
+                        isNewVersion,
+                        versionNumber,
+                        versionGroupId,
+                        versionLabel,
+                        approvalStatus: 'pending',
                     },
                 });
             }
 
-            const uploadJob = await UploadJobRepository.createJob({
+            // ── Queued Upload (>20MB) — store on Supabase ──────────────────────
+            const supaFilePath = buildProjectFilePath({
                 projectId: normalizedProjectId,
-                packageId: targetPackageId,
-                uploaderId: userId,
-                fileOriginalName: file.originalname,
-                mimeType: file.mimetype || '',
-                size: file.size || 0,
-                folderType,
-                folderPath,
-                tempFilePath: file.path,
-                s3Bucket: S3_BUCKET,
-                s3Key,
-                storageProvider: getStorageProvider(),
-                storageEndpoint: S3_ENDPOINT || '',
-                status: 'queued',
-                progress: 0,
-                createdAt: new Date(),
-                updatedAt: new Date(),
+                versionGroupId,
+                originalName: file.originalname,
+                uuidv7,
             });
+
+            const versionLabel = normalizeString(req.body?.versionLabel);
+                const versionDescription = normalizeString(req.body?.versionDescription) || '';
+
+                if (!versionLabel) {
+                    fs.unlink(file.path, () => {});
+                    return badRequest(res, 'versionLabel is required (e.g. v1.0.0)');
+                }
+
+                const uploadJob = await UploadJobRepository.createJob({
+                    projectId: normalizedProjectId,
+                    packageId: targetPackageId,
+                    uploaderId: userId,
+                    fileOriginalName: file.originalname,
+                    mimeType: file.mimetype || '',
+                    size: file.size || 0,
+                    folderType,
+                    folderPath,
+                    tempFilePath: file.path,
+                    s3Bucket: S3_BUCKET,
+                    s3Key,
+                    storageProvider: 'supabase',
+                    storageEndpoint: SUPABASE_URL || '',
+                    status: 'queued',
+                    progress: 0,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                    versionGroupId,
+                    versionNumber,
+                    versionLabel,
+                    versionDescription,
+                    isNewVersion,
+                    supaFilePath,
+                    uuidv7,
+                });
 
             await publishPackageUpload(uploadJob.publicId);
 
             return res.status(202).json({
-                success: true,
-                mode: 'queue',
-                message: 'Upload queued for background processing',
-                data: {
-                    jobId: uploadJob.publicId,
-                    status: uploadJob.status,
-                    progress: uploadJob.progress,
-                },
-            });
+                    success: true,
+                    mode: 'queue',
+                    message: `Upload queued for approval: ${versionLabel}`,
+                    data: {
+                        jobId: uploadJob.publicId,
+                        status: uploadJob.status,
+                        progress: uploadJob.progress,
+                        versionLabel,
+                        approvalStatus: 'pending',
+                    },
+                });
         } catch (error) {
             return serverError(res, error.message || 'Upload failed');
         }
@@ -1359,6 +1854,9 @@ class PackageController {
             const deletedPackageId = doc.packageId;
 
             await DocumentRepository.deleteByPublicId(normalizedFileId);
+
+            const UploadApprovalRepository = require('../repositories/UploadApprovalRepository');
+            await UploadApprovalRepository.deleteByDocumentId(normalizedFileId);
 
             await ActivityService.log({
                 projectId: normalizedProjectId,

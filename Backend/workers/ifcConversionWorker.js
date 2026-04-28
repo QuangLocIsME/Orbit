@@ -9,12 +9,13 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const connectDB = require('../config/database');
 const DocumentRepository = require('../repositories/DocumentRepository');
 const { s3Client } = require('../config/s3');
-const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { startIfcConversionConsumer } = require('../queues/ifcConversionQueue');
 const {
     buildSupabaseStoragePath,
     uploadXktFile,
     assertSupabaseConfigured,
+    SUPABASE_URL,
+    SUPABASE_AVATAR_BUCKET,
 } = require('../services/supabaseStorageService');
 
 const TEMP_DIR = process.env.IFC_TEMP_DIR || path.join(os.tmpdir(), 'orbit-ifc-worker');
@@ -27,6 +28,7 @@ function ensureTempDir() {
 }
 
 async function downloadIfcToLocal({ bucket, key, targetPath }) {
+    const { GetObjectCommand } = require('@aws-sdk/client-s3');
     const response = await s3Client.send(
         new GetObjectCommand({
             Bucket: bucket,
@@ -39,6 +41,26 @@ async function downloadIfcToLocal({ bucket, key, targetPath }) {
     }
 
     await pipeline(response.Body, fs.createWriteStream(targetPath));
+}
+
+async function downloadIfcFromSupabase(supabaseFileKey, targetPath) {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${supabaseFileKey}`;
+    const res = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${serviceRoleKey}`,
+            apikey: serviceRoleKey,
+        },
+    });
+
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase IFC download failed: ${res.status} ${text}`);
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    fs.writeFileSync(targetPath, Buffer.from(arrayBuffer));
 }
 
 async function runIfcConversion(inputIfcPath, outputXktPath) {
@@ -92,12 +114,17 @@ async function processIfcJob(payload) {
     const outputXktPath = path.join(TEMP_DIR, `${doc.publicId}-${Date.now()}.xkt`);
 
     try {
-        console.log(`[ifcConversionWorker] Downloading IFC from S3: ${doc.s3Bucket}/${doc.s3Key}`);
-        await downloadIfcToLocal({
-            bucket: doc.s3Bucket,
-            key: doc.s3Key,
-            targetPath: inputIfcPath,
-        });
+        if (doc.supabaseFileKey) {
+            console.log(`[ifcConversionWorker] Downloading IFC from Supabase: ${SUPABASE_AVATAR_BUCKET}/${doc.supabaseFileKey}`);
+            await downloadIfcFromSupabase(doc.supabaseFileKey, inputIfcPath);
+        } else {
+            console.log(`[ifcConversionWorker] Downloading IFC from S3: ${doc.s3Bucket}/${doc.s3Key}`);
+            await downloadIfcToLocal({
+                bucket: doc.s3Bucket,
+                key: doc.s3Key,
+                targetPath: inputIfcPath,
+            });
+        }
         console.log(`[ifcConversionWorker] Download complete, running conversion`);
 
         await runIfcConversion(inputIfcPath, outputXktPath);
@@ -142,6 +169,14 @@ async function run() {
         await processIfcJob(payload);
     });
 }
+
+process.on('uncaughtException', (err) => {
+    console.error('[ifcConversionWorker] Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[ifcConversionWorker] Unhandled rejection:', reason);
+});
 
 run().catch((error) => {
     console.error('[ifcConversionWorker] fatal error', error);

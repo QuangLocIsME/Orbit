@@ -1,0 +1,889 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
+import { apiFetch } from '@/lib/api-client';
+import { cn } from '@/lib/utils';
+import { getSocket } from '@/lib/socket';
+import {
+  CheckCircle, XCircle, Clock, FileText, Image as ImageIcon,
+  Download, Eye, ChevronDown, ChevronUp, Loader2,
+  AlertCircle, MessageSquare, Send, Trash2, Box
+} from 'lucide-react';
+import XktViewerDialog from './XktViewerDialog';
+
+interface ApprovalUploader {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string | null;
+}
+
+interface ApprovalItem {
+  publicId: string;
+  documentId: string;
+  jobId: string | null;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  folderType: string;
+  folderPath: string;
+  versionGroupId: string | null;
+  versionNumber: number;
+  versionLabel: string;
+  versionDescription: string;
+  isNewVersion: boolean;
+  status: 'pending' | 'approved' | 'rejected';
+  fileUrl: string;
+  s3Key: string;
+  supabaseFileKey: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  rejectionReason: string;
+  approvedAt: string | null;
+  uploader: ApprovalUploader | null;
+  conversionStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ApprovalComment {
+  publicId: string;
+  approvalId: string;
+  content: string;
+  author: { id: string; name: string; email: string; avatar: string | null } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface UploadApprovalPanelProps {
+  projectId: string;
+  projectRole?: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatTimestamp(dateStr: string): string {
+  try {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+function getFileIcon(mimeType: string) {
+  if (mimeType?.startsWith('image/')) return ImageIcon;
+  return FileText;
+}
+
+function getAvatarColor(name: string): string {
+  const colors = [
+    'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500',
+    'bg-lime-500', 'bg-green-500', 'bg-emerald-500', 'bg-teal-500',
+    'bg-cyan-500', 'bg-sky-500', 'bg-blue-500', 'bg-indigo-500',
+    'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500',
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function Avatar({ name, avatar, size = 'sm' }: { name: string; avatar: string | null; size?: 'sm' | 'md' }) {
+  const sizeClass = size === 'sm' ? 'h-6 w-6 text-[10px]' : 'h-8 w-8 text-[11px]';
+  if (avatar) {
+    return <img src={avatar} alt={name} className={`${sizeClass} rounded-full object-cover`} />;
+  }
+  const initial = name ? name.charAt(0).toUpperCase() : '?';
+  return (
+    <div className={`${sizeClass} rounded-full ${getAvatarColor(name)} flex items-center justify-center font-semibold text-white`}>
+      {initial}
+    </div>
+  );
+}
+
+function isIfcFile(mimeType: string, fileName: string): boolean {
+  return mimeType?.includes('ifc') || /\.(ifc|rvt|dwg)$/i.test(fileName);
+}
+
+function ConversionStatusBadge({ status }: { status: string | null }) {
+  if (!status) return null;
+  if (status === 'READY') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#ECFDF5] text-[#007A55] font-medium">
+        <CheckCircle className="h-3 w-3" />
+        Ready to View
+      </span>
+    );
+  }
+  if (status === 'PROCESSING') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#EEF2FF] text-[#4F39F6] font-medium">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Converting to XKT...
+      </span>
+    );
+  }
+  if (status === 'FAILED') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#FEE2E2] text-[#DC2626] font-medium">
+        <AlertCircle className="h-3 w-3" />
+        Conversion Failed
+      </span>
+    );
+  }
+  if (status === 'PENDING') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#FEF3C7] text-[#B45309] font-medium">
+        <Clock className="h-3 w-3" />
+        Queued for conversion
+      </span>
+    );
+  }
+  return null;
+}
+
+function ApprovalStatusBadge({ status }: { status: string }) {
+  if (status === 'pending') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#FEF3C7] text-[#B45309] font-medium">
+        <Clock className="h-3 w-3" />
+        Pending
+      </span>
+    );
+  }
+  if (status === 'approved') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#ECFDF5] text-[#007A55] font-medium">
+        <CheckCircle className="h-3 w-3" />
+        Approved
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[12px] bg-[#FEE2E2] text-[#DC2626] font-medium">
+      <XCircle className="h-3 w-3" />
+      Rejected
+    </span>
+  );
+}
+
+export default function UploadApprovalPanel({ projectId, projectRole }: UploadApprovalPanelProps) {
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState<{ id: string; reason: string } | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [previewTextContent, setPreviewTextContent] = useState<string>('');
+  const [previewTextFileName, setPreviewTextFileName] = useState<string>('');
+  const [isLoadingTextPreview, setIsLoadingTextPreview] = useState(false);
+  const [comments, setComments] = useState<Record<string, ApprovalComment[]>>({});
+  const [commentsLoading, setCommentsLoading] = useState<Record<string, boolean>>({});
+  const [commentsExpanded, setCommentsExpanded] = useState<Record<string, boolean>>({});
+  const [newComment, setNewComment] = useState<Record<string, string>>({});
+  const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
+  const [xktViewerState, setXktViewerState] = useState<{
+    projectId: string;
+    fileId: string;
+    versionId: string;
+    fileName: string;
+  } | null>(null);
+
+  const ITEMS_PER_PAGE = 10;
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const canApprove = projectRole === 'owner' || projectRole === 'admin' || projectRole === 'manager';
+
+  const fetchApprovals = async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/approvals/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const raw = data.data.approvals || [];
+        const seen = new Set<string>();
+        const deduped = raw.filter((a: ApprovalItem) => {
+          if (seen.has(a.publicId)) return false;
+          seen.add(a.publicId);
+          return true;
+        });
+        setApprovals(deduped);
+        setCurrentPage(1);
+      } else {
+        toast.error(data.message || 'Failed to load approvals');
+      }
+    } catch {
+      toast.error('Failed to load approvals');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchComments = async (approvalId: string) => {
+    if (comments[approvalId]) return;
+    setCommentsLoading(prev => ({ ...prev, [approvalId]: true }));
+    try {
+      const res = await apiFetch('/api/approvals/comments/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvalId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => ({ ...prev, [approvalId]: data.data.comments || [] }));
+      }
+    } catch { /* silent */ } finally {
+      setCommentsLoading(prev => ({ ...prev, [approvalId]: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (projectId) {
+      fetchApprovals();
+    }
+  }, [projectId]);
+
+  // WebSocket realtime listener — refreshes the list when approvals change
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleApprovalNew = () => {
+      fetchApprovals();
+    };
+    const handleApprovalUpdated = () => {
+      fetchApprovals();
+    };
+
+    socket.on('approval:new', handleApprovalNew);
+    socket.on('approval:updated', handleApprovalUpdated);
+
+    return () => {
+      socket.off('approval:new', handleApprovalNew);
+      socket.off('approval:updated', handleApprovalUpdated);
+    };
+  }, [projectId]);
+
+  // Reset to page 1 whenever filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
+
+  const handleApprove = async (approval: ApprovalItem) => {
+    setActionLoading(approval.publicId);
+    try {
+      const res = await apiFetch('/api/approvals/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvalId: approval.publicId, projectId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Approved: ${approval.originalName}`);
+        const isIcf = isIfcFile(approval.mimeType, approval.originalName);
+        setApprovals(prev =>
+          prev.map(a => a.publicId === approval.publicId ? {
+            ...a,
+            status: 'approved' as const,
+            conversionStatus: isIcf ? (a.conversionStatus || 'PENDING') : a.conversionStatus,
+          } : a)
+        );
+      } else {
+        toast.error(data.message || 'Failed to approve');
+      }
+    } catch {
+      toast.error('Failed to approve upload');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleReject = async (approval: ApprovalItem) => {
+    const reason = rejectReason?.id === approval.publicId ? rejectReason.reason : '';
+    setActionLoading(approval.publicId);
+    try {
+      const res = await apiFetch('/api/approvals/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvalId: approval.publicId, projectId, reason }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Rejected: ${approval.originalName}`);
+        setApprovals(prev =>
+          prev.map(a => a.publicId === approval.publicId ? { ...a, status: 'rejected' as const } : a)
+        );
+        setRejectReason(null);
+      } else {
+        toast.error(data.message || 'Failed to reject');
+      }
+    } catch {
+      toast.error('Failed to reject upload');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSubmitComment = async (approvalId: string) => {
+    const content = newComment[approvalId]?.trim();
+    if (!content) return;
+
+    setSubmittingComment(prev => ({ ...prev, [approvalId]: true }));
+    try {
+      const res = await apiFetch('/api/approvals/comments/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvalId, content }),
+      });
+      const data = await res.json();
+      if (data.success && data.data.comment) {
+        setComments(prev => ({
+          ...prev,
+          [approvalId]: [data.data.comment, ...(prev[approvalId] || [])],
+        }));
+        setNewComment(prev => ({ ...prev, [approvalId]: '' }));
+      } else {
+        toast.error(data.message || 'Failed to add comment');
+      }
+    } catch {
+      toast.error('Failed to add comment');
+    } finally {
+      setSubmittingComment(prev => ({ ...prev, [approvalId]: false }));
+    }
+  };
+
+  const handleDeleteComment = async (approvalId: string, commentId: string) => {
+    try {
+      const res = await apiFetch('/api/approvals/comments/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commentId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setComments(prev => ({
+          ...prev,
+          [approvalId]: (prev[approvalId] || []).filter(c => c.publicId !== commentId),
+        }));
+      } else {
+        toast.error(data.message || 'Failed to delete comment');
+      }
+    } catch {
+      toast.error('Failed to delete comment');
+    }
+  };
+
+  const getCurrentUserId = (): string | null => {
+    try {
+      const u = localStorage.getItem('orbit_user');
+      if (u) return JSON.parse(u).id;
+    } catch { /* ignore */ }
+    return null;
+  };
+
+  const filteredApprovals = approvals
+    .filter(a => filter === 'all' || a.status === filter)
+    .filter((a, idx, arr) => arr.findIndex(x => x.publicId === a.publicId) === idx);
+
+  const pendingCount = approvals.filter(a => a.status === 'pending').length;
+
+  const totalPages = Math.max(1, Math.ceil(filteredApprovals.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedApprovals = filteredApprovals.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE);
+
+  return (
+    <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-[24px] font-normal text-[#101828]">Version Control</h2>
+      </div>
+
+      {/* Stats / Filters */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {([
+          { key: 'all',      label: 'Total',    count: approvals.length,                    cardStyle: 'bg-[#F3F4F6] text-[#101828]', ringColor: '#101828' },
+          { key: 'pending',  label: 'Pending',  count: pendingCount,                        cardStyle: 'bg-[#FEF3C7] text-[#CA8A04]', ringColor: '#CA8A04' },
+          { key: 'approved', label: 'Approved', count: approvals.filter(a => a.status === 'approved').length, cardStyle: 'bg-[#ECFDF5] text-[#007A55]', ringColor: '#007A55' },
+          { key: 'rejected', label: 'Rejected', count: approvals.filter(a => a.status === 'rejected').length, cardStyle: 'bg-[#FEE2E2] text-[#DC2626]', ringColor: '#DC2626' },
+        ] as const).map(s => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => setFilter(s.key)}
+            className={cn(
+              'rounded-[10px] px-4 py-3 text-left transition-all',
+              s.cardStyle,
+              filter === s.key ? 'ring-2 ring-offset-1' : 'hover:opacity-90'
+            )}
+            style={filter === s.key ? { boxShadow: `0 0 0 2px white, 0 0 0 4px ${s.ringColor}` } : undefined}
+          >
+            <p className="text-[28px] leading-[32px]">{loading ? '—' : s.count}</p>
+            <p className="text-[14px]">{s.label}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="rounded-[10px] border border-[#E5E7EB] bg-white overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <svg className="h-8 w-8 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+          </div>
+        ) : filteredApprovals.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#F3F4F6] mb-3">
+              <svg className="h-7 w-7 text-[#9CA3AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+            </div>
+            <p className="text-[14px] font-medium text-[#101828]">
+              {filter === 'pending' ? 'No pending uploads' : `No ${filter} uploads`}
+            </p>
+            <p className="text-[12px] text-[#6A7282] mt-1">
+              {filter === 'pending' ? 'All uploads have been reviewed' : 'No uploads match this filter'}
+            </p>
+          </div>
+        ) : (
+          paginatedApprovals.map(approval => {
+            const FileIcon = getFileIcon(approval.mimeType);
+            const isExpanded = expandedId === approval.publicId;
+            const isCommentsExpanded = commentsExpanded[approval.publicId];
+            const isActing = actionLoading === approval.publicId;
+            const approvalComments = comments[approval.publicId] || [];
+            const commentCount = approvalComments.length;
+
+            return (
+              <div key={approval.publicId} className="px-6 py-5">
+                {/* Top row: icon + info + status + expand */}
+                <div className="flex items-start gap-4">
+                  <div className={cn(
+                    'flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px]',
+                    approval.status === 'pending' ? 'bg-[#EEF2FF]' : approval.status === 'approved' ? 'bg-[#ECFDF5]' : 'bg-[#FEE2E2]'
+                  )}>
+                    <FileIcon className={cn('h-5 w-5',
+                      approval.status === 'pending' ? 'text-[#4F39F6]' : approval.status === 'approved' ? 'text-[#007A55]' : 'text-[#DC2626]'
+                    )} />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-medium text-[#101828] truncate">{approval.originalName}</p>
+                        <div className="flex items-center gap-2 text-[12px] text-[#6A7282] mt-0.5">
+                          <span className="font-mono text-[#155DFC] font-medium">{approval.versionLabel}</span>
+                          {approval.isNewVersion && (
+                            <span className="rounded px-2 py-0.5 bg-[#EEF2FF] text-[#432DD7] font-medium">New version</span>
+                          )}
+                          <span>{formatFileSize(approval.size)}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <ApprovalStatusBadge status={approval.status} />
+                        <button
+                          onClick={() => setExpandedId(isExpanded ? null : approval.publicId)}
+                          className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[#6A7282] hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                        >
+                          {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {approval.uploader && (
+                        <>
+                          <Avatar name={approval.uploader.name} avatar={approval.uploader.avatar} />
+                          <span className="text-[11px] text-[#6A7282]">
+                            by <span className="font-medium text-[#101828]">{approval.uploader.name}</span>
+                          </span>
+                        </>
+                      )}
+                      <span className="text-[11px] text-[#6A7282]">{formatTimestamp(approval.createdAt)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expanded details */}
+                {isExpanded && (
+                  <div className="mt-4 pt-4 border-t border-[#E5E7EB]">
+                    <div className="grid grid-cols-2 gap-4 text-[14px] mb-4">
+                      <div>
+                        <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Version Label</p>
+                        <p className="font-medium text-[#101828]">{approval.versionLabel}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Version #</p>
+                        <p className="font-medium text-[#101828]">v{approval.versionNumber}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Type</p>
+                        <p className="font-medium text-[#101828] truncate">{approval.mimeType || 'Unknown'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Size</p>
+                        <p className="font-medium text-[#101828]">{formatFileSize(approval.size)}</p>
+                      </div>
+                      {approval.folderPath && (
+                        <div className="col-span-2">
+                          <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Folder</p>
+                          <p className="font-medium text-[#101828]">{approval.folderPath}</p>
+                        </div>
+                      )}
+                      {approval.versionDescription && (
+                        <div className="col-span-2">
+                          <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Description</p>
+                          <p className="font-medium text-[#101828]">{approval.versionDescription}</p>
+                        </div>
+                      )}
+                      {approval.status === 'rejected' && approval.rejectionReason && (
+                        <div className="col-span-2">
+                          <p className="text-[11px] text-[#DC2626] uppercase tracking-wide font-semibold">Rejection Reason</p>
+                          <p className="font-medium text-[#DC2626]">{approval.rejectionReason}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {isIfcFile(approval.mimeType, approval.originalName) && approval.conversionStatus && (
+                      <div className="mb-4 p-3 rounded-[8px] bg-[#F9FAFB] border border-[#E5E7EB]">
+                        <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold mb-2">Model Preview Conversion</p>
+                        <ConversionStatusBadge status={approval.conversionStatus} />
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 mb-4">
+                      {/* IFC 3D Model Preview button */}
+                      {isIfcFile(approval.mimeType, approval.originalName) && (
+                        <button
+                          onClick={() => {
+                            if (approval.conversionStatus === 'READY') {
+                              setXktViewerState({
+                                projectId,
+                                fileId: approval.documentId,
+                                versionId: approval.documentId,
+                                fileName: approval.originalName,
+                              });
+                            } else {
+                              toast.error('Model is not ready yet. Please wait for conversion to complete.');
+                            }
+                          }}
+                          disabled={approval.conversionStatus === 'PROCESSING'}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-[12px] transition-colors',
+                            approval.conversionStatus === 'READY'
+                              ? 'border-[#155DFC] bg-[#155DFC]/5 text-[#155DFC] hover:bg-[#155DFC]/10 font-medium'
+                              : 'border-[#E5E7EB] bg-white text-[#6A7282] cursor-not-allowed opacity-60'
+                          )}
+                        >
+                          <Box className="h-3.5 w-3.5" />
+                          {approval.conversionStatus === 'READY' ? '3D Preview' : '3D Preview'}
+                          {approval.conversionStatus === 'PROCESSING' && <Loader2 className="h-3 w-3 animate-spin" />}
+                        </button>
+                      )}
+
+                      {/* Text file preview */}
+                      {approval.fileUrl && /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) && !isIfcFile(approval.mimeType, approval.originalName) ? (
+                        <button
+                          onClick={async () => {
+                            setIsLoadingTextPreview(true);
+                            setPreviewTextFileName(approval.originalName);
+                            try {
+                              const res = await fetch(approval.fileUrl);
+                              if (!res.ok) throw new Error('Failed to load file');
+                              const text = await res.text();
+                              setPreviewTextContent(text);
+                            } catch {
+                              setPreviewTextContent('Failed to load file content.');
+                            } finally {
+                              setIsLoadingTextPreview(false);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" />Preview
+                        </button>
+                      ) : null}
+
+                      {/* Generic file preview (non-IFC, non-text) */}
+                      {approval.fileUrl && !isIfcFile(approval.mimeType, approval.originalName) && !/\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) ? (
+                        <a href={approval.fileUrl} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
+                          <Eye className="h-3.5 w-3.5" />Preview
+                        </a>
+                      ) : null}
+
+                      {/* Download */}
+                      {approval.fileUrl && (
+                        <a href={approval.fileUrl} download={approval.originalName}
+                          className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
+                          <Download className="h-3.5 w-3.5" />Download
+                        </a>
+                      )}
+                    </div>
+
+                    {approval.status === 'pending' && canApprove && (
+                      <div className="pt-3 border-t border-[#E5E7EB]">
+                        {rejectReason?.id === approval.publicId ? (
+                          <div className="mb-3">
+                            <label className="text-[12px] text-[#6A7282] font-medium block mb-1.5">Rejection Reason (optional)</label>
+                            <textarea
+                              value={rejectReason.reason}
+                              onChange={(e) => setRejectReason({ id: approval.publicId, reason: e.target.value })}
+                              placeholder="Explain why this upload is being rejected..."
+                              rows={2}
+                              className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
+                            />
+                          </div>
+                        ) : null}
+
+                        <div className="flex gap-2">
+                          {rejectReason?.id === approval.publicId ? (
+                            <>
+                              <button onClick={() => handleReject(approval)} disabled={isActing}
+                                className="inline-flex items-center gap-1.5 rounded-[10px] bg-[#DC2626] px-4 py-2 text-[13px] font-medium text-white hover:bg-red-700 transition-colors disabled:opacity-50">
+                                {isActing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                                Confirm Reject
+                              </button>
+                              <button onClick={() => setRejectReason(null)}
+                                className="px-4 py-2 text-[13px] text-[#6A7282] hover:text-[#101828] transition-colors">Cancel</button>
+                            </>
+                          ) : (
+                            <button onClick={() => setRejectReason({ id: approval.publicId, reason: '' })} disabled={isActing}
+                              className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#FEF2F2] hover:border-[#FCA5A5] hover:text-[#DC2626] transition-colors disabled:opacity-50">
+                              <XCircle className="h-3.5 w-3.5" />Reject
+                            </button>
+                          )}
+                          <button onClick={() => handleApprove(approval)} disabled={isActing}
+                            className="ml-auto inline-flex items-center gap-1.5 rounded-[10px] bg-[#007A55] px-4 py-2 text-[13px] font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                            {isActing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
+                            Approve
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {approval.status === 'pending' && !canApprove && (
+                      <div className="pt-3 border-t border-[#E5E7EB]">
+                        <p className="text-[12px] text-[#B45309] flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          Only owner, admin, or manager can approve uploads
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Comment section */}
+                <div className="mt-4 pt-3 border-t border-[#E5E7EB]">
+                  <button
+                    onClick={() => {
+                      const newState = !isCommentsExpanded;
+                      setCommentsExpanded(prev => ({ ...prev, [approval.publicId]: newState }));
+                      if (newState && !comments[approval.publicId]) fetchComments(approval.publicId);
+                    }}
+                    className="flex w-full items-center gap-2 text-[12px] text-[#6A7282] hover:text-[#101828] transition-colors"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {commentCount > 0 ? `${commentCount} comment${commentCount !== 1 ? 's' : ''}` : 'Add comment'}
+                    {commentsLoading[approval.publicId] ? (
+                      <Loader2 className="h-3 w-3 animate-spin ml-auto" />
+                    ) : (
+                      <ChevronDown className={cn('h-3 w-3 ml-auto transition-transform', isCommentsExpanded && 'rotate-180')} />
+                    )}
+                  </button>
+
+                  {isCommentsExpanded && (
+                    <div className="mt-3 pb-4">
+                      {approvalComments.length === 0 && !commentsLoading[approval.publicId] ? (
+                        <p className="text-[12px] text-[#9CA3AF] text-center py-3">No comments yet.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {approvalComments.map(comment => {
+                            const currentUserId = getCurrentUserId();
+                            const isOwn = comment.author?.id === currentUserId;
+                            const canDelete = isOwn || canApprove;
+
+                            return (
+                              <div key={comment.publicId} className="flex gap-3">
+                                <Avatar name={comment.author?.name || '?'} avatar={comment.author?.avatar || null} size="sm" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[13px] font-semibold text-[#101828]">{comment.author?.name || 'Unknown'}</span>
+                                    <span className="text-[11px] text-[#6A7282]">{formatTimestamp(comment.createdAt)}</span>
+                                    {canDelete && (
+                                      <button onClick={() => handleDeleteComment(approval.publicId, comment.publicId)}
+                                        className="ml-auto flex h-5 w-5 items-center justify-center rounded text-[#D1D5DC] hover:text-[#DC2626] transition-colors">
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <p className="text-[13px] text-[#4A5565] mt-0.5 break-words">{comment.content}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {commentsLoading[approval.publicId] && (
+                            <div className="flex justify-center py-2">
+                              <Loader2 className="h-4 w-4 animate-spin text-[#155DFC]" />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="mt-3 flex gap-2 items-end">
+                        <textarea
+                          value={newComment[approval.publicId] || ''}
+                          onChange={(e) => setNewComment(prev => ({ ...prev, [approval.publicId]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitComment(approval.publicId); } }}
+                          placeholder="Add a comment..."
+                          rows={1}
+                          className="flex-1 rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] resize-none focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] min-h-[44px]"
+                          style={{ height: 'auto' }}
+                          onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 120) + 'px'; }}
+                        />
+                        <button
+                          onClick={() => handleSubmitComment(approval.publicId)}
+                          disabled={submittingComment[approval.publicId] || !newComment[approval.publicId]?.trim()}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#155DFC] text-white transition-colors hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {submittingComment[approval.publicId] ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Send className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Pagination */}
+      {!loading && filteredApprovals.length > ITEMS_PER_PAGE && (
+        <div className="flex items-center justify-between pt-4">
+          <p className="text-[12px] text-[#6A7282]">
+            Showing {Math.min((safePage - 1) * ITEMS_PER_PAGE + 1, filteredApprovals.length)}–{Math.min(safePage * ITEMS_PER_PAGE, filteredApprovals.length)} of {filteredApprovals.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={safePage === 1}
+              className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#E5E7EB] bg-white text-[#6A7282] hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronUp className="h-4 w-4 rotate-90" />
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={cn(
+                  'flex h-8 min-w-[32px] items-center justify-center rounded-[8px] border px-2 text-[12px] transition-colors',
+                  page === safePage
+                    ? 'border-[#155DFC] bg-[#155DFC] text-white font-medium'
+                    : 'border-[#E5E7EB] bg-white text-[#6A7282] hover:bg-gray-50'
+                )}
+              >
+                {page}
+              </button>
+            ))}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={safePage === totalPages}
+              className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#E5E7EB] bg-white text-[#6A7282] hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronUp className="h-4 w-4 -rotate-90" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* XKT 3D Viewer Dialog */}
+      {xktViewerState && (
+        <XktViewerDialog
+          projectId={xktViewerState.projectId}
+          fileId={xktViewerState.fileId}
+          versionId={xktViewerState.versionId}
+          fileName={xktViewerState.fileName}
+          onClose={() => setXktViewerState(null)}
+        />
+      )}
+
+      {previewTextContent !== '' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}>
+          <div
+            className="relative z-10 flex flex-col w-full max-w-4xl mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[85vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5E7EB] shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#EEF2FF]">
+                  <svg className="h-4 w-4 text-[#4F39F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-[16px] font-semibold text-[#101828]">Text Preview</h2>
+                  <p className="text-[12px] text-[#6A7282] truncate max-w-[300px]" title={previewTextFileName}>{previewTextFileName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}
+                className="p-2 text-[#6A7282] hover:text-gray-700 rounded-[10px] hover:bg-gray-100 transition-colors"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            {isLoadingTextPreview ? (
+              <div className="flex items-center justify-center flex-1 py-16">
+                <svg className="h-8 w-8 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+              </div>
+            ) : (
+              <pre className="flex-1 overflow-auto px-6 py-4 text-[13px] font-mono text-[#374151] bg-[#F9FAFB] whitespace-pre-wrap break-all">
+                {previewTextContent}
+              </pre>
+            )}
+            <div className="flex justify-end px-6 py-3 border-t border-[#E5E7EB] shrink-0 bg-white">
+              <button
+                onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}
+                className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

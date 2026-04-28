@@ -54,7 +54,7 @@ const savePositionOverride = async (projectSlug, clashId, objects) => {
     await PositionOverride.findOneAndUpdate(
         { projectSlug, clashId },
         { objects: cleanObjects, savedAt },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
 
     return { objects: cleanObjects, savedAt: savedAt.toISOString() };

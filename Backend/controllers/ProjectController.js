@@ -357,6 +357,30 @@ class ProjectController {
         }
     }
 
+    async getMemberCounts(req, res) {
+        try {
+            const { projectIds } = req.body || {};
+            const normalizedIds = Array.isArray(projectIds) ? projectIds.filter(Boolean) : [];
+
+            if (normalizedIds.length === 0) {
+                return res.status(200).json({ success: true, data: {} });
+            }
+
+            const counts = {};
+            await Promise.all(
+                normalizedIds.map(async (projectId) => {
+                    const count = await ProjectMemberRepository.countAcceptedMembers(projectId);
+                    counts[projectId] = count;
+                })
+            );
+
+            return res.status(200).json({ success: true, data: counts });
+        } catch (error) {
+            console.error('getMemberCounts error:', error);
+            return handleServerError(res, 'Failed to get member counts');
+        }
+    }
+
     async updateProject(req, res) {
         try {
             const { projectId, name, description, industry, coverImageUrl } = req.body || {};

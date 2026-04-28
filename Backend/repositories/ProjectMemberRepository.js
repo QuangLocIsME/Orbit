@@ -75,6 +75,10 @@ class ProjectMemberRepository {
         return await ProjectMember.countDocuments({ projectId, role: 'admin' });
     }
 
+    async countAcceptedMembers(projectId) {
+        return await ProjectMember.countDocuments({ projectId, status: 'accepted' });
+    }
+
     async removeMembersByProject(projectId) {
         return await ProjectMember.deleteMany({ projectId });
     }

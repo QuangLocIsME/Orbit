@@ -204,7 +204,7 @@ class WorkflowTemplateRepository {
         return await WorkflowTemplate.findOneAndUpdate(
             { publicId },
             updateData,
-            { new: true, runValidators: true }
+            { returnDocument: 'after', runValidators: true }
         );
     }
 
@@ -219,7 +219,7 @@ class WorkflowTemplateRepository {
         return await WorkflowTemplate.findOneAndUpdate(
             { publicId },
             { $inc: { downloads: 1 } },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 
@@ -271,7 +271,7 @@ class WorkflowTemplateRepository {
                 $set: { rating: Math.round(avgRating * 10) / 10 },
                 $inc: { downloads: 1 },
             },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 

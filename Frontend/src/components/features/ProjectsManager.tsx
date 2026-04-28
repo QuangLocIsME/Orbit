@@ -351,15 +351,17 @@ function FolderIcon({ className }: { className?: string }) {
   );
 }
 
-// Create Folder Modal
-function CreateFolderModal({ 
-  isOpen, 
-  onClose, 
-  onCreateFolder 
-}: { 
-  isOpen: boolean; 
-  onClose: () => void; 
+// Create Folder Modal (also used for editing)
+function CreateFolderModal({
+  isOpen,
+  onClose,
+  onCreateFolder,
+  editFolder,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
   onCreateFolder: (folder: { name: string; description: string; color: string }) => void;
+  editFolder?: Folder | null;
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -367,11 +369,17 @@ function CreateFolderModal({
 
   useEffect(() => {
     if (isOpen) {
-      setName('');
-      setDescription('');
-      setSelectedColor('blue');
+      if (editFolder) {
+        setName(editFolder.name);
+        setDescription(editFolder.description || '');
+        setSelectedColor(editFolder.color || 'blue');
+      } else {
+        setName('');
+        setDescription('');
+        setSelectedColor('blue');
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, editFolder]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -405,7 +413,7 @@ function CreateFolderModal({
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100">
               <FolderIcon className="h-5 w-5 text-blue-500" />
             </div>
-            <h2 className="text-lg font-semibold text-gray-900">Create New Folder</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{editFolder ? 'Edit Folder' : 'Create New Folder'}</h2>
           </div>
           <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -478,7 +486,7 @@ function CreateFolderModal({
               disabled={!name.trim()}
               className="flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Create Folder
+              {editFolder ? 'Save Changes' : 'Create Folder'}
             </button>
           </div>
         </form>
@@ -491,33 +499,87 @@ function CreateFolderModal({
 function FolderCard({
   folder,
   onClick,
+  onEdit,
+  onDelete,
 }: {
   folder: Folder;
   onClick: () => void;
+  onEdit: (folder: Folder) => void;
+  onDelete: (folder: Folder) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const colorConfig = FOLDER_COLORS.find(c => c.id === folder.color) || FOLDER_COLORS[0];
   const { setNodeRef, isOver } = useDroppable({
     id: `folder:${folder.id}`,
     data: { type: 'folder', folderId: folder.id },
   });
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
   return (
-    <button
-      ref={setNodeRef}
-      onClick={onClick}
-      className={cn(
-        'group flex w-full items-center gap-3 rounded-xl border bg-white p-4 text-left transition-all hover:border-gray-200 hover:shadow-sm',
-        isOver ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'
+    <div ref={setNodeRef} className="relative">
+      <button
+        onClick={onClick}
+        className={cn(
+          'group flex w-full items-center gap-3 rounded-xl border bg-white p-4 text-left transition-all hover:border-gray-200 hover:shadow-sm',
+          isOver ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'
+        )}
+      >
+        <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', colorConfig.bg)}>
+          <FolderIcon className={cn('h-5 w-5', colorConfig.icon)} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-medium text-gray-900">{folder.name}</h3>
+          <p className="text-xs text-gray-500">{folder.projectCount} projects</p>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+          className="opacity-0 group-hover:opacity-100 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-all"
+        >
+          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="5" r="1.5" />
+            <circle cx="12" cy="12" r="1.5" />
+            <circle cx="12" cy="19" r="1.5" />
+          </svg>
+        </button>
+      </button>
+
+      {menuOpen && (
+        <div
+          ref={menuRef}
+          className="absolute right-3 top-14 z-50 w-36 rounded-xl border border-gray-200 bg-white shadow-lg py-1"
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit(folder); }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Edit
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(folder); }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Delete
+          </button>
+        </div>
       )}
-    >
-      <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', colorConfig.bg)}>
-        <FolderIcon className={cn('h-5 w-5', colorConfig.icon)} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-medium text-gray-900">{folder.name}</h3>
-        <p className="text-xs text-gray-500">{folder.projectCount} projects</p>
-      </div>
-    </button>
+    </div>
   );
 }
 
@@ -611,7 +673,7 @@ function getCustomIconById(iconId: string): React.ReactNode {
 }
 
 // Project List Item Component (for list view)
-function ProjectListItem({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
+function ProjectListItem({ project, isDragging = false, memberCounts }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number> }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -662,7 +724,7 @@ function ProjectListItem({ project, isDragging = false }: { project: Project; is
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            {project.teamMembers || 0}
+            {memberCounts[project.id] ?? project.teamMembers ?? 0}
           </span>
           
           {/* Issues */}
@@ -697,7 +759,7 @@ function ProjectListItem({ project, isDragging = false }: { project: Project; is
 }
 
 // Project Grid Card Component (for grid view)
-function ProjectGridCard({ project, isDragging = false }: { project: Project; isDragging?: boolean }) {
+function ProjectGridCard({ project, isDragging = false, memberCounts }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number> }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -797,7 +859,7 @@ function ProjectGridCard({ project, isDragging = false }: { project: Project; is
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            {project.teamMembers || 0}
+            {memberCounts[project.id] ?? project.teamMembers ?? 0}
           </span>
           <span className="flex items-center gap-1">
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -830,12 +892,17 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     return (localStorage.getItem('orbit-projects-view') as 'grid' | 'list') || 'grid';
   });
   const [showFolderModal, setShowFolderModal] = useState(false);
+  const [editingFolder, setEditingFolder] = useState<Folder | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState<Folder | null>(null);
   const [currentFolder, setCurrentFolder] = useState<Folder | null>(null);
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [isMovingProject, setIsMovingProject] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isTrashing, setIsTrashing] = useState(false);
+  const [memberCounts, setMemberCounts] = useState<Record<string, number>>({});
+
+  const memberCountsCacheRef = useRef<{ data: Record<string, number>; expiresAt: number } | null>(null);
 
   // Persist viewMode to localStorage
   useEffect(() => {
@@ -926,6 +993,71 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     });
   };
 
+  const handleEditFolder = async (folderData: { name: string; description: string; color: string }) => {
+    if (!editingFolder) return;
+    const requestPromise = (async () => {
+      const response = await fetch(`/api/folders/${editingFolder.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(folderData),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || 'Update folder failed');
+      }
+
+      const updatedProjects = await loadProjects(false, { force: true });
+      await loadFolders(updatedProjects, { force: true });
+      return folderData;
+    })();
+
+    await toast.promise(requestPromise, {
+      loading: 'Updating folder...',
+      success: () => `Folder updated successfully`,
+      error: (err) => err?.message || 'Failed to update folder',
+    });
+    setEditingFolder(null);
+  };
+
+  const handleDeleteFolder = async (folder: Folder) => {
+    setDeletingFolder(folder);
+  };
+
+  const confirmDeleteFolder = async () => {
+    if (!deletingFolder) return;
+    const folderName = deletingFolder.name;
+    const requestPromise = (async () => {
+      const response = await fetch(`/api/folders/${deletingFolder.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || 'Delete folder failed');
+      }
+
+      if (currentFolder?.id === deletingFolder.id) {
+        setCurrentFolder(null);
+      }
+      const updatedProjects = await loadProjects(false, { force: true });
+      await loadFolders(updatedProjects, { force: true });
+    })();
+
+    await toast.promise(requestPromise, {
+      loading: 'Deleting folder...',
+      success: () => `${folderName} has been deleted`,
+      error: (err) => err?.message || 'Failed to delete folder',
+    });
+    setDeletingFolder(null);
+  };
+
   const upsertProject = useCallback((nextProject: Project) => {
     setProjects((prev) => {
       const exists = prev.some((item) => item.id === nextProject.id);
@@ -1011,6 +1143,33 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     }
   }, []); // deps intentionally empty — all reads via getState() / stable refs
   loadProjectsRef.current = loadProjects;
+
+  const loadMemberCounts = useCallback(async (projectsSource: Project[]) => {
+    if (projectsSource.length === 0) return;
+
+    if (memberCountsCacheRef.current && memberCountsCacheRef.current.expiresAt > Date.now()) {
+      setMemberCounts(memberCountsCacheRef.current.data);
+      return;
+    }
+
+    try {
+      const projectIds = projectsSource.map((p) => p.id);
+      const res = await fetch('/api/projects/member-counts', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectIds }),
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        setMemberCounts(data.data);
+        memberCountsCacheRef.current = {
+          data: data.data,
+          expiresAt: Date.now() + 60000,
+        };
+      }
+    } catch { /* silent */ }
+  }, []);
 
   const loadFolders = useCallback(async (
     projectsSource: Project[],
@@ -1193,6 +1352,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       loadProjects(false, { force: true }).then((fresh) => {
         const source = fresh.length > 0 ? fresh : mapped;
         if (source.length > 0) loadFolders(source, { force: true });
+        loadMemberCounts(source);
       });
       return;
     }
@@ -1201,6 +1361,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     // Fetch from network so the skeleton resolves instead of hanging forever.
     loadProjects(true, { force: true }).then((fetched) => {
       if (fetched.length > 0) loadFolders(fetched, { force: true });
+      loadMemberCounts(fetched);
     });
   }, [storeProjectsLen]); // fires on mount (0) and again when hydration populates the store (N)
 
@@ -1240,6 +1401,16 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     socket.on('project:created', handleCreated);
     socket.on('project:updated', handleUpdated);
 
+    // Refresh member counts when team membership changes
+    const handleMemberJoined = (payload: { projectId: string }) => {
+      if (!payload?.projectId) return;
+      setMemberCounts(prev => ({ ...prev, [payload.projectId]: (prev[payload.projectId] || 0) + 1 }));
+      memberCountsCacheRef.current = null;
+      loadProjectsRef.current(false, { force: true });
+    };
+
+    socket.on('project:member:joined', handleMemberJoined);
+
     // Reload projects when cache is invalidated (e.g. invite accepted, member removed)
     const handleCacheInvalidate = (payload: { data: { cacheTypes: string[]; userId: string } }) => {
       const { cacheTypes } = payload.data ?? {};
@@ -1256,7 +1427,13 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     const handleMemberRemoved = (payload: { projectId: string }) => {
       if (!payload?.projectId) return;
       setProjects((prev) => prev.filter((p) => p.id !== payload.projectId));
+      setMemberCounts(prev => {
+        const next = { ...prev };
+        delete next[payload.projectId];
+        return next;
+      });
       projectsCacheRef.current = null;
+      memberCountsCacheRef.current = null;
       loadProjectsRef.current(false, { force: true });
     };
 
@@ -1266,8 +1443,9 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     return () => {
       socket.off('project:created', handleCreated);
       socket.off('project:updated', handleUpdated);
-      socket.off('cache:invalidate', handleCacheInvalidate);
+      socket.off('project:member:joined', handleMemberJoined);
       socket.off('member:removed', handleMemberRemoved);
+      socket.off('cache:invalidate', handleCacheInvalidate);
     };
   }, []); // intentionally empty — socket events handle their own lifecycle
 
@@ -1408,6 +1586,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                     key={folder.id}
                     folder={folder}
                     onClick={() => setCurrentFolder(folder)}
+                    onEdit={(f) => { setEditingFolder(f); setShowFolderModal(true); }}
+                    onDelete={(f) => handleDeleteFolder(f)}
                   />
                 ))}
                 <TrashDropZone />
@@ -1439,8 +1619,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                 )}>
                   {starredProjects.map((project) => (
                     viewMode === 'grid'
-                      ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                      : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                      ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                      : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
                   ))}
                 </div>
               </SortableContext>
@@ -1464,8 +1644,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
               )}>
                 {priorityProjects.map((project) => (
                   viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
                 ))}
               </div>
               </SortableContext>
@@ -1481,8 +1661,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
               )}>
                 {allProjects.filter(p => !p.isFavorite).map((project) => (
                   viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
                 ))}
               </div>
               </SortableContext>
@@ -1511,8 +1691,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
             )}>
               {currentFolderProjects.map((project) => (
                 viewMode === 'grid'
-                  ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} />
-                  : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} />
+                  ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                  : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
               ))}
             </div>
             </SortableContext>
@@ -1535,9 +1715,44 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       {/* Create Folder Modal */}
       <CreateFolderModal
         isOpen={showFolderModal}
-        onClose={() => setShowFolderModal(false)}
-        onCreateFolder={handleCreateFolder}
+        onClose={() => { setShowFolderModal(false); setEditingFolder(null); }}
+        onCreateFolder={editingFolder ? handleEditFolder : handleCreateFolder}
+        editFolder={editingFolder}
       />
+
+      {/* Delete Folder Confirmation */}
+      {deletingFolder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setDeletingFolder(null)} />
+          <div className="relative z-50 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-100">
+                <svg className="h-5 w-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Folder</h3>
+                <p className="text-sm text-gray-500">Are you sure you want to delete "{deletingFolder.name}"? Projects inside will not be deleted.</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setDeletingFolder(null)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteFolder}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <DragOverlay
         modifiers={[snapCenterToCursor]}
@@ -1549,11 +1764,11 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         {activeProject ? (
           viewMode === 'grid' ? (
             <div className="w-[280px] opacity-80">
-              <ProjectGridCard project={activeProject} />
+              <ProjectGridCard project={activeProject} memberCounts={memberCounts} />
             </div>
           ) : (
             <div className="w-full max-w-[760px] opacity-80">
-              <ProjectListItem project={activeProject} />
+              <ProjectListItem project={activeProject} memberCounts={memberCounts} />
             </div>
           )
         ) : null}

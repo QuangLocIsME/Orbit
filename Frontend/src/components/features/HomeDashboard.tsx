@@ -238,7 +238,7 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
       try {
         const [projectsRes, tasksRes] = await Promise.all([
           apiFetch('/api/projects/me'),
-          apiFetch('/api/tasks/list'),
+          apiFetch('/api/tasks/my', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 20 }) }),
         ]);
 
         if (projectsRes.ok) {
@@ -280,17 +280,17 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
           const tasksData = await tasksRes.json();
           // Map API response to component's expected format
           const mappedTasks: Task[] = (tasksData.data || []).map((t: {
-            _id: string;
+            publicId?: string;
+            _id?: string;
             title: string;
-            project?: { name: string; publicId?: string };
-            projectId?: string;
+            projectName?: string;
             dueDate: string;
             priority: 'high' | 'medium' | 'low';
           }) => ({
-            id: t._id,
+            id: t.publicId || t._id || '',
             title: t.title,
-            project: t.project?.name || 'Unknown Project',
-            projectPublicId: t.project?.publicId || t.projectId || '',
+            project: t.projectName || 'Unknown Project',
+            projectPublicId: '',
             dueDate: t.dueDate,
             priority: t.priority,
           }));
@@ -593,23 +593,24 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
       {/* Events and Tasks Grid - styled like Recently visited */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Upcoming Events */}
-        <section>
+        <section aria-label="Upcoming events" className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2 text-muted-foreground">
               <CalendarIcon />
-              <span className="text-sm font-medium">Upcoming events</span>
+              <h2 className="text-sm font-medium">Upcoming events</h2>
             </div>
-            <a href="/events" className="text-xs text-indigo-600 hover:text-indigo-700">View all</a>
           </div>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3" role="list" aria-label="Event list">
             {events.length === 0 ? (
-              <div className="rounded-xl border border-gray-200 bg-white p-6 text-center">
+              <div className="rounded-xl border border-gray-200 bg-white p-6 text-center" role="listitem">
                 <CalendarIcon />
                 <p className="mt-2 text-sm text-muted-foreground">No upcoming events</p>
               </div>
             ) : (
               events.map((event) => (
-                <div 
+                <div
+                  role="listitem"
+                  data-cursor-element-id={`event-item-${event.id}`}
                   key={event.id} 
                   className="flex items-start gap-4 rounded-xl border border-gray-200 bg-white p-4 transition-all hover:border-gray-300 hover:shadow-md"
                 >
@@ -617,7 +618,7 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
                     <CalendarIcon />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-medium text-foreground">{event.title}</h3>
+                    <p className="text-sm font-medium text-foreground">{event.title}</p>
                     <p className="text-xs text-muted-foreground">
                       {formatDate(event.datetime)}, {formatTime(event.datetime)}
                     </p>
@@ -637,25 +638,38 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
         </section>
 
         {/* Your Tasks */}
-        <section>
+        <section aria-label="Your tasks" className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2 text-muted-foreground">
               <TaskIcon />
-              <span className="text-sm font-medium">Your tasks</span>
+              <h2 className="text-sm font-medium">Your tasks</h2>
             </div>
             <span className="text-xs text-muted-foreground">{pendingTasks} pending</span>
           </div>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3" role="list" aria-label="Task list">
             {tasks.length === 0 ? (
-              <div className="rounded-xl border border-gray-200 bg-white p-6 text-center">
+              <div className="rounded-xl border border-gray-200 bg-white p-6 text-center" role="listitem">
                 <TaskIcon />
                 <p className="mt-2 text-sm text-muted-foreground">No tasks</p>
               </div>
             ) : (
-              tasks.map((task) => {
+              [...tasks]
+                .sort((a, b) => {
+                  const isACompleted = completedTasks.has(a.id);
+                  const isBCompleted = completedTasks.has(b.id);
+                  if (isACompleted !== isBCompleted) return isACompleted ? 1 : -1;
+                  const now = new Date().getTime();
+                  const diffA = Math.abs(new Date(a.dueDate).getTime() - now);
+                  const diffB = Math.abs(new Date(b.dueDate).getTime() - now);
+                  return diffA - diffB;
+                })
+                .slice(0, 5)
+                .map((task) => {
                 const isCompleted = completedTasks.has(task.id);
                 return (
                   <div 
+                    role="listitem"
+                    data-cursor-element-id={`task-item-${task.id}`}
                     key={task.id} 
                     className={cn(
                       "flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 transition-all hover:border-gray-300 hover:shadow-md",
@@ -681,7 +695,7 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
                         {task.title}
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        {task.project} - {formatDate(task.dueDate)}
+                        {task.project}{task.dueDate ? ` - ${formatDate(task.dueDate)}` : ''}
                       </p>
                     </div>
                     <span className={cn(

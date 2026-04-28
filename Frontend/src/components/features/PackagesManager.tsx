@@ -66,7 +66,7 @@ const statusSummaryCard = {
   total: 'bg-[#F3F4F6] text-[#101828]',
   active: 'bg-[#DCFCE7] text-[#008236]',
   completed: 'bg-[#DFEAFF] text-[#155DFC]',
-  onHold: 'bg-[#FEF3C7] text-[#CA8A04]',
+  onHold: 'bg-[#FEF3C7] text-[rgba(202,138,4,1)]',
 } as const;
 
 const packageProgressPercent = (pkg: PackageItem) => {

@@ -6,7 +6,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_XKT_BUCKET = process.env.SUPABASE_XKT_BUCKET || 'xkt-models';
 const SUPABASE_IFC_BUCKET = process.env.SUPABASE_IFC_BUCKET || 'ifc-files';
 const SUPABASE_ATTACHMENT_BUCKET = process.env.SUPABASE_ATTACHMENT_BUCKET || 'cr-attachments';
-const SUPABASE_AVATAR_BUCKET = process.env.SUPABASE_AVATAR_BUCKET || 'avatars';
+const SUPABASE_AVATAR_BUCKET = process.env.SUPABASE_AVATAR_BUCKET || 'orbit-files';
 const S3_BUCKET = process.env.S3_BUCKET || 'orbit-files';
 const S3_ENDPOINT = process.env.S3_ENDPOINT || '';
 const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || '';
@@ -360,17 +360,74 @@ async function deleteUserAvatarFile(storagePath) {
     }
 }
 
+/**
+ * Build path cho project document file trong Supabase (orbit-files bucket, folder: files/).
+ * Format: files/projects/{projectId}/{baseName}-{uuidv7}.{ext}
+ *
+ * uuidv7 là time-ordered: 48 bit đầu embed Unix timestamp (ms).
+ * Sort file theo uuidv7 string (lexicographic) = sort theo thời gian tạo.
+ *
+ * @param {string} projectId
+ * @param {string} versionGroupId  - dùng làm prefix cho baseName
+ * @param {string} originalName     - tên gốc
+ * @param {string} uuidv7          - UUIDv7 cho file này (embed timestamp)
+ * @returns {string} path trong bucket, ví dụ: files/projects/{pid}/{baseName}-{uuidv7}.ext
+ */
+function buildProjectFilePath({ projectId, versionGroupId, originalName, uuidv7 }) {
+    const ext = (originalName || 'file').split('.').pop() || '';
+    const baseName = (originalName || 'file')
+        .replace(/\.[^.]+$/, '')
+        .replace(/[^a-zA-Z0-9_\-. ]/g, '-')
+        .replace(/\s+/g, '-')
+        .substring(0, 200);
+    const safeUuid = uuidv7 || 'unknown';
+    const safeName = ext ? `${baseName}-${safeUuid}.${ext}` : `${baseName}-${safeUuid}`;
+    return `files/projects/${projectId}/${safeName}`;
+}
+
+/**
+ * Upload project file buffer lên Supabase Storage (bucket: orbit-files).
+ * @param {Buffer} buffer - nội dung file
+ * @param {string} storagePath - path trả về từ buildProjectFilePath
+ * @returns {{ bucket, key, publicUrl }}
+ */
+async function uploadProjectFileBuffer(buffer, storagePath) {
+    assertSupabaseConfigured();
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${storagePath}`;
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            'Content-Type': 'application/octet-stream',
+            'x-upsert': 'true',
+        },
+        body: buffer,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase file upload failed: ${res.status} ${text}`);
+    }
+    return {
+        bucket: SUPABASE_AVATAR_BUCKET,
+        key: storagePath,
+        publicUrl: `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/public/${SUPABASE_AVATAR_BUCKET}/${storagePath}`,
+    };
+}
+
 module.exports = {
     SUPABASE_XKT_BUCKET,
     SUPABASE_IFC_BUCKET,
     SUPABASE_ATTACHMENT_BUCKET,
     SUPABASE_AVATAR_BUCKET,
+    SUPABASE_URL,
     buildSupabaseStoragePath,
     buildSupabaseIfcPath,
     buildSupabaseAttachmentPath,
     buildSupabaseThumbnailPath,
     buildSupabaseAvatarPath,
     buildUserAvatarPath,
+    buildProjectFilePath,
     uploadXktFile,
     uploadIfcBuffer,
     downloadIfcBuffer,
@@ -378,6 +435,7 @@ module.exports = {
     uploadProjectThumbnailBuffer,
     uploadAvatarBuffer,
     uploadUserAvatarBuffer,
+    uploadProjectFileBuffer,
     deleteAvatarFile,
     deleteUserAvatarFile,
     createSignedXktUrl,

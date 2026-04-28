@@ -22,6 +22,7 @@ export interface ScopedTaskScope {
 interface ScopedTasksPanelProps {
   scope: ScopedTaskScope;
   projectRole?: ProjectRole;
+  variant?: 'full' | 'compact';
 }
 
 interface TeamMemberView {
@@ -35,7 +36,7 @@ interface TeamMemberView {
 }
 
 interface ModelFile { id: string; name: string; folderPath?: string; }
-interface TeamMemberForTask { userId: string; user?: { fullName: string }; role: string; }
+interface TeamMemberForTask { userId: string; user?: { fullName: string; avatar?: string | null }; role: string; avatarUrl?: string | null; }
 
 interface TaskItem {
   id: string;
@@ -70,6 +71,7 @@ type CalendarTaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done'
 type LinkedSuggestionItem = { label: string; value: string };
 
 const avatarColors = ['bg-pink-500', 'bg-emerald-500', 'bg-indigo-500', 'bg-blue-500', 'bg-teal-500', 'bg-orange-500'];
+const MODEL_EXT = /\.(ifc|rvt|dwg|dxf|nwd|nwf|nwc|skp|fbx|obj|3ds|step|stp)$/i;
 
 const getInitials = (name: string) => {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -92,7 +94,7 @@ const formatIsoDate = (dateStr: string) => {
   return date.toISOString().slice(0, 10);
 };
 
-export default function ScopedTasksPanel({ scope, projectRole = 'member' }: ScopedTasksPanelProps) {
+export default function ScopedTasksPanel({ scope, projectRole = 'member', variant = 'full' }: ScopedTasksPanelProps) {
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
   const [modelFiles, setModelFiles] = useState<ModelFile[]>([]);
   const [loadingModelFiles, setLoadingModelFiles] = useState(false);
@@ -197,22 +199,27 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
 
     const loadModelFiles = async () => {
       try {
-        const url = scope.type === 'package' && scope.packageId
-          ? `/api/projects/${scope.projectId}/packages/${scope.packageId}/documents?types=ifc,rvt,dwg`
-          : `/api/projects/${scope.projectId}/documents?types=ifc,rvt,dwg`;
-
-        const res = await apiFetch(url);
+        const res = await apiFetch('/api/projects/packages/documents/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: scope.projectId, includePackages: true }),
+        });
         if (!res.ok) return;
 
         const payload = await res.json();
-        const docs: any[] = Array.isArray(payload?.data) ? payload.data : [];
+        const flatten = (nodes: any[]): any[] => {
+          const out: any[] = [];
+          for (const n of nodes ?? []) {
+            if (n.type === 'file' && MODEL_EXT.test(n.name || '')) {
+              out.push({ id: n.id, name: n.name, folderPath: n.folderPath });
+            }
+            if (n.children) out.push(...flatten(n.children));
+          }
+          return out;
+        };
 
         if (!cancelled) {
-          setModelFiles(docs.map((d: any) => ({
-            id: d.publicId || d.id || String(d._id),
-            name: d.name || d.fileName || 'Untitled',
-            folderPath: d.folderPath || d.folder?.name,
-          })));
+          setModelFiles(flatten(payload?.data?.tree?.children || []));
         }
       } catch {
         if (!cancelled) setModelFiles([]);
@@ -229,8 +236,9 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
   useEffect(() => {
     setTeamMembersForTask(teamMembers.map((m) => ({
       userId: m.id,
-      user: { fullName: m.name },
+      user: { fullName: m.name, avatar: m.avatarUrl },
       role: m.role,
+      avatarUrl: m.avatarUrl,
     })));
   }, [teamMembers]);
 
@@ -809,6 +817,58 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member' }: Scop
             }
           }}
         />
+      </div>
+    );
+  }
+
+  if (variant === 'compact') {
+    return (
+      <div className="flex-1 overflow-y-auto pr-1">
+        {isTasksLoading ? (
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+              <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            </div>
+          </div>
+        ) : tasksData.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+              <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-gray-700">No tasks yet</p>
+            <p className="text-xs text-gray-400 mt-1">Tasks created in this package will appear here</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {tasksData.slice(0, 5).map((task) => {
+              const assignee = teamMembers.find((m) => m.id === task.assigneeId);
+              const stageName = resolveStageName(task.status);
+              const isCompleted = stageName.toLowerCase().includes('complete') || stageName.toLowerCase().includes('done');
+
+              return (
+                <div
+                  key={task.id}
+                  className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{task.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {assignee ? assignee.name : 'Unassigned'}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize bg-[#F3F4F6] text-[#364153]">
+                    {isCompleted ? 'Done' : stageName}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   }

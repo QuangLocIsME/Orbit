@@ -28,10 +28,14 @@ const DocumentSchema = new mongoose.Schema({
     s3Key: { type: String, required: true, index: true },
     s3Url: { type: String, default: '', trim: true },
 
+    supabaseFileKey: { type: String, default: '', trim: true },
+    supabaseFileUrl: { type: String, default: '', trim: true },
+
     uploadedBy: { type: String, required: true, index: true },
 
     versionGroupId: { type: String, default: null, index: true },
     versionNumber: { type: Number, default: 1 },
+    uuidv7: { type: String, default: null, index: true },
     conversionStatus: {
         type: String,
         enum: ['PENDING', 'PROCESSING', 'READY', 'FAILED', 'NOT_SUPPORTED'],
@@ -45,6 +49,23 @@ const DocumentSchema = new mongoose.Schema({
     conversionAttempts: { type: Number, default: 0 },
     conversionError: { type: String, default: '' },
     convertedAt: { type: Date, default: null },
+
+    approvalStatus: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected'],
+        default: 'approved',
+        index: true,
+    },
+
+    _ifcMeta: {
+        schema: { type: String, default: '' },
+        projectName: { type: String, default: '' },
+        creator: { type: String, default: '' },
+        fileDescription: { type: String, default: '' },
+    },
+
+    versionLabel: { type: String, default: '', trim: true },
+    versionDescription: { type: String, default: '', trim: true },
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },

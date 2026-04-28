@@ -310,6 +310,69 @@ class TaskController {
         }
     }
 
+    async listMyTasks(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const limit = Math.min(Math.max(parseInt(req.body?.limit) || 5, 1), 50);
+            const { Types } = require('mongoose');
+            const Project = require('../models/Project');
+
+            const tasks = await Task.find({
+                $or: [
+                    { assigneeId: userId },
+                    { assigneeId: new Types.ObjectId(userId) },
+                    { assigneeIds: userId },
+                    { assigneeIds: new Types.ObjectId(userId) },
+                ],
+            })
+            .sort({ dueDate: 1, createdAt: -1 })
+            .lean();
+
+            const projectIds = [...new Set(tasks.map(t => t.projectId).filter(Boolean))];
+            const accessibleProjectIds = [];
+            const projectMemberRepo = require('../repositories/ProjectMemberRepository');
+            const projectNameMap = {};
+
+            if (projectIds.length > 0) {
+                const projects = await Project.find({
+                    publicId: { $in: projectIds },
+                    trashedAt: null,
+                }).select('publicId name').lean();
+                for (const p of projects) {
+                    projectNameMap[p.publicId] = p.name;
+                }
+                const nonTrashedIds = new Set(projects.map(p => p.publicId));
+
+                for (const pid of projectIds) {
+                    if (nonTrashedIds.has(pid)) {
+                        const member = await projectMemberRepo.findMember(pid, userId);
+                        if (member) accessibleProjectIds.push(pid);
+                    }
+                }
+            }
+
+            const accessibleTasks = tasks
+                .filter(t => accessibleProjectIds.includes(t.projectId))
+                .map(t => ({
+                    ...t,
+                    projectName: projectNameMap[t.projectId] || 'Unknown Project',
+                }))
+                .sort((a, b) => {
+                    if (a.dueDate && b.dueDate) return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+                    if (a.dueDate) return -1;
+                    if (b.dueDate) return 1;
+                    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                })
+                .slice(0, limit);
+
+            return res.status(200).json({ success: true, data: accessibleTasks });
+        } catch {
+            return serverError(res, 'Load my tasks failed');
+        }
+    }
+
     async detailTask(req, res) {
         try {
             const userId = requireUserId(req, res);

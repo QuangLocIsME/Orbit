@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight,
-  Eye, Download, Trash2, Pencil,
+  Eye, Download, Trash2, Pencil, Clock, X,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
@@ -18,6 +18,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import VersionHistoryModal from './VersionHistoryModal';
 
 // Helper function to download file from URL
 const handleDownloadFile = async (url: string, filename: string) => {
@@ -61,8 +69,13 @@ interface TreeNode {
   conversionStatus?: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'NOT_SUPPORTED';
   conversionError?: string;
   versionNumber?: number;
+  versionLabel?: string;
+  versionDescription?: string;
+  versionGroupId?: string;
+  versionCount?: number;
   isPackage?: boolean;
   icon?: string;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
 }
 
 function findNodeById(node: TreeNode | null, id: string): TreeNode | null {
@@ -95,6 +108,16 @@ function buildBreadcrumbs(root: TreeNode | null, currentId: string): TreeNode[] 
 
 function isInPackageFolder(nodeId: string): boolean {
   return nodeId.includes('/pkg/');
+}
+
+function findFileNodeByName(node: TreeNode | null, fileName: string): TreeNode | null {
+  if (!node) return null;
+  if (node.type === 'file' && node.name?.toLowerCase() === fileName.toLowerCase()) return node;
+  for (const child of node.children || []) {
+    const found = findFileNodeByName(child, fileName);
+    if (found) return found;
+  }
+  return null;
 }
 
 function formatRelativeTime(value?: string) {
@@ -153,8 +176,18 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string>('');
   const [previewImageUrl, setPreviewImageUrl] = useState<string>('');
+  const [previewTextContent, setPreviewTextContent] = useState<string>('');
+  const [previewTextFileName, setPreviewTextFileName] = useState<string>('');
+  const [isLoadingText, setIsLoadingText] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null);
+  const [versionHistoryFile, setVersionHistoryFile] = useState<TreeNode | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Version modal state - show before uploading
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [pendingUploadVersion, setPendingUploadVersion] = useState('');
+  const [pendingUploadDescription, setPendingUploadDescription] = useState('');
 
   const [contextMenu, setContextMenu] = useState<{
     node: TreeNode;
@@ -316,7 +349,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
     await loadDocuments();
   };
 
-  const uploadFile = async (file: File): Promise<void> => {
+  const uploadFile = async (file: File, versionLabel: string, versionDescription: string): Promise<void> => {
     if (!canManage) {
       throw new Error('You do not have permission to upload files');
     }
@@ -330,6 +363,8 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
     formData.append('folderType', folderType);
     formData.append('folderPath', location.folderPath);
     formData.append('file', file);
+    formData.append('versionLabel', versionLabel);
+    formData.append('versionDescription', versionDescription);
 
     const res = await fetch('/api/projects/packages/upload', {
       method: 'POST',
@@ -343,8 +378,20 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       throw new Error(payload?.message || `Upload failed (${res.status})`);
     }
 
-    toast.success(payload?.mode === 'queue' ? `Queued: ${file.name}` : `Uploaded: ${file.name}`);
+    toast.success(
+      payload?.data?.approvalStatus === 'pending'
+        ? `${file.name} submitted for approval (${versionLabel})`
+        : payload?.mode === 'queue'
+          ? `Queued: ${file.name}`
+          : payload?.data?.isNewVersion
+            ? `${file.name} updated to version ${payload.data.versionNumber}`
+            : `Uploaded: ${file.name}`
+    );
   };
+
+  // Version info shared across all queued files (set from modal)
+  const [queueVersionLabel, setQueueVersionLabel] = useState('');
+  const [queueVersionDescription, setQueueVersionDescription] = useState('');
 
   const processUploadQueue = async () => {
     const currentQueue = uploadQueue;
@@ -362,13 +409,12 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
     }));
 
     try {
-      await uploadFile(current);
+      await uploadFile(current, queueVersionLabel || 'v1.0.2', queueVersionDescription);
       await loadDocuments();
     } catch (error) {
       toast.error(`Upload failed: ${current.name} - ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 
-    // Release processing lock so effect can continue with the remaining queue.
     setIsUploading(false);
     setUploadQueue(rest);
   };
@@ -542,12 +588,13 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   };
 
   if (loading) {
-    return <div className="space-y-6 py-1 px-6 lg:px-[80px] xl:px-[160px] text-sm text-gray-500">Loading documents...</div>;
+    return <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px] text-sm text-gray-500">Loading documents...</div>;
   }
 
   return (
-    <div className="space-y-6 py-1 px-6 lg:px-[80px] xl:px-[160px]">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+      {/* Header */}
+      <div className="flex items-center justify-between">
         {!isPackageMode && <h2 className="text-[24px] font-normal text-[#101828]">Documents & Drawings</h2>}
 
         {isPackageMode && (
@@ -570,7 +617,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             <button
               onClick={() => setIsCreateFolderOpen(true)}
               disabled={!canManage}
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-gray-200 bg-white px-5 text-[14px] font-normal text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <FolderPlus className="h-4 w-4" />
               Create Folder
@@ -580,7 +627,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading || !canManage}
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-[#155DFC] px-5 text-[14px] font-normal text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
           >
             <Upload className="h-4 w-4" />
             {isUploading
@@ -597,14 +644,43 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => {
+            onChange={async (e) => {
               const files = Array.from(e.target.files || []);
               if (files.length === 0) return;
+              const [first, ...rest] = files;
+
+              // Check if this file matches an existing file to suggest next version
+              const existingFile = findFileNodeByName(rootTree, first.name);
+              let suggestedVersion = 'v1.0.2';
+
+              if (existingFile) {
+                try {
+                  const res = await fetch('/api/projects/packages/documents/suggest-version', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                    body: JSON.stringify({ projectId, fileId: existingFile.id }),
+                  });
+                  const data = await res.json();
+                  if (data.success && data.data?.versionLabel) {
+                    suggestedVersion = data.data.versionLabel;
+                  }
+                } catch {
+                  // fallback to default
+                }
+              }
+
+              setPendingUploadFile(first);
+              setPendingUploadVersion(suggestedVersion);
+              setPendingUploadDescription('');
+              setVersionModalOpen(true);
               setUploadProgress((prev) => ({
                 done: prev.done,
                 total: prev.total + files.length,
               }));
-              setUploadQueue((prev) => [...prev, ...files]);
+              if (rest.length > 0) {
+                setUploadQueue((prev) => [...prev, ...rest]);
+              }
               if (fileInputRef.current) fileInputRef.current.value = '';
             }}
           />
@@ -648,7 +724,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
           ) : (
             <ul>
               {visibleChildren.map((child, idx) => {
-                const isLast = idx === (currentFolder.children || []).length - 1;
+                const isLast = idx === visibleChildren.length - 1;
                 if (child.type === 'folder') {
                   return (
                     <li
@@ -749,11 +825,21 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
                           )}
                         </div>
                       ) : (
-                        <div
-                          onDoubleClick={() => handleDoubleClickName(child)}
-                          className={isInPackageContext ? 'flex-1 text-sm font-medium text-[#101828]' : 'flex-1 cursor-pointer text-sm font-medium text-[#101828]'}
-                        >
-                          {child.name}
+                        <div className="flex flex-1 items-center gap-2">
+                          <div
+                            onDoubleClick={() => handleDoubleClickName(child)}
+                            className={isInPackageContext ? 'text-sm font-medium text-[#101828]' : 'cursor-pointer text-sm font-medium text-[#101828]'}
+                          >
+                            {child.name}
+                          </div>
+                          {(child.versionCount ?? 1) > 1 && (
+                            <span className="inline-flex items-center gap-1 rounded bg-[#EFF6FF] px-1.5 py-0.5 text-[11px] font-medium text-[#1D4ED8]">
+                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
+                              </svg>
+                              {child.versionLabel || `v${child.versionNumber}`}
+                            </span>
+                          )}
                         </div>
                       )}
 
@@ -761,6 +847,31 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
                         <div className="flex items-center gap-1">
                           {isImage && (
                             <button onClick={() => setPreviewImageUrl(child.s3Url || '')} className="rounded p-1 text-gray-600 hover:bg-gray-100" title="Preview image">
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          )}
+
+                          {((child.mimeType || '').startsWith('text/') || /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(child.name)) && (
+                            <button
+                              onClick={async () => {
+                                const url = child.s3Url;
+                                if (!url) return;
+                                setIsLoadingText(true);
+                                setPreviewTextFileName(child.name);
+                                try {
+                                  const res = await fetch(url);
+                                  if (!res.ok) throw new Error('Failed to load file');
+                                  const text = await res.text();
+                                  setPreviewTextContent(text);
+                                } catch {
+                                  setPreviewTextContent('Failed to load file content.');
+                                } finally {
+                                  setIsLoadingText(false);
+                                }
+                              }}
+                              className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                              title="Preview text file"
+                            >
                               <Eye className="h-4 w-4" />
                             </button>
                           )}
@@ -832,7 +943,17 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
                         : <FileText className="h-5 w-5 text-[#2563EB]" />}
                     </span>
                     <div className="min-w-0">
-                      <p className="truncate text-[14px] text-[#101828]">{child.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-[14px] text-[#101828]">{child.name}</p>
+                        {child.type === 'file' && (child.versionCount ?? 1) > 1 && (
+                          <span className="inline-flex items-center gap-1 shrink-0 rounded bg-[#EFF6FF] px-1.5 py-0.5 text-[11px] font-medium text-[#1D4ED8]">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" />
+                            </svg>
+                            {child.versionLabel || `v${child.versionNumber}`}
+                          </span>
+                        )}
+                      </div>
                       <p className="truncate text-[12px] text-[#6A7282]">
                         {[
                           child.type === 'folder' ? 'Folder' : (child.size || 'File'),
@@ -892,10 +1013,10 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             />
 
             <div className="mt-5 flex justify-end gap-2">
-              <button onClick={() => setIsCreateFolderOpen(false)} className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button onClick={() => setIsCreateFolderOpen(false)} className="rounded-[10px] px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
               <button
                 onClick={() => createFolder().catch((e: any) => toast.error(e.message))}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                className="rounded-[10px] bg-[#155DFC] px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 transition-colors"
               >
                 Create
               </button>
@@ -912,15 +1033,99 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
         </div>
       )}
 
+      {previewTextContent !== '' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}>
+          <div
+            className="relative z-10 flex flex-col w-full max-w-4xl mx-4 bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] max-h-[85vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5E7EB] shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#EEF2FF]">
+                  <svg className="h-4 w-4 text-[#4F39F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-[16px] font-semibold text-[#101828]">Text Preview</h2>
+                  <p className="text-[12px] text-[#6A7282] truncate max-w-[300px]" title={previewTextFileName}>{previewTextFileName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}
+                className="p-2 text-[#6A7282] hover:text-gray-700 rounded-[10px] hover:bg-gray-100 transition-colors"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            {isLoadingText ? (
+              <div className="flex items-center justify-center flex-1 py-16">
+                <svg className="h-8 w-8 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+              </div>
+            ) : (
+              <pre className="flex-1 overflow-auto px-6 py-4 text-[13px] font-mono text-[#374151] bg-[#F9FAFB] whitespace-pre-wrap break-all">
+                {previewTextContent}
+              </pre>
+            )}
+            <div className="flex justify-end px-6 py-3 border-t border-[#E5E7EB] shrink-0 bg-white">
+              <button
+                onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}
+                className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed z-[100] min-w-[160px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+          className="fixed z-[100] min-w-[180px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          {!packageNode?.isPackage && !isInPackageFolder(currentFolderId) && (
+          {contextMenu.node.type === 'file' && (
             <>
+              {contextMenu.node.versionCount && contextMenu.node.versionCount > 1 && (
+                <>
+                  <button
+                    onClick={() => {
+                      setContextMenu(null);
+                      setVersionHistoryFile(contextMenu.node);
+                    }}
+                    className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Clock className="h-4 w-4 text-gray-400" />
+                    Version History
+                  </button>
+                  <div className="mx-3 border-t border-gray-100" />
+                </>
+              )}
+              <button
+                onClick={() => {
+                  const url = contextMenu.node.s3Url || '#';
+                  handleDownloadFile(url, contextMenu.node.name || 'file');
+                  setContextMenu(null);
+                }}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <Download className="h-4 w-4 text-gray-400" />
+                Download
+              </button>
+            </>
+          )}
+          {!packageNode?.isPackage && !isInPackageFolder(currentFolderId) && canManage && (
+            <>
+              {contextMenu.node.type === 'file' && (
+                <div className="mx-3 border-t border-gray-100" />
+              )}
               <button
                 onClick={() => {
                   setContextMenu(null);
@@ -970,6 +1175,109 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {versionHistoryFile && (
+        <VersionHistoryModal
+          projectId={projectId}
+          file={versionHistoryFile}
+          onClose={() => setVersionHistoryFile(null)}
+          onRestore={refresh}
+        />
+      )}
+
+      {/* Version Input Modal */}
+      <Dialog open={versionModalOpen} onOpenChange={(open) => {
+        setVersionModalOpen(open);
+        if (!open) {
+          setPendingUploadFile(null);
+          setPendingUploadVersion('');
+          setPendingUploadDescription('');
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span>Upload File</span>
+              <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                {pendingUploadFile?.name}
+              </span>
+            </DialogTitle>
+            <DialogDescription>
+              Enter version and description for this upload. It will be submitted for approval.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-sm font-medium text-gray-700">
+                Version <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={pendingUploadVersion}
+                onChange={(e) => setPendingUploadVersion(e.target.value)}
+                placeholder="e.g. v1.0.2"
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                autoFocus
+              />
+              <p className="mt-1 text-xs text-gray-500">Example: v1.0.2, v1.1.2, v1.2, v2.0.2</p>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700">
+                Description / Note
+              </label>
+              <textarea
+                value={pendingUploadDescription}
+                onChange={(e) => setPendingUploadDescription(e.target.value)}
+                placeholder="Describe the changes or notes for this version..."
+                rows={3}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => {
+                setVersionModalOpen(false);
+                setPendingUploadFile(null);
+                setPendingUploadVersion('');
+                setPendingUploadDescription('');
+              }}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                if (!pendingUploadVersion.trim()) {
+                  toast.error('Version is required');
+                  return;
+                }
+                if (!pendingUploadFile) return;
+
+                const version = pendingUploadVersion.trim();
+                const description = pendingUploadDescription.trim();
+                const fileToUpload = pendingUploadFile;
+
+                setVersionModalOpen(false);
+                setPendingUploadFile(null);
+                setPendingUploadVersion('');
+                setPendingUploadDescription('');
+
+                // Add the file to queue with shared version info
+                setQueueVersionLabel(version);
+                setQueueVersionDescription(description);
+                setUploadQueue((prev) => [...prev, fileToUpload]);
+              }}
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+            >
+              Upload for Approval
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -9,6 +9,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 router.get('/me', authenticate, (req, res) => ProjectController.getMyProjects(req, res));
 router.post('/create', authenticate, (req, res) => ProjectController.createProject(req, res));
 router.post('/member-list', authenticate, (req, res) => ProjectController.getProjectMembers(req, res));
+router.post('/member-counts', authenticate, (req, res) => ProjectController.getMemberCounts(req, res));
 router.post('/update', authenticate, (req, res) => ProjectController.updateProject(req, res));
 router.post('/move-folder', authenticate, (req, res) => ProjectController.moveProjectToFolder(req, res));
 router.post('/remove-folder', authenticate, (req, res) => ProjectController.removeProjectFromFolder(req, res));

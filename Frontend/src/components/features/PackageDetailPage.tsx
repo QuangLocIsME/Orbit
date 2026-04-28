@@ -616,7 +616,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   return (
     <div className="min-h-screen bg-white">
       <div className="bg-white">
-        <div className="px-[300px] py-3">
+        <div className="px-[100px] py-3">
         <div className="space-y-6 py-3 px-6 lg:px-[80px] xl:px-[160px]">
           <div className="flex items-center justify-between mb-4">
             <a href={backToPackagesHref} className="inline-flex items-center justify-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
@@ -886,7 +886,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
         </div>
       </div>
 
-      <div className="px-[300px] py-0">
+      <div className="px-[100px] py-0">
         <div className="space-y-4 py-1 px-6 lg:px-[80px] xl:px-[160px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">
@@ -941,31 +941,11 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                   <CheckCircle className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold text-foreground">Recent Tasks</h3>
                 </div>
-                <div className="flex-1 overflow-y-auto pr-1">
-                  {recentTasks.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 text-center">
-                      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-                        <CheckCircle className="h-6 w-6 text-gray-400" />
-                      </div>
-                      <p className="text-sm font-medium text-gray-700">No tasks yet</p>
-                      <p className="text-xs text-gray-400 mt-1">Tasks created in this package will appear here</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {recentTasks.map((task) => (
-                        <div key={task.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                          <div>
-                            <p className="text-sm font-medium text-foreground">{task.title}</p>
-                            <p className="text-xs text-muted-foreground">{task.assigneeName}</p>
-                          </div>
-                          <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize bg-[#F3F4F6] text-[#364153]">
-                            {task.status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <ScopedTasksPanel
+                  scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+                  projectRole={projectRole}
+                  variant="compact"
+                />
               </div>
             </div>
           </div>
