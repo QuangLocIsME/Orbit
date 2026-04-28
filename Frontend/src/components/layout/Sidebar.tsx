@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
 import { useAppStore, type ApiProject } from '../../stores/appStore';
 import { apiFetch } from '../../lib/api-client';
+import { useNotifications } from '@/hooks/useNotifications';
 
 interface SidebarProps {
   currentPath: string;
@@ -81,8 +83,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');
+  const [showNotifications, setShowNotifications] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+
+  const { unseenCount, markAllSeen, notifications, markRead, markAllRead, deleteNotification } = useNotifications();
+  const totalUnseen = unseenCount;
 
   // Fetch projects from API
   const fetchProjects = async () => {
@@ -182,10 +189,21 @@ export default function Sidebar({ currentPath }: SidebarProps) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
       }
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  function timeAgo(dateStr: string): string {
+    const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  }
 
   // Listen for sidebar toggle from TopBar
   useEffect(() => {
@@ -235,46 +253,172 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     >
       {/* User Profile Header */}
       <div className="relative border-b border-sidebar-border" ref={userMenuRef}>
-        <button
-          onClick={() => !isCollapsed && setIsUserMenuOpen(!isUserMenuOpen)}
-          className={cn(
-            'flex h-14 w-full items-center justify-between px-4 transition-colors hover:bg-sidebar-accent',
-            isCollapsed && 'justify-center'
-          )}
-        >
-          {/* Expanded state */}
-          <div className={cn('flex items-center gap-3', isCollapsed && 'hidden')}>
-            {authUser?.avatar ? (
-              <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover flex-shrink-0" />
-            ) : (
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white flex-shrink-0">
-                {displayInitials}
-              </div>
+        <div className="flex h-14 items-center justify-between px-4">
+          {/* User Info */}
+          <button
+            onClick={() => !isCollapsed && setIsUserMenuOpen(!isUserMenuOpen)}
+            className={cn(
+              'flex items-center gap-3 transition-colors hover:bg-sidebar-accent rounded-lg',
+              isCollapsed && 'justify-center'
             )}
-            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
-          </div>
-          {!isCollapsed && (
-            <svg
-              className={cn('h-4 w-4 text-muted-foreground transition-transform flex-shrink-0', isUserMenuOpen && 'rotate-180')}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          )}
+          >
+            <div className={cn('flex items-center gap-3', isCollapsed && 'hidden')}>
+              {authUser?.avatar ? (
+                <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover flex-shrink-0" />
+              ) : (
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#155DFC] text-xs font-medium text-white flex-shrink-0">
+                  {displayInitials}
+                </div>
+              )}
+              <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
+            </div>
+            {isCollapsed && (
+              authUser?.avatar ? (
+                <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover" />
+              ) : (
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#155DFC] text-xs font-medium text-white">
+                  {displayInitials}
+                </div>
+              )
+            )}
+          </button>
 
-          {/* Collapsed state */}
-          {isCollapsed && (
-            authUser?.avatar ? (
-              <img src={authUser.avatar} alt={displayName} className="flex h-8 w-8 items-center justify-center rounded-full object-cover" />
-            ) : (
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-medium text-white">
-                {displayInitials}
-              </div>
-            )
-          )}
-        </button>
+          {/* Chevron + Notification Button */}
+          <div className="flex items-center gap-2">
+            {/* Chevron */}
+            {!isCollapsed && (
+              <button
+                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              >
+                <svg
+                  className={cn('h-4 w-4 transition-transform', isUserMenuOpen && 'rotate-180')}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
+
+            {/* Notification Bell */}
+            <div ref={notificationRef} className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowNotifications(!showNotifications);
+                  if (!showNotifications) markAllSeen();
+                }}
+                className="relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                aria-label="Notifications"
+                title="Notifications"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                {totalUnseen > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] w-auto items-center justify-center rounded-full border-2 border-sidebar bg-red-500 px-1 text-[10px] font-medium text-white">
+                    {totalUnseen > 9 ? '9+' : totalUnseen}
+                  </span>
+                )}
+              </button>
+
+              {/* Notifications Dropdown */}
+              {showNotifications && ReactDOM.createPortal((
+                <div
+                  className="fixed left-[280px] top-[60px] w-80 rounded-xl border border-border bg-card shadow-xl z-[99999]"
+                >
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-card-foreground">Notifications</h3>
+                      {totalUnseen > 0 && (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600">
+                          {totalUnseen} new
+                        </span>
+                      )}
+                    </div>
+                    {totalUnseen > 0 && (
+                      <button
+                        onClick={() => {
+                          markAllSeen();
+                          markAllRead();
+                        }}
+                        className="text-xs text-indigo-600 hover:underline"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+                        <svg className="h-8 w-8 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        <p className="text-sm">No notifications</p>
+                      </div>
+                    ) : (
+                      notifications.map((n) => (
+                        <div
+                          key={n.id}
+                          className="group relative"
+                        >
+                          <button
+                            onClick={() => {
+                              markRead(n.id);
+                              if (n.link) {
+                                const match = n.link.match(/\/projects\/([^/]+)/);
+                                if (match) {
+                                  window.location.href = `/projects/${match[1]}?tab=tasks`;
+                                } else {
+                                  window.location.href = n.link;
+                                }
+                              }
+                            }}
+                            className={cn(
+                              'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted',
+                              !n.seen && 'bg-indigo-50/50'
+                            )}
+                          >
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-600">
+                              {n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : n.type === 'error' ? '✕' : 'ℹ'}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className={cn('text-sm truncate', !n.seen && 'font-medium text-foreground')}>
+                                {n.title}
+                              </p>
+                              {n.message && (
+                                <p className="mt-0.5 truncate text-xs text-muted-foreground">{n.message}</p>
+                              )}
+                              <p className="mt-1 text-[10px] text-muted-foreground">{timeAgo(n.createdAt)}</p>
+                            </div>
+                            {!n.seen && (
+                              <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
+                            )}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteNotification(n.id);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md bg-muted/80 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 group-hover:opacity-100"
+                            aria-label="Delete notification"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ), document.body)}
+            </div>
+          </div>
+        </div>
 
         {/* Dropdown Menu */}
         {isUserMenuOpen && !isCollapsed && (

@@ -357,6 +357,7 @@ class TaskController {
                 .filter(t => accessibleProjectIds.includes(t.projectId))
                 .map(t => ({
                     ...t,
+                    projectPublicId: t.projectId,
                     projectName: projectNameMap[t.projectId] || 'Unknown Project',
                 }))
                 .sort((a, b) => {
