@@ -145,7 +145,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-[#F9FAFB] bg-white px-4 sm:px-6 lg:px-[300px]">
+      <header className="sticky top-0 z-50 border-b border-[#F9FAFB] bg-white px-4 sm:px-6 lg:px-[100px]">
         <div className="mx-auto flex h-16 max-w-[1292px] items-center justify-between px-4 sm:px-6 lg:px-0">
           {/* Logo */}
           <a href="/" className="flex items-center">
@@ -175,7 +175,7 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-white px-4 sm:px-6 lg:px-[300px]">
+      <section className="relative overflow-hidden bg-white px-4 sm:px-6 lg:px-[100px]">
         {/* Decorative background elements */}
         {/* Large blue circle - left */}
         <div className="absolute -left-20 top-0 h-[400px] w-[400px] rounded-full bg-[#dbeafe]/60" />
@@ -277,7 +277,7 @@ export default function LandingPage() {
       </section>
 
       {/* Stats Section */}
-      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         {/* Wavy gradient background */}
         <div className="absolute inset-0">
           <svg className="absolute top-0 h-48 w-full" viewBox="0 0 1440 200" fill="none" preserveAspectRatio="none">
@@ -328,7 +328,7 @@ export default function LandingPage() {
       </section>
 
 {/* Features Section - How We Work */}
-      <section id="features" className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <section id="features" className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         {/* Decorative elements */}
         <div className="absolute -left-40 top-20 h-80 w-80 rounded-full bg-[#dbeafe]/40" />
         <div className="absolute -right-20 top-1/3 h-64 w-64 rounded-full bg-[#dbeafe]/50" />
@@ -428,7 +428,7 @@ export default function LandingPage() {
       </section>
 
       {/* Section 4 - Customization & Integration */}
-      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         {/* Background wave SVG decoration */}
         <svg 
           className="pointer-events-none absolute inset-0 h-full w-full"
@@ -641,7 +641,7 @@ export default function LandingPage() {
       </section>
 
       {/* Section 5 - How to Get Started */}
-      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         {/* Decorative circles */}
         <div className="absolute right-[10%] top-20 h-32 w-32 rounded-full bg-[#DBEAFE]" />
         <div className="absolute bottom-32 left-20 h-24 w-24 rounded-full bg-[#F3E8FF]" />
@@ -802,7 +802,7 @@ export default function LandingPage() {
       </section>
 
       {/* Section 6 - Testimonials */}
-      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <section className="relative overflow-hidden bg-white px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         {/* Decorative circles */}
         <div className="absolute left-10 top-20 h-32 w-32 rounded-full bg-[#bedbff]/50" />
         <div className="absolute bottom-20 right-10 h-28 w-28 rounded-full bg-[#e9d4ff]/50" />
@@ -945,7 +945,7 @@ export default function LandingPage() {
       </section>
 
       {/* Section 8 - CTA Banner */}
-      <section className="bg-white px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <section className="bg-white px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         <div className="mx-auto max-w-[1292px]">
           <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#1C398E] via-[#312C85] to-[#193CB8] px-8 py-12 sm:px-12 lg:px-16">
             {/* Content */}
@@ -982,7 +982,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-4 py-16 sm:px-6 lg:px-[300px] lg:py-24">
+      <footer className="border-t border-[#E5E7EB] bg-[#F9FAFB] px-4 py-16 sm:px-6 lg:px-[100px] lg:py-24">
         <div className="mx-auto max-w-[1292px]">
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
             {/* Logo & Description */}

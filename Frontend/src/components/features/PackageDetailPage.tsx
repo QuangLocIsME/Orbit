@@ -616,7 +616,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   return (
     <div className="min-h-screen bg-white">
       <div className="bg-white">
-        <div className="px-[300px] py-3">
+        <div className="px-[100px] py-3">
         <div className="space-y-6 py-3 px-6 lg:px-[80px] xl:px-[160px]">
           <div className="flex items-center justify-between mb-4">
             <a href={backToPackagesHref} className="inline-flex items-center justify-center gap-1 text-sm text-[#4A5565] hover:text-[#101828] transition-colors">
@@ -886,7 +886,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
         </div>
       </div>
 
-      <div className="px-[300px] py-0">
+      <div className="px-[100px] py-0">
         <div className="space-y-4 py-1 px-6 lg:px-[80px] xl:px-[160px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">

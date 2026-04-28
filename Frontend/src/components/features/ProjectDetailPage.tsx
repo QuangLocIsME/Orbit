@@ -1221,7 +1221,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             </button>
           )}
           
-          <div className="relative w-full px-[300px] pb-6">
+          <div className="relative w-full px-[100px] pb-6">
             <div className="flex items-center gap-2 text-white/80 text-sm mb-2">
               <ClockIcon className="h-4 w-4" />
               <span>Last updated {lastActivity ? formatRelativeTime(lastActivity) : project.lastVisited ? formatRelativeTime(project.lastVisited) : 'recently'}</span>
@@ -1233,7 +1233,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       )}
 
       {/* Content - With 300px left/right margins */}
-      <div className="px-[300px] py-6">
+      <div className="px-[100px] py-6">
         {/* Packages Tab Content */}
         {activeTab === 'packages' && (
           <PackagesManager fixedProjectId={project.publicId} fixedProjectName={project.name} />

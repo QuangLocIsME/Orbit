@@ -450,11 +450,13 @@ export default function Sidebar({ currentPath }: SidebarProps) {
 
         {/* Project Groups */}
         {!isCollapsed && (
-          <>
-            <ProjectGroup title="FAVORITES" projects={favorites} currentPath={currentPath} />
-            <ProjectGroup title="MY PROJECTS" projects={myProjects} currentPath={currentPath} />
-            <ProjectGroup title="SHARED" projects={shared} currentPath={currentPath} />
-          </>
+          <ProjectGroup title="FAVORITES" projects={favorites} currentPath={currentPath} storageKey="orbit-favorites" />
+        )}
+        {!isCollapsed && (
+          <ProjectGroup title="MY PROJECTS" projects={myProjects} currentPath={currentPath} storageKey="orbit-my-projects" />
+        )}
+        {!isCollapsed && (
+          <ProjectGroup title="SHARED" projects={shared} currentPath={currentPath} storageKey="orbit-shared" />
         )}
       </nav>
 
@@ -694,41 +696,68 @@ interface ProjectGroupProps {
   title: string;
   projects: Project[];
   currentPath: string;
+  storageKey: string;
 }
 
-function ProjectGroup({ title, projects, currentPath }: ProjectGroupProps) {
+function ProjectGroup({ title, projects, currentPath, storageKey }: ProjectGroupProps) {
+  const [isOpen, setIsOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored === null ? true : stored === 'true';
+    } catch { return true; }
+  });
+
+  const toggle = () => {
+    setIsOpen(prev => {
+      const next = !prev;
+      try { localStorage.setItem(storageKey, String(next)); } catch {}
+      return next;
+    });
+  };
+
   if (projects.length === 0) return null;
 
   return (
     <div className="mt-6">
-      <h3 className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </h3>
-      <ul className="space-y-1">
-        {projects.map((project) => {
-          const isActive = currentPath === `/projects/${project.slug}`;
+      <button
+        onClick={toggle}
+        aria-expanded={isOpen}
+        aria-controls={`${storageKey}-content`}
+        className="mb-2 flex w-full items-center gap-2 px-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors group"
+      >
+        <span className="group-hover:text-foreground relative flex w-4 h-4 shrink-0 items-center justify-center text-muted-foreground transition-all duration-150">
+          <span className={cn('text-[11px] leading-none transition-transform duration-150', isOpen ? 'rotate-90' : '')}>{'>'}</span>
+        </span>
+        <span>{title}</span>
+      </button>
+      {isOpen && (
+        <ul id={`${storageKey}-content`} className="space-y-1">
+          {projects.map((project) => {
+            const isActive = currentPath === `/projects/${project.slug}`;
 
-          return (
-            <li key={project.id}>
-              <a
-                href={`/projects/${project.slug}`}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
-                  isActive
-                    ? 'bg-gray-100 dark:bg-zinc-700 text-foreground font-medium'
-                    : 'text-muted-foreground hover:bg-gray-100 dark:hover:bg-zinc-700 hover:text-foreground active:bg-gray-200 dark:active:bg-zinc-600'
-                )}
-              >
-                <IconMap.project className="h-4 w-4 shrink-0" />
-                <span className="truncate flex-1">{project.name}</span>
-                {project.isFavorite && (
-                  <IconMap.star className="h-4 w-4 shrink-0 text-yellow-500" />
-                )}
-              </a>
-            </li>
-          );
-        })}
-      </ul>
+            return (
+              <li key={project.id}>
+                <a
+                  href={`/projects/${project.slug}`}
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
+                    isActive
+                      ? 'bg-gray-100 dark:bg-zinc-700 text-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-gray-100 dark:hover:bg-zinc-700 hover:text-foreground active:bg-gray-200 dark:active:bg-zinc-600'
+                  )}
+                >
+                  <IconMap.project className="h-4 w-4 shrink-0" />
+                  <span className="truncate flex-1">{project.name}</span>
+                  {project.isFavorite && (
+                    <IconMap.star className="h-4 w-4 shrink-0 text-yellow-500" />
+                  )}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

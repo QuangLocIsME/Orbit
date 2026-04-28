@@ -37,9 +37,11 @@ interface AvatarProps {
   color?: string;
   size?: 'xs' | 'sm' | 'md';
   avatarSrc?: string | null;
+  avatarUrl?: string | null;
 }
 
-export function Avatar({ name, color = '#6366f1', size = 'xs', avatarSrc }: AvatarProps) {
+export function Avatar({ name, color = '#6366f1', size = 'xs', avatarSrc, avatarUrl }: AvatarProps) {
+  const imageUrl = avatarSrc || avatarUrl;
   const initials = (name || '')
     .split(' ')
     .map(w => w?.[0])
@@ -52,9 +54,9 @@ export function Avatar({ name, color = '#6366f1', size = 'xs', avatarSrc }: Avat
     md: 'h-7 w-7 text-[11px]',
   };
   const sizeClass = sizes[size];
-  return avatarSrc ? (
+  return imageUrl ? (
     <img
-      src={avatarSrc}
+      src={imageUrl}
       alt={name || initials}
       title={name}
       className={cn('rounded-full object-cover shrink-0', sizeClass)}
@@ -76,6 +78,7 @@ interface MemberOption {
   userId: string;
   role?: string;
   user?: { fullName?: string; email?: string; name?: string; avatar?: string | null } | null;
+  avatarUrl?: string | null;
 }
 
 interface MemberPickerProps {
@@ -143,7 +146,7 @@ export function MemberPicker({ label, members = [], selected, onChange }: Member
                       onChange={() => toggle(m.userId)}
                       className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]"
                     />
-                    <Avatar name={memberName} size="sm" avatarSrc={m.user?.avatar} />
+                    <Avatar name={memberName} size="sm" avatarSrc={m.user?.avatar} avatarUrl={m.avatarUrl} />
                     <div className="min-w-0">
                       <p className="text-[14px] text-[#101828] truncate">{memberName}</p>
                       <p className="text-[11px] text-[#6A7282] truncate">{m.role || ''}</p>
@@ -162,7 +165,7 @@ export function MemberPicker({ label, members = [], selected, onChange }: Member
             const memberName = m?.user?.fullName || m?.user?.name || 'Unknown';
             return m ? (
                   <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[11px] text-[#1D4ED8]">
-                <Avatar name={memberName} color="#3B82F6" size="xs" avatarSrc={m?.user?.avatar} />
+                <Avatar name={memberName} color="#3B82F6" size="xs" avatarSrc={m?.user?.avatar} avatarUrl={m?.avatarUrl} />
                 {memberName}
                 <button type="button" onClick={() => toggle(id)} className="ml-0.5 text-[#93C5FD] hover:text-[#1D4ED8] font-bold">x</button>
               </span>

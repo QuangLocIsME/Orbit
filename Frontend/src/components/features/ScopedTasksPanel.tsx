@@ -36,7 +36,7 @@ interface TeamMemberView {
 }
 
 interface ModelFile { id: string; name: string; folderPath?: string; }
-interface TeamMemberForTask { userId: string; user?: { fullName: string }; role: string; }
+interface TeamMemberForTask { userId: string; user?: { fullName: string; avatar?: string | null }; role: string; avatarUrl?: string | null; }
 
 interface TaskItem {
   id: string;
@@ -236,8 +236,9 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   useEffect(() => {
     setTeamMembersForTask(teamMembers.map((m) => ({
       userId: m.id,
-      user: { fullName: m.name },
+      user: { fullName: m.name, avatar: m.avatarUrl },
       role: m.role,
+      avatarUrl: m.avatarUrl,
     })));
   }, [teamMembers]);
 

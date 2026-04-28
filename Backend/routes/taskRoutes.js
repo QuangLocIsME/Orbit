@@ -6,6 +6,7 @@ const router = express.Router();
 
 router.post('/create', authenticate, (req, res) => TaskController.createTask(req, res));
 router.post('/list', authenticate, (req, res) => TaskController.listTasks(req, res));
+router.post('/my', authenticate, (req, res) => TaskController.listMyTasks(req, res));
 router.post('/detail', authenticate, (req, res) => TaskController.detailTask(req, res));
 router.post('/change-status', authenticate, (req, res) => TaskController.changeStatus(req, res));
 router.post('/comments/list', authenticate, (req, res) => TaskController.listComments(req, res));
