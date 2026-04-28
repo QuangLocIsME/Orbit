@@ -79,7 +79,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [isThemeSubmenuOpen, setIsThemeSubmenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<'light' | 'dark' | 'system'>(() => {
     if (typeof window === 'undefined') return 'system';
-    return (localStorage.getItem('orbit-theme') as 'light' | 'dark' | 'system') || 'system';
+    return (localStorage.getItem('orbit-theme') as 'light' | 'dark' | 'system') || 'light';
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'community' | 'notifications' | 'security'>('account');

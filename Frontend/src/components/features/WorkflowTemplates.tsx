@@ -802,6 +802,7 @@ function CreateWorkflowForm({ onClose, onSave }: { onClose: () => void; onSave: 
 export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTags }: WorkflowTemplatesProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState<'my' | 'library'>('my');
+  const [myFilter, setMyFilter] = useState<'all' | 'public' | 'private'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'popular' | 'recent' | 'rating'>('popular');
@@ -886,9 +887,15 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
         if (!matchesName && !matchesDescription && !matchesTags) return false;
       }
       
+      // Filter by visibility (only for My Templates)
+      if (activeTab === 'my' && myFilter !== 'all') {
+        if (myFilter === 'private' && !template.isPrivate) return false;
+        if (myFilter === 'public' && template.isPrivate) return false;
+      }
+
       return true;
     });
-  }, [cardTemplates, searchQuery, selectedTags]);
+  }, [cardTemplates, searchQuery, selectedTags, activeTab, myFilter]);
 
   // Sort templates
   const sortedTemplates = useMemo(() => {
@@ -1042,15 +1049,40 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
         <p className="text-sm text-muted-foreground">
           {isLoading ? 'Loading...' : `Showing ${sortedTemplates.length} template${sortedTemplates.length !== 1 ? 's' : ''}`}
         </p>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-          </svg>
-          Most Popular
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Visibility filter - only in My Templates */}
+          {activeTab === 'my' && (
+            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-lg">
+              {(['all', 'public', 'private'] as const).map(filter => (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setMyFilter(filter)}
+                  className={cn(
+                    "px-3 py-1 rounded-md text-sm font-medium transition-colors capitalize",
+                    myFilter === filter
+                      ? "bg-white text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Sort button - only in Template Library */}
+          {activeTab === 'library' && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+              Most Popular
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Templates Grid */}
