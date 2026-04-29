@@ -939,12 +939,13 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
               <div className="flex h-[300px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <CheckCircle className="h-5 w-5 text-muted-foreground" />
-                  <h3 className="font-semibold text-foreground">Recent Tasks</h3>
+                  <h3 className="font-semibold text-foreground">Due Soon</h3>
                 </div>
                 <ScopedTasksPanel
                   scope={{ type: 'package', projectId: pkg.projectId, packageId }}
                   projectRole={projectRole}
                   variant="compact"
+                  onTaskClick={() => setActiveTab('tasks')}
                 />
               </div>
             </div>

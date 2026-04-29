@@ -23,6 +23,7 @@ interface ScopedTasksPanelProps {
   scope: ScopedTaskScope;
   projectRole?: ProjectRole;
   variant?: 'full' | 'compact';
+  onTaskClick?: (taskId: string) => void;
 }
 
 interface TeamMemberView {
@@ -94,7 +95,17 @@ const formatIsoDate = (dateStr: string) => {
   return date.toISOString().slice(0, 10);
 };
 
-export default function ScopedTasksPanel({ scope, projectRole = 'member', variant = 'full' }: ScopedTasksPanelProps) {
+export default function ScopedTasksPanel({ scope, projectRole = 'member', variant = 'full', onTaskClick }: ScopedTasksPanelProps) {
+  const formatRelativeDate = (dueDate: string) => {
+    const now = new Date();
+    const due = new Date(dueDate);
+    const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return `${Math.abs(diffDays)}d overdue`;
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Tomorrow';
+    if (diffDays < 7) return `${diffDays}d left`;
+    return due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
   const [modelFiles, setModelFiles] = useState<ModelFile[]>([]);
   const [loadingModelFiles, setLoadingModelFiles] = useState(false);
@@ -398,10 +409,15 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     };
   }, [loadProjectWorkflowData]);
 
-  const filteredTasks = useMemo(
-    () => tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase())),
-    [tasksData, tasksSearchQuery]
-  );
+  const filteredTasks = useMemo(() => {
+    const base = tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase()));
+    return [...base].sort((a, b) => {
+      if (!a.dueDate && !b.dueDate) return 0;
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    });
+  }, [tasksData, tasksSearchQuery]);
   const calendarTasks = useMemo(
     () => filteredTasks
       .filter((t) => ['backlog', 'todo', 'in-progress', 'review', 'done'].includes(t.status))
@@ -615,10 +631,79 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     return 'bg-[#F3F4F6] text-[#364153]';
   };
 
-  if (isPackageScope) {
+  if (isPackageScope && variant !== 'compact') {
     return (
-      <div className="flex h-full flex-col py-1 px-6 lg:px-[80px] xl:px-[160px]">
-        <div className="flex items-center justify-between gap-4 pt-0 pb-6">
+      <div className="flex flex-col h-full py-6 px-6 lg:px-[80px] xl:px-[160px]">
+        <div className="flex items-center justify-between pb-4 border-b border-[#E5E7EB]">
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-[#6A7282] uppercase tracking-wide">Select Workflow</span>
+              <WorkflowTemplatesDropdown
+                selectedWorkflow={selectedWorkflowId}
+                projectId={scope.projectId}
+                canApply={canManageWorkflow}
+                disabledReason={workflowDisabledReason}
+                onSelect={(workflowId, stages) => {
+                  setSelectedWorkflowId(workflowId);
+                  setSelectedWorkflowStages(stages);
+                }}
+                onConfigureClick={() => undefined}
+              />
+            </div>
+            <button
+              onClick={() => setIsNewTaskModalOpen(true)}
+              disabled={!canCreateTask}
+              className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New Task
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-[10px] bg-[#F3F4F6] p-1">
+            <button
+              onClick={() => setTasksViewMode('board')}
+              className={cn(
+                'p-1.5 rounded-[8px] transition-colors',
+                tasksViewMode === 'board' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+              )}
+            >
+              <svg className="h-4 w-4 text-[#4A5565]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
+                <rect x="2" y="2" width="5" height="5" rx="1" />
+                <rect x="9" y="2" width="5" height="5" rx="1" />
+                <rect x="2" y="9" width="5" height="5" rx="1" />
+                <rect x="9" y="9" width="5" height="5" rx="1" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setTasksViewMode('list')}
+              className={cn(
+                'p-1.5 rounded-[8px] transition-colors',
+                tasksViewMode === 'list' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+              )}
+            >
+              <svg className="h-4 w-4 text-[#4A5565]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
+                <path d="M2 4h12M2 8h12M2 12h12" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setTasksViewMode('calendar')}
+              className={cn(
+                'p-1.5 rounded-[8px] transition-colors',
+                tasksViewMode === 'calendar' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+              )}
+            >
+              <svg className="h-4 w-4 text-[#4A5565]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.33}>
+                <rect x="2" y="3" width="12" height="11" rx="1" />
+                <path d="M2 6h12M5 1v4M11 1v4" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between py-4">
           <div className="relative flex-1 max-w-md">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#99A1AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -628,98 +713,182 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
               placeholder="Search tasks..."
               value={tasksSearchQuery}
               onChange={(e) => setTasksSearchQuery(e.target.value)}
-              className="w-full rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] pl-9 pr-4 py-2 text-[14px] text-[#101828] placeholder:text-[#99A1AF] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-[10px] border border-[#E5E7EB] bg-white pl-9 pr-4 py-2 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
-
-          <button
-            type="button"
-            onClick={() => setIsNewTaskModalOpen(true)}
-            disabled={!canCreateTask}
-            className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-[#155DFC] px-5 text-[14px] font-normal text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            New Task
-          </button>
         </div>
 
-        <div className="mt-2 flex-1 space-y-2 overflow-y-auto">
-          {isTasksLoading ? (
-            <div className="rounded-[10px] border border-[#E5E7EB] bg-white p-4 text-sm text-[#6A7282]">Loading tasks...</div>
-          ) : filteredTasks.length === 0 ? (
-            <div className="rounded-[10px] border border-dashed border-[#E5E7EB] bg-white p-8 text-center text-sm text-[#6A7282]">
-              No tasks found.
-            </div>
-          ) : (
-            filteredTasks.map((task) => {
-              const assignee = teamMembers.find((m) => m.id === task.assigneeId);
-              const stageName = resolveStageName(task.status);
-              const isCompleted = stageName.toLowerCase().includes('complete') || stageName.toLowerCase().includes('done');
-              const dueDateText = formatIsoDate(task.dueDate);
+        {tasksViewMode === 'board' && (
+          <div className="flex-1 overflow-x-auto">
+            <TaskBoard
+              tasks={filteredTasks}
+              teamMembers={teamMembers}
+              loading={isTasksLoading}
+              stages={selectedWorkflowStages}
+              projectRole={projectRole}
+              onTaskStatusChange={handleTaskStatusChange}
+              onTaskClick={setSelectedTaskId}
+              onAddTask={(stageId) => {
+                if (!canCreateTask) return;
+                setPendingTaskStageId(stageId);
+                setIsNewTaskModalOpen(true);
+              }}
+              onEditRequest={(task) => {
+                if (!canManageTask) return;
+                const fullTask = tasksData.find(t => t.id === task.id);
+                if (fullTask) {
+                  setEditingTask({
+                    id: fullTask.id,
+                    title: fullTask.title,
+                    status: fullTask.status,
+                    priority: fullTask.priority,
+                    description: fullTask.description,
+                    assigneeId: fullTask.assigneeId,
+                    assigneeIds: fullTask.assigneeIds,
+                    reviewerIds: fullTask.reviewerIds,
+                    dueDate: fullTask.dueDate,
+                    tags: fullTask.tags,
+                    linkedItems: fullTask.linkedItem?.name || '',
+                  });
+                  setIsNewTaskModalOpen(true);
+                }
+              }}
+              onDeleteRequest={(taskId) => {
+                if (!canManageTask) return;
+                handleDeleteTask(taskId);
+              }}
+            />
+          </div>
+        )}
 
-              return (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => setSelectedTaskId(task.id)}
-                  className="w-full rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 text-left transition-colors hover:border-[#D0D5DD] hover:bg-[#FAFAFA]"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-[14px] font-medium text-[#101828]">{task.title}</p>
-                        <span className={priorityBadgeClass(task.priority)}>
-                          {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
-                        </span>
+        {tasksViewMode === 'list' && (
+          <div className="flex-1 overflow-auto">
+            <div className="rounded-[10px] border border-[#E5E7EB] bg-white overflow-hidden">
+              <div className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] text-[12px] font-medium text-[#6A7282] uppercase tracking-wide">
+                <div>Task</div>
+                <div>Status</div>
+                <div>Priority</div>
+                <div>Due Date</div>
+                <div>Assignee</div>
+                <div></div>
+              </div>
+
+              {filteredTasks.map((task) => {
+                const assignee = teamMembers.find((m) => m.id === task.assigneeId);
+                const stage = selectedWorkflowStages.find((s) => s.id === task.status);
+                return (
+                  <div key={task.id} className="grid grid-cols-[1fr_120px_120px_150px_100px_80px] gap-4 px-4 py-3 border-b border-[#E5E7EB] hover:bg-gray-50 items-center">
+                    <div className="flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTaskId(task.id)}
+                        className="text-left text-[14px] text-[#101828] hover:text-[#155DFC] hover:underline"
+                      >
+                        {task.title}
+                      </button>
+                      <div className="flex gap-1">
+                        {task.tags.map((tag) => (
+                          <span key={tag} className="inline-flex items-center rounded-[6px] bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#4A5565]">
+                            {tag}
+                          </span>
+                        ))}
                       </div>
-                      <p className="mt-1 line-clamp-1 text-[12px] text-[#4A5565]">
-                        {task.description || 'No description'}
-                      </p>
                     </div>
-                    <span className={cn('inline-flex items-center rounded px-2 py-0.5 text-[12px] font-medium', stageBadgeClass(stageName))}>
-                      {stageName}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      {assignee ? (
-                        <>
+                    <div>
+                      <span className="inline-flex items-center rounded px-2 py-0.5 text-[12px] bg-[#F3F4F6] text-[#364153]">
+                        {stage?.name || task.status}
+                      </span>
+                    </div>
+                    <div>
+                      <span className={cn(
+                        'inline-flex items-center rounded px-2 py-0.5 text-[12px]',
+                        task.priority === 'urgent' && 'bg-[#FEE2E2] text-[#DC2626]',
+                        task.priority === 'high' && 'bg-[#FEE2E2] text-[#DC2626]',
+                        task.priority === 'medium' && 'bg-[#F0F9FF] text-[#0069A8]',
+                        task.priority === 'low' && 'bg-[#F3F4F6] text-[#364153]'
+                      )}>
+                        {task.priority}
+                      </span>
+                    </div>
+                    <div className="text-[14px] text-[#6A7282]">
+                      {task.dueDate ? formatDate(task.dueDate) : '-'}
+                    </div>
+                    <div>
+                      {assignee && (
+                        <div className="flex items-center gap-2">
                           {assignee.avatarUrl ? (
-                            <img src={assignee.avatarUrl} alt={assignee.name} className="inline-flex h-5 w-5 items-center justify-center rounded-full object-cover" />
+                            <img src={assignee.avatarUrl} alt={assignee.name} className="h-6 w-6 rounded-full object-cover" />
                           ) : (
-                            <span className={cn('inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium text-white', assignee.color)}>
+                            <div className={cn('h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white', assignee.color)}>
                               {assignee.avatar}
-                            </span>
+                            </div>
                           )}
-                          <span className="text-[12px] text-[#4A5565]">{assignee.name}</span>
-                        </>
-                      ) : (
-                        <span className="text-[12px] text-[#99A1AF]">Unassigned</span>
+                        </div>
                       )}
                     </div>
-
-                    <div className="flex items-center gap-3 text-[12px] text-[#6A7282]">
-                      {isCompleted && dueDateText && (
-                        <span className="text-[#008236]">Completed {dueDateText}</span>
-                      )}
-                      {dueDateText && (
-                        <span className="inline-flex items-center gap-1">
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5A2.25 2.25 0 015.25 5.25h13.5A2.25 2.25 0 0121 7.5v11.25M3 18.75A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75M3 10.5h18" />
-                          </svg>
-                          Due {dueDateText}
-                        </span>
+                    <div>
+                      {canManageTask ? (
+                        <div className="relative" ref={listMenuRef}>
+                          <button
+                            type="button"
+                            className="p-1 hover:bg-gray-100 rounded"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setListContextMenu({ x: e.clientX, y: e.clientY, taskId: task.id });
+                            }}
+                          >
+                            <svg className="h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
+                            </svg>
+                          </button>
+                          {listContextMenu?.taskId === task.id && (
+                            <div
+                              className="fixed z-[99999] w-36 bg-white rounded-lg shadow-lg border border-[#E5E7EB] py-1 text-[13px]"
+                              style={{ top: listContextMenu.y, left: listContextMenu.x }}
+                            >
+                              <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-2 text-[#101828]"
+                                onClick={() => { setSelectedTaskId(task.id); setListContextMenu(null); }}
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                                </svg>
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left hover:bg-red-50 flex items-center gap-2 text-red-600"
+                                onClick={() => { handleDeleteTask(task.id); setListContextMenu(null); }}
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                </svg>
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-6" />
                       )}
                     </div>
                   </div>
-                </button>
-              );
-            })
-          )}
-        </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {tasksViewMode === 'calendar' && (
+          <div className="flex-1 overflow-auto">
+            <TaskCalendar
+              tasks={calendarTasks}
+              teamMembers={teamMembers}
+              onTaskClick={setSelectedTaskId}
+            />
+          </div>
+        )}
 
         <Dialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
           <DialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
@@ -845,20 +1014,27 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
           </div>
         ) : (
           <div className="space-y-3">
-            {tasksData.slice(0, 5).map((task) => {
+            {filteredTasks.slice(0, 5).map((task) => {
               const assignee = teamMembers.find((m) => m.id === task.assigneeId);
               const stageName = resolveStageName(task.status);
               const isCompleted = stageName.toLowerCase().includes('complete') || stageName.toLowerCase().includes('done');
+              const diffDays = task.dueDate ? Math.ceil((new Date(task.dueDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 0;
 
               return (
                 <div
                   key={task.id}
-                  className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0"
+                  onClick={() => onTaskClick?.(task.id)}
+                  className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50 rounded px-1 -mx-1 transition-colors"
                 >
                   <div>
                     <p className="text-sm font-medium text-foreground">{task.title}</p>
                     <p className="text-xs text-muted-foreground">
                       {assignee ? assignee.name : 'Unassigned'}
+                      {task.dueDate && (
+                        <span className={cn('ml-2', diffDays < 0 ? 'text-red-500 font-medium' : 'text-orange-500')}>
+                          {formatRelativeDate(task.dueDate)}
+                        </span>
+                      )}
                     </p>
                   </div>
                   <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize bg-[#F3F4F6] text-[#364153]">

@@ -284,13 +284,15 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
             _id?: string;
             title: string;
             projectName?: string;
+            projectPublicId?: string;
+            projectId?: string;
             dueDate: string;
             priority: 'high' | 'medium' | 'low';
           }) => ({
             id: t.publicId || t._id || '',
             title: t.title,
             project: t.projectName || 'Unknown Project',
-            projectPublicId: '',
+            projectPublicId: t.projectPublicId || t.projectId || '',
             dueDate: t.dueDate,
             priority: t.priority,
           }));
@@ -671,13 +673,14 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
                     role="listitem"
                     data-cursor-element-id={`task-item-${task.id}`}
                     key={task.id} 
+                    onClick={() => window.location.href = `/projects/${task.projectPublicId}?tab=tasks`}
                     className={cn(
-                      "flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 transition-all hover:border-gray-300 hover:shadow-md",
+                      "flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 transition-all hover:border-gray-300 hover:shadow-md cursor-pointer",
                       isCompleted && "opacity-60"
                     )}
                   >
                     <button
-                      onClick={() => toggleTaskComplete(task.id)}
+                      onClick={(e) => { e.stopPropagation(); toggleTaskComplete(task.id); }}
                       className={cn(
                         "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all",
                         isCompleted 
