@@ -22,6 +22,12 @@ const UploadApprovalSchema = new mongoose.Schema({
         index: true,
     },
 
+    packageId: {
+        type: String,
+        default: null,
+        index: true,
+    },
+
     jobId: {
         type: String,
         default: null,

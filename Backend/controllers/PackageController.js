@@ -1629,6 +1629,7 @@ class PackageController {
                 const newApproval = await UploadApprovalRepository.create({
                     projectId: normalizedProjectId,
                     documentId: document.publicId,
+                    packageId: targetPackageId,
                     jobId: null,
                     uploaderId: userId,
                     originalName: file.originalname,

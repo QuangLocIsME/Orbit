@@ -99,6 +99,22 @@ export default function PackageDetailPage({ projectPublicId, packageId, isGuest,
   const canEditPackageStatus = canManagePackageMembers;
   const backToPackagesHref = projectPublicId ? `/projects/${projectPublicId}` : '/packages';
 
+  // Sync tab from URL query param on mount (e.g. from activity navigation)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab');
+    const validTabs: TabId[] = ['overview', 'tasks', 'documents', 'team', 'activity'];
+    if (tabParam && validTabs.includes(tabParam as TabId)) {
+      setActiveTab(tabParam as TabId);
+    }
+  }, []);
+
+  const initialDocFileId = (() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('fileId');
+  })();
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1053,6 +1069,7 @@ export default function PackageDetailPage({ projectPublicId, packageId, isGuest,
               projectId={pkg.projectId}
               packageId={packageId}
               canManage={canManagePackageDocuments}
+              initialFileId={initialDocFileId}
             />
           </div>
         )}

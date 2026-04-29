@@ -135,6 +135,7 @@ async function processJob(jobId) {
         await UploadApprovalRepository.create({
             projectId: job.projectId,
             documentId: document.publicId,
+            packageId: job.packageId,
             jobId: job.publicId,
             uploaderId: job.uploaderId,
             originalName: job.fileOriginalName,

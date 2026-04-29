@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight,
@@ -50,6 +50,7 @@ interface ProjectDocumentsManagerProps {
   projectId: string;
   packageId?: string | null;
   canManage?: boolean;
+  initialFileId?: string | null;
 }
 
 interface TreeNode {
@@ -120,6 +121,42 @@ function findFileNodeByName(node: TreeNode | null, fileName: string): TreeNode |
   return null;
 }
 
+function findNodePath(root: TreeNode | null, targetId: string): string[] {
+  if (!root) return [];
+  const path: string[] = [];
+  const dfs = (node: TreeNode): boolean => {
+    path.push(node.id);
+    if (node.id === targetId) return true;
+    for (const child of node.children || []) {
+      if (dfs(child)) return true;
+    }
+    path.pop();
+    return false;
+  };
+  dfs(root);
+  return path;
+}
+
+function getInitialFolderId(root: TreeNode | null, fileId: string): string {
+  if (!root) return '';
+  if (root.id === fileId) return '';
+  const fileNode = findNodeById(root, fileId);
+  if (!fileNode || fileNode.type === 'file') {
+    const parent = findParentOf(root, fileId);
+    return parent ? parent.id : root.id;
+  }
+  return fileNode.id;
+}
+
+function findParentOf(root: TreeNode, targetId: string): TreeNode | null {
+  for (const child of root.children || []) {
+    if (child.id === targetId) return root;
+    const found = findParentOf(child, targetId);
+    if (found) return found;
+  }
+  return null;
+}
+
 function formatRelativeTime(value?: string) {
   if (!value) return 'recently';
   const date = new Date(value);
@@ -159,7 +196,7 @@ function deriveLocation(
   return { packageId: '', folderType: 'files', folderPath };
 }
 
-export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true }: ProjectDocumentsManagerProps) {
+export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true, initialFileId = null }: ProjectDocumentsManagerProps) {
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
@@ -291,6 +328,28 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       cancelled = true;
     };
   }, [projectId]);
+
+  const initialFileIdRef = useRef<string | null>(initialFileId);
+
+  useEffect(() => {
+    if (!rootTree || !initialFileIdRef.current) return;
+    const fileId = initialFileIdRef.current;
+    initialFileIdRef.current = null;
+    const path = findNodePath(rootTree, fileId);
+    if (path.length <= 1) return;
+    for (let i = 1; i < path.length - 1; i++) {
+      const node = findNodeById(rootTree, path[i]);
+      if (node?.type === 'folder') {
+        setCurrentFolderId(path[i]);
+      }
+    }
+  }, [rootTree, currentFolderId]);
+
+  useEffect(() => {
+    if (!rootTree || !hoveredId) return;
+    if (hoveredId !== initialFileId) return;
+    setHoveredId('');
+  }, [currentFolderId]);
 
   const packageNode = useMemo(() => {
     if (!rootTree) return null;

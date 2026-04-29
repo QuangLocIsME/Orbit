@@ -724,6 +724,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     if (urlTab && tabs.some(t => t.id === urlTab)) {
       setActiveTab(urlTab);
       params.delete('tab');
+      params.delete('fileId');
       const newSearch = params.toString();
       window.history.replaceState({}, '', newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname);
       return;
@@ -734,6 +735,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       sessionStorage.removeItem('projectActiveTab');
     }
   }, []);
+
+  const initialDocFileId = (() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('fileId');
+  })();
 
   // Fetch change requests when 'changes' tab is active
   useEffect(() => {
@@ -1664,7 +1670,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Documents Tab */}
         {activeTab === 'documents' && (
-          <ProjectDocumentsManager projectId={project.publicId} />
+          <ProjectDocumentsManager projectId={project.publicId} initialFileId={initialDocFileId} />
         )}
 
         {/* Versions Tab */}

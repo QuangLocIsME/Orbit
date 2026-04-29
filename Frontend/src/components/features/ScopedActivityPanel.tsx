@@ -26,6 +26,9 @@ interface ActivityItem {
   user: string;
   createdAt: string;
   metadata?: Record<string, any>;
+  targetId?: string | null;
+  projectId?: string | null;
+  packageId?: string | null;
 }
 
 interface ScopedActivityPanelProps {
@@ -47,6 +50,9 @@ const ACTIVITY_TYPES = [
   { value: 'file_uploaded', label: 'File Uploaded' },
   { value: 'file_renamed', label: 'File Renamed' },
   { value: 'file_deleted', label: 'File Deleted' },
+  { value: 'upload_approved', label: 'Upload Approved' },
+  { value: 'upload_rejected', label: 'Upload Rejected' },
+  { value: 'change_request', label: 'Change Request' },
 ];
 
 const PAGE_SIZE_OPTIONS = [
@@ -73,6 +79,8 @@ const TYPE_COLORS: Record<string, string> = {
   task:             'bg-emerald-50',
   task_comment:     'bg-amber-50',
   project_update:   'bg-green-50',
+  upload_approved:  'bg-green-50',
+  upload_rejected:  'bg-red-50',
 };
 
 const TYPE_ICON_COLORS: Record<string, string> = {
@@ -92,6 +100,8 @@ const TYPE_ICON_COLORS: Record<string, string> = {
   task:             'text-emerald-600',
   task_comment:     'text-amber-600',
   project_update:   'text-green-600',
+  upload_approved: 'text-green-600',
+  upload_rejected: 'text-red-600',
 };
 
 const getIconForType = (type: string): React.ReactNode => {
@@ -112,6 +122,8 @@ const getIconForType = (type: string): React.ReactNode => {
     task:            <Plus className="h-4 w-4" />,
     task_comment:    <MessageSquare className="h-4 w-4" />,
     project_update:  <Settings className="h-4 w-4" />,
+    upload_approved: <FileCheck className="h-4 w-4" />,
+    upload_rejected: <FileX className="h-4 w-4" />,
   };
   return iconMap[type] || <ActivityIcon className="h-4 w-4" />;
 };
@@ -135,15 +147,68 @@ const formatRelativeTime = (dateStr: string) => {
   return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 };
 
-const ActivityRow = ({ activity, compact }: { activity: ActivityItem; compact?: boolean }) => {
+interface ActivityRowProps {
+  activity: ActivityItem;
+  compact?: boolean;
+  scope: ScopedActivityScope;
+}
+
+const navigateToActivity = (activity: ActivityItem, scope: ScopedActivityScope) => {
+  const projectId = activity.projectId ?? scope.projectId;
+  const packageId = activity.packageId ?? scope.packageId;
+  const { type, targetId } = activity;
+  if (!projectId) return;
+
+  const taskTypes = ['task_created', 'task_updated', 'task_deleted', 'task_moved', 'task_commented', 'task', 'task_comment'];
+  const fileTypes = ['file_uploaded', 'file_renamed', 'file_deleted', 'document', 'upload_approved', 'upload_rejected'];
+  const folderTypes = ['folder_created', 'folder_renamed', 'folder_deleted'];
+  const changeRequestTypes = ['change_request'];
+  const projectUpdateTypes = ['project_update'];
+
+  if (packageId) {
+    let url = `/projects/${projectId}/${packageId}`;
+
+    if (taskTypes.includes(type)) {
+      url = targetId ? `${url}?tab=tasks&taskId=${targetId}` : `${url}?tab=tasks`;
+    } else if (fileTypes.includes(type)) {
+      url = targetId ? `${url}?tab=documents&fileId=${targetId}` : `${url}?tab=documents`;
+    } else if (folderTypes.includes(type)) {
+      url = `${url}?tab=tasks`;
+    }
+
+    window.location.href = url;
+    return;
+  }
+
+  if (taskTypes.includes(type) || folderTypes.includes(type)) {
+    window.location.href = `/projects/${projectId}?tab=tasks`;
+  } else if (fileTypes.includes(type)) {
+    const fileIdParam = targetId ? `&fileId=${targetId}` : '';
+    window.location.href = `/projects/${projectId}?tab=documents${fileIdParam}`;
+  } else if (changeRequestTypes.includes(type)) {
+    window.location.href = `/projects/${projectId}?tab=changes`;
+  } else if (projectUpdateTypes.includes(type)) {
+    window.location.href = `/projects/${projectId}?tab=settings`;
+  } else {
+    window.location.href = `/projects/${projectId}`;
+  }
+};
+
+const ActivityRow = ({ activity, compact, scope }: ActivityRowProps) => {
   const iconBg = TYPE_COLORS[activity.type] || 'bg-gray-50';
   const iconColor = TYPE_ICON_COLORS[activity.type] || 'text-gray-500';
+  const projectId = activity.projectId ?? scope.projectId;
+  const hasNav = Boolean(projectId);
 
   return (
-    <div className={cn(
-      'flex items-start gap-3',
-      compact ? 'py-3' : 'px-5 py-4',
-    )}>
+    <div
+      onClick={hasNav ? () => navigateToActivity(activity, scope) : undefined}
+      className={cn(
+        'group flex items-start gap-3',
+        compact ? 'py-3' : 'px-5 py-4',
+        hasNav && 'cursor-pointer transition-colors hover:bg-gray-50/70',
+      )}
+    >
       <div className={cn('flex items-center justify-center rounded-lg shrink-0', activity.color || iconBg)}>
         <span className={iconColor}>
           {getIconForType(activity.type)}
@@ -158,6 +223,11 @@ const ActivityRow = ({ activity, compact }: { activity: ActivityItem; compact?: 
         </p>
         <p className="text-xs text-[#6A7282] mt-1">{activity.user} &middot; {formatRelativeTime(activity.createdAt)}</p>
       </div>
+      {hasNav && (
+        <svg className="h-4 w-4 shrink-0 text-gray-400 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      )}
     </div>
   );
 };
@@ -490,7 +560,7 @@ export default function ScopedActivityPanel({
           ) : (
             <div className="space-y-0 divide-y divide-gray-100">
               {visibleActivities.map((activity) => (
-                <ActivityRow key={activity.id} activity={activity} compact />
+                <ActivityRow key={activity.id} activity={activity} compact scope={scope} />
               ))}
             </div>
           )}
@@ -573,7 +643,7 @@ export default function ScopedActivityPanel({
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
           {visibleActivities.map((activity) => (
-            <ActivityRow key={activity.id} activity={activity} />
+            <ActivityRow key={activity.id} activity={activity} scope={scope} />
           ))}
           <PaginationControls
             currentPage={currentPage}

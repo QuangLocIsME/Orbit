@@ -1,6 +1,7 @@
 ---
 // Package Detail Page — SSR: supports both authenticated users and guest access via share links (?guest=1&token=xxx).
 export const prerender = false;
+import '@/styles/global.css';
 import ProjectTopBarWrapper from '@/components/layout/ProjectTopBarWrapper';
 import PackageDetailPage from '@/components/features/PackageDetailPage';
 
@@ -133,7 +134,3 @@ if (error) {
     </main>
   </body>
 </html>
-
-<style is:global>
-  @import '../../styles/global.css';
-</style>

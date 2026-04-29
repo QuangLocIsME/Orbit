@@ -46,8 +46,8 @@ const app = express();
 const httpServer = http.createServer(app);
 
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 300,
+    windowMs: 60 * 1000,
+    limit: 600,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: {
@@ -60,8 +60,8 @@ const limiter = rateLimit({
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const clashLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 300,
+    windowMs: 60 * 1000,
+    limit: 600,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: {
