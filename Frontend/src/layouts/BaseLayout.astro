@@ -34,10 +34,7 @@ const {
           } else if (saved === 'light') {
             document.documentElement.classList.remove('dark');
           } else {
-            // system
-            if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-              document.documentElement.classList.add('dark');
-            }
+            // default to light mode
           }
         } catch (_) {}
       })();
