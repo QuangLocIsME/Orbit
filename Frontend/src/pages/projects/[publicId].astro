@@ -1,45 +1,73 @@
 ---
-// Project Detail Page — SSR: fetches real data server-side, no getStaticPaths needed.
+// Project Detail Page — SSR: fetches real data server-side.
+// Supports both authenticated users and guest access via share links (?guest=1&token=xxx).
 export const prerender = false;
-
 import ProjectLayout from '@/layouts/ProjectLayout.astro';
 import ProjectDetailPage from '@/components/features/ProjectDetailPage';
 
-// Fetch the user's projects server-side so we can resolve the publicId to a real project.
-// This avoids a client-side loading gap and ensures the page is populated on first paint.
 const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
-
-const accessToken = Astro.cookies.get('accessToken')?.value;
 const publicId = Astro.params.publicId as string;
-
-let project = null;
-let error = null;
+const accessToken = Astro.cookies.get('accessToken')?.value;
+const guestToken = Astro.url.searchParams.get('token');
+const isGuest = Astro.url.searchParams.get('guest') === '1';
 
 if (!publicId) {
   return Astro.redirect('/projects');
 }
 
-try {
-  const res = await fetch(`${backendUrl}/api/projects/me`, {
-    headers: {
-      Cookie: `accessToken=${accessToken}`,
-      Accept: 'application/json',
-    },
-    credentials: 'include',
-  });
+let project = null;
+let guestAccess = null;
+let error = null;
 
-  if (res.ok) {
-    const payload = await res.json();
-    const projects: Array<Record<string, unknown>> = Array.isArray(payload?.data) ? payload.data : [];
-    project = projects.find((p: Record<string, unknown>) => String(p.publicId) === publicId);
+if (isGuest && guestToken) {
+  // ── Guest access via share link ────────────────────────────────────────────
+  try {
+    const res = await fetch(`${backendUrl}/api/guest/project/${encodeURIComponent(publicId)}?token=${encodeURIComponent(guestToken)}`);
+    if (res.ok) {
+      const payload = await res.json();
+      if (payload.success) {
+        project = payload.data;
+        guestAccess = { token: guestToken, isGuest: true };
+      } else {
+        error = payload.message || 'Share link is invalid or expired.';
+      }
+    } else if (res.status === 404) {
+      error = 'Project not found or share link is no longer valid.';
+    } else if (res.status === 410) {
+      error = 'Share link has expired.';
+    } else {
+      error = 'Failed to load project.';
+    }
+  } catch {
+    error = 'Failed to load project.';
   }
-} catch {
-  error = 'Failed to load project';
+} else {
+  // ── Authenticated user ─────────────────────────────────────────────────────
+  try {
+    const res = await fetch(`${backendUrl}/api/projects/me`, {
+      headers: {
+        Cookie: `accessToken=${accessToken}`,
+        Accept: 'application/json',
+      },
+      credentials: 'include',
+    });
+
+    if (res.ok) {
+      const payload = await res.json();
+      const projects = Array.isArray(payload?.data) ? payload.data : [];
+      project = projects.find((p) => String(p.publicId) === publicId);
+    }
+  } catch {
+    error = 'Failed to load project';
+  }
+
+  if (!project) {
+    return Astro.redirect('/projects');
+  }
 }
 
-// Redirect to /projects if the project is not found or auth failed
-if (!project) {
-  return Astro.redirect('/projects');
+if (error) {
+  return Astro.redirect(`/share/invalid?message=${encodeURIComponent(error)}`);
 }
 ---
 
@@ -50,6 +78,8 @@ if (!project) {
 >
   <ProjectDetailPage
     project={project}
+    isGuest={isGuest}
+    guestToken={guestToken}
     client:load
   />
 </ProjectLayout>

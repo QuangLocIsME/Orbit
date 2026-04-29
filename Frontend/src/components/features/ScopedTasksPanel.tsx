@@ -24,6 +24,7 @@ interface ScopedTasksPanelProps {
   projectRole?: ProjectRole;
   variant?: 'full' | 'compact';
   onTaskClick?: (taskId: string) => void;
+  isGuest?: boolean;
 }
 
 interface TeamMemberView {
@@ -95,7 +96,7 @@ const formatIsoDate = (dateStr: string) => {
   return date.toISOString().slice(0, 10);
 };
 
-export default function ScopedTasksPanel({ scope, projectRole = 'member', variant = 'full', onTaskClick }: ScopedTasksPanelProps) {
+export default function ScopedTasksPanel({ scope, projectRole = 'member', variant = 'full', onTaskClick, isGuest = false }: ScopedTasksPanelProps) {
   const formatRelativeDate = (dueDate: string) => {
     const now = new Date();
     const due = new Date(dueDate);
@@ -134,13 +135,9 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
   const [linkedItemSuggestions, setLinkedItemSuggestions] = useState<LinkedSuggestionItem[]>([]);
 
-  const canCreateTask = projectRole !== 'viewer';
+  const canCreateTask = !isGuest && projectRole !== 'viewer';
   const canManageWorkflow = projectRole === 'owner' || projectRole === 'admin';
   const canManageTask = ['owner', 'admin', 'manager'].includes(projectRole);
-  const hasExistingTasks = tasksData.length > 0;
-  const workflowDisabledReason = hasExistingTasks
-    ? 'Workflow selection is locked because this project already has tasks.'
-    : (!canManageWorkflow ? 'Only project owner/admin can change workflow' : undefined);
   const currentUserId = useMemo(() => {
     if (typeof window === 'undefined') return '';
     try {
@@ -642,7 +639,6 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
                 selectedWorkflow={selectedWorkflowId}
                 projectId={scope.projectId}
                 canApply={canManageWorkflow}
-                disabledReason={workflowDisabledReason}
                 onSelect={(workflowId, stages) => {
                   setSelectedWorkflowId(workflowId);
                   setSelectedWorkflowStages(stages);
@@ -1057,7 +1053,6 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             selectedWorkflow={selectedWorkflowId}
             projectId={scope.projectId}
             canApply={canManageWorkflow}
-            disabledReason={workflowDisabledReason}
             onSelect={(workflowId, stages) => {
               setSelectedWorkflowId(workflowId);
               setSelectedWorkflowStages(stages);

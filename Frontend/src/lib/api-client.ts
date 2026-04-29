@@ -44,6 +44,14 @@ export async function apiFetch(
   // Already on the login page — don't trigger refresh → infinite redirect loop
   if (typeof window !== 'undefined' && window.location.pathname === '/login') return response;
 
+  // Guest page: don't trigger refresh → redirect. Just return the 401 as-is.
+  if (typeof window !== 'undefined') {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : '';
+    const isGuestPage = new URL(url, window.location.origin).searchParams.get('guest') === '1'
+      || window.location.search.includes('guest=1');
+    if (isGuestPage) return response;
+  }
+
   // ── 401 received — try to refresh the access token ──────────────────────
   if (isRefreshing) {
     // Another request is already refreshing — wait for it to finish, then retry

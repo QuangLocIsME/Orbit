@@ -10,7 +10,7 @@ import PackagesManager from './PackagesManager';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
 import ScopedTasksPanel from './ScopedTasksPanel';
 import ScopedActivityPanel from './ScopedActivityPanel';
-import ProjectTopBar from '@/components/layout/ProjectTopBar';
+import ProjectTopBarWrapper from '@/components/layout/ProjectTopBarWrapper';
 import ClashesTab from './clash/ClashesTab';
 import { ClashViewerProvider } from './clash/state/clashStore';
 import TeamsTab from './TeamsTab';
@@ -54,6 +54,8 @@ interface ProjectDetailPageProps {
     lastVisited?: string;
     isFavorite?: boolean;
   };
+  isGuest?: boolean;
+  guestToken?: string | null;
 }
 
 interface TeamMemberView {
@@ -351,15 +353,15 @@ const mockDocuments: DocFolder = {
 const tabs = [
   { id: 'overview', label: 'Overview' },
   { id: 'packages', label: 'Packages' },
-  { id: 'documents', label: 'Documents' },
   { id: 'versions', label: 'Versions' },
+  { id: 'documents', label: 'Documents' },
   { id: 'changes', label: 'Changes' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'clashes', label: 'Clashes' },
   { id: 'teams', label: 'Teams' },
   { id: 'extensions', label: 'Extensions' },
   { id: 'settings', label: 'Settings' },
-];
+] as const;
 
 // Icons
 const StarIcon = ({ filled = false, className = '' }: { filled?: boolean; className?: string }) => (
@@ -1148,7 +1150,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   return (
     <div className="min-h-screen bg-background pt-[105px]">
       {/* Project Top Bar with Navigation - Fixed */}
-      <ProjectTopBar
+      <ProjectTopBarWrapper
         projectName={project.name}
         projectSlug={project.publicId}
         activeTab={activeTab}
@@ -2950,11 +2952,11 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   );
 }
 
-export default function ProjectDetailPage({ project }: ProjectDetailPageProps) {
+export default function ProjectDetailPage({ project, isGuest, guestToken }: ProjectDetailPageProps) {
   return (
     <QueryClientProvider client={queryClient}>
-      <ClashViewerProvider>
-        <ProjectDetailPageContent project={project} />
+      <ClashViewerProvider projectSlug={project.publicId}>
+        <ProjectDetailPageContent project={project} isGuest={isGuest} guestToken={guestToken} />
       </ClashViewerProvider>
     </QueryClientProvider>
   );

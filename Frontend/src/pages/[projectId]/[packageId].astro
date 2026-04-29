@@ -1,71 +1,135 @@
 ---
+// Package Detail Page — SSR: supports both authenticated users and guest access.
 export const prerender = false;
 import PackageLayout from '@/layouts/PackageLayout.astro';
+import BaseLayout from '@/layouts/BaseLayout.astro';
 import PackageDetailPage from '@/components/features/PackageDetailPage';
+import GuestPackageDetail from '@/components/features/GuestPackageDetail';
 
 const projectId = Astro.params.projectId as string;
 const packageId = Astro.params.packageId as string;
+const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
+const accessToken = Astro.cookies.get('accessToken')?.value;
+const guestToken = Astro.url.searchParams.get('token');
+const isGuest = Astro.url.searchParams.get('guest') === '1';
 
 if (!projectId || !packageId) {
   return Astro.redirect('/projects');
 }
 
-const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
-const accessToken = Astro.cookies.get('accessToken')?.value;
+let project = null;
+let pkg = null;
+let error = null;
 
-let project: any = null;
-let pkg: any = null;
-
-try {
-  const res = await fetch(`${backendUrl}/api/projects/me`, {
-    headers: {
-      Cookie: `accessToken=${accessToken}`,
-      Accept: 'application/json',
-    },
-    credentials: 'include',
-  });
-
-  if (res.ok) {
-    const payload = await res.json();
-    const projects: Array<Record<string, unknown>> = Array.isArray(payload?.data) ? payload.data : [];
-    project = projects.find((p: Record<string, unknown>) => String(p.publicId) === projectId);
+if (isGuest && guestToken) {
+  // ── Guest access via share link ────────────────────────────────────────────
+  try {
+    const projectRes = await fetch(`${backendUrl}/api/guest/project/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}`);
+    if (projectRes.ok) {
+      const payload = await projectRes.json();
+      if (payload.success) {
+        project = payload.data;
+      } else {
+        error = payload.message || 'Share link is invalid or expired.';
+      }
+    } else {
+      error = 'Failed to load project.';
+    }
+  } catch {
+    error = 'Failed to load project.';
   }
-} catch {
-  // ignore and redirect below
+
+  if (!error) {
+    try {
+      const pkgRes = await fetch(`${backendUrl}/api/guest/packages/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}`);
+      if (pkgRes.ok) {
+        const pkgPayload = await pkgRes.json();
+        if (pkgPayload.success) {
+          const packages = Array.isArray(pkgPayload.data) ? pkgPayload.data : [];
+          pkg = packages.find((p) => String(p.publicId) === packageId);
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+} else {
+  // ── Authenticated user ─────────────────────────────────────────────────────
+  try {
+    const res = await fetch(`${backendUrl}/api/projects/me`, {
+      headers: {
+        Cookie: `accessToken=${accessToken}`,
+        Accept: 'application/json',
+      },
+      credentials: 'include',
+    });
+
+    if (res.ok) {
+      const payload = await res.json();
+      const projects = Array.isArray(payload?.data) ? payload.data : [];
+      project = projects.find((p) => String(p.publicId) === projectId);
+    }
+  } catch {
+    error = 'Failed to load project';
+  }
+
+  if (!project) {
+    return Astro.redirect('/projects');
+  }
+
+  // Fetch package info for the breadcrumb
+  try {
+    const pkgRes = await fetch(`${backendUrl}/api/projects/packages/list`, {
+      method: 'POST',
+      headers: {
+        Cookie: `accessToken=${accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ projectId, listType: 'all' }),
+    });
+
+    if (pkgRes.ok) {
+      const pkgPayload = await pkgRes.json();
+      const packages = Array.isArray(pkgPayload?.data) ? pkgPayload.data : [];
+      pkg = packages.find((p) => String(p.publicId) === packageId);
+    }
+  } catch {
+    // non-fatal
+  }
 }
 
-if (!project) {
-  return Astro.redirect('/projects');
-}
-
-// Fetch package info for the breadcrumb
-try {
-  const pkgRes = await fetch(`${backendUrl}/api/projects/packages/list`, {
-    method: 'POST',
-    headers: {
-      Cookie: `accessToken=${accessToken}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({ projectId, listType: 'all' }),
-  });
-
-  if (pkgRes.ok) {
-    const pkgPayload = await pkgRes.json();
-    const packages: Array<Record<string, unknown>> = Array.isArray(pkgPayload?.data) ? pkgPayload.data : [];
-    pkg = packages.find((p: Record<string, unknown>) => String(p.publicId) === packageId);
-  }
-} catch {
-  // ignore
+if (error) {
+  return Astro.redirect(`/share/invalid?message=${encodeURIComponent(error)}`);
 }
 ---
 
-<PackageLayout
-  title={`${pkg?.name || 'Package'} - ${String(project.name)} - ORBIT`}
-  projectName={String(project.name)}
-  projectSlug={String(project.publicId)}
-  packageName={pkg?.name || 'Package'}
->
-  <PackageDetailPage projectPublicId={projectId} packageId={packageId} client:load />
-</PackageLayout>
+{isGuest ? (
+  <BaseLayout title={`${pkg?.name || 'Package'} - ${String(project?.name)} - ORBIT`}>
+    <GuestPackageDetail
+      projectPublicId={projectId}
+      packageId={packageId}
+      guestToken={guestToken || ''}
+      projectName={String(project?.name)}
+      packageName={pkg?.name || 'Package'}
+      client:load
+    />
+  </BaseLayout>
+) : (
+  <PackageLayout
+    title={`${pkg?.name || 'Package'} - ${String(project?.name)} - ORBIT`}
+    projectName={String(project?.name)}
+    projectSlug={String(project?.publicId)}
+    packageName={pkg?.name || 'Package'}
+    packageId={packageId}
+  >
+    <PackageDetailPage
+      projectPublicId={projectId}
+      packageId={packageId}
+      isGuest={false}
+      guestToken={null}
+      client:load
+    />
+  </PackageLayout>
+)}

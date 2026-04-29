@@ -33,6 +33,10 @@ const roleRoutes = require('./routes/roleRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const userSettingsRoutes = require('./routes/userSettingsRoutes');
 const uploadApprovalRoutes = require('./routes/uploadApproval.routes');
+const shareLinkRoutes = require('./routes/shareLinkRoutes');
+const shareLinkPublicRoutes = require('./routes/shareLinkPublicRoutes');
+const joinRequestRoutes = require('./routes/joinRequestRoutes');
+const guestRoutes = require('./routes/guestRoutes');
 const connectDB = require('./config/database');
 const { attachSocket } = require('./services/socketService');
 const { createChannelWithRetry: createIfcChannel } = require('./queues/ifcConversionQueue');
@@ -90,6 +94,8 @@ app.use('/api/projects/packages', packageRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/ws', wsRoutes);
+// IMPORTANT: /api/guest MUST come BEFORE /api/* routes that have router-level authenticate middleware
+app.use('/api/guest', guestRoutes);
 app.use('/api', clashLimiter, clashRoutes);
 app.use('/api', clashLimiter, navisworksRoutes);
 app.use('/api', changeRequestRoutes);
@@ -101,7 +107,9 @@ app.use('/api/roles', roleRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/user-settings', userSettingsRoutes);
 app.use('/api', uploadApprovalRoutes);
-
+app.use('/api/share', shareLinkPublicRoutes);
+app.use('/api/share', shareLinkRoutes);
+app.use('/api/projects/join', joinRequestRoutes);
 app.use((err, req, res, nextHandler) => {
     if (err instanceof SyntaxError) {
         return res.status(400).json({

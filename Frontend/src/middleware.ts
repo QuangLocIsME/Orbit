@@ -20,16 +20,22 @@ const GUEST_ONLY_PATHS = new Set([
   '/reset-password',
 ]);
 
-const PUBLIC_PREFIXES = ['/auth/', '/api/', '/_astro/', '/favicon', '/_image'];
+const PUBLIC_PREFIXES = ['/auth/', '/api/', '/_astro/', '/favicon', '/_image', '/share/'];
 
 export const onRequest = defineMiddleware(async (context, nextHandler) => {
   const { pathname } = context.url;
+  const guestToken = context.url.searchParams.get('guest');
 
   const accessToken = context.cookies.get('accessToken')?.value;
   const refreshToken = context.cookies.get('refreshToken')?.value;
 
   // Static/public prefixes should always pass through
   if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return nextHandler();
+  }
+
+  // Guest access via share link: allow without auth tokens
+  if (guestToken === '1') {
     return nextHandler();
   }
 

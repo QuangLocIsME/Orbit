@@ -712,9 +712,6 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       )}
 
       <div>
-        {!isPackageMode && breadcrumbs.length <= 1 && (
-          <h3 className="mb-3 text-[22px] font-medium text-[#101828]">{currentFolder?.name || 'All Files'}</h3>
-        )}
         {!isPackageMode && (
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
           {!currentFolder ? (

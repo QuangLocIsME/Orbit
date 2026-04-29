@@ -10,11 +10,14 @@ import { CheckCircle, Clock, FileText, Users, ChevronRight, Plus, Search } from 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import ProjectDocumentsManager from './ProjectDocumentsManager';
 import ScopedTasksPanel from './ScopedTasksPanel';
+import GuestScopedTasksPanel from './GuestScopedTasksPanel';
 import ScopedActivityPanel from './ScopedActivityPanel';
 
 interface PackageDetailPageProps {
   projectPublicId?: string;
   packageId: string;
+  isGuest?: boolean;
+  guestToken?: string | null;
 }
 
 interface PackageItem {
@@ -62,7 +65,7 @@ const getInitials = (name: string) => {
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
 };
 
-export default function PackageDetailPage({ projectPublicId, packageId }: PackageDetailPageProps) {
+export default function PackageDetailPage({ projectPublicId, packageId, isGuest, guestToken }: PackageDetailPageProps) {
   const [loading, setLoading] = useState(true);
   const [pkg, setPkg] = useState<PackageItem | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -89,8 +92,8 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   const [isEditingDueDate, setIsEditingDueDate] = useState(false);
   const [dueDateInput, setDueDateInput] = useState('');
   const [savingDueDate, setSavingDueDate] = useState(false);
-  const canManagePackageMembers = projectRole === 'owner' || projectRole === 'admin';
-  const canManagePackageDocuments = projectRole !== 'viewer';
+  const canManagePackageMembers = !isGuest && (projectRole === 'owner' || projectRole === 'admin');
+  const canManagePackageDocuments = !isGuest && projectRole !== 'viewer';
   const canEditPackageMeta = canManagePackageMembers;
   const canEditPackageDueDate = canManagePackageMembers;
   const canEditPackageStatus = canManagePackageMembers;
@@ -100,6 +103,13 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
     let cancelled = false;
 
     const loadPackage = async (): Promise<PackageItem> => {
+      if (isGuest && guestToken && projectPublicId) {
+        const res = await fetch(`/api/guest/package/${encodeURIComponent(projectPublicId)}/${encodeURIComponent(packageId)}?token=${encodeURIComponent(guestToken)}`);
+        if (!res.ok) throw new Error('Cannot load package');
+        const payload = await res.json();
+        if (!payload.success) throw new Error(payload.message || 'Cannot load package');
+        return payload.data;
+      }
       if (projectPublicId) {
         const listRes = await apiFetch('/api/projects/packages/list', {
           method: 'POST',
@@ -141,6 +151,39 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
         if (cancelled) return;
 
         setPkg(found);
+
+        if (isGuest && guestToken) {
+          // Guest: set read-only role and fetch basic data
+          setProjectRole('guest' as ProjectRole);
+          setTeamMembers([]);
+          setAllProjectMembers([]);
+          setWorkflowStages([]);
+
+          // Fetch tasks via guest API for overview stats
+          try {
+            const tasksRes = await fetch(
+              `/api/guest/tasks/${encodeURIComponent(found.projectId)}?token=${encodeURIComponent(guestToken)}`
+            );
+            if (tasksRes.ok) {
+              const payload = await tasksRes.json();
+              const tasks = Array.isArray(payload?.data) ? payload.data : [];
+              setTotalTasksCount(tasks.length);
+              setCompletedTasksCount(tasks.filter((t: any) => {
+                const s = String(t.status || '').toLowerCase();
+                return ['done', 'completed', 'approved'].includes(s);
+              }).length);
+              setRecentTasks(tasks.slice(0, 5).map((task: any) => ({
+                id: String(task.publicId || task.id || ''),
+                title: String(task.title || 'Untitled task'),
+                status: String(task.status || 'backlog'),
+                assigneeName: task.assigneeName || 'Unassigned',
+              })));
+            }
+          } catch { /* silent */ }
+
+          setLoading(false);
+          return;
+        }
 
         const [projectsRes, membersRes, tasksRes, documentsRes, workflowRes] = await Promise.all([
           apiFetch('/api/projects/me'),
@@ -254,50 +297,74 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
     const refreshTasksAndDocuments = async (projectId: string) => {
       if (cancelled) return;
       try {
-        const memberMap = new Map<string, TeamMemberView>();
-        allProjectMembers.forEach((m) => memberMap.set(m.id, m));
+        if (isGuest && guestToken) {
+          try {
+            const tasksRes = await fetch(
+              `/api/guest/tasks/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}`
+            );
+            if (tasksRes.ok) {
+              const payload = await tasksRes.json();
+              const tasks = Array.isArray(payload?.data) ? payload.data : [];
+              setTotalTasksCount(tasks.length);
+              setCompletedTasksCount(tasks.filter((t: any) => {
+                const s = String(t.status || '').toLowerCase();
+                return ['done', 'completed', 'approved'].includes(s);
+              }).length);
+              setRecentTasks(tasks.slice(0, 5).map((task: any) => ({
+                id: String(task.publicId || task.id || ''),
+                title: String(task.title || 'Untitled task'),
+                status: String(task.status || 'backlog'),
+                assigneeName: task.assigneeName || 'Unassigned',
+              })));
+            }
+          } catch { /* silent */ }
+          return;
+        } else {
+          const memberMap = new Map<string, TeamMemberView>();
+          allProjectMembers.forEach((m) => memberMap.set(m.id, m));
 
-        const stages = workflowStages;
-        const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
+          const stages = workflowStages;
+          const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
 
-        const [tasksRes, documentsRes] = await Promise.all([
-          apiFetch('/api/tasks/list', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ projectId, packageId }),
-          }),
-          apiFetch('/api/projects/packages/documents/package/list', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ projectId, packageId }),
-          }),
-        ]);
+          const [tasksRes, documentsRes] = await Promise.all([
+            apiFetch('/api/tasks/list', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ projectId, packageId }),
+            }),
+            apiFetch('/api/projects/packages/documents/package/list', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ projectId, packageId }),
+            }),
+          ]);
 
-        if (cancelled) return;
+          if (cancelled) return;
 
-        if (tasksRes.ok) {
-          const payload = await tasksRes.json();
-          const tasks = Array.isArray(payload?.data) ? payload.data : [];
-          setTotalTasksCount(tasks.length);
-          const completedCount = tasks.filter((task: any) => {
-            const status = String(task?.status || '').toLowerCase();
-            const lastStageLower = lastStageId.toLowerCase();
-            return ['done', 'completed', 'approved'].includes(status) || status === lastStageLower;
-          }).length;
-          setCompletedTasksCount(completedCount);
-          setRecentTasks(
-            tasks.slice(0, 5).map((task: any) => ({
-              id: String(task.publicId || task.id || ''),
-              title: String(task.title || 'Untitled task'),
-              status: String(task.status || 'backlog'),
-              assigneeName: memberMap.get(String(task.assigneeId || ''))?.name || 'Unassigned',
-            }))
-          );
-        }
+          if (tasksRes.ok) {
+            const payload = await tasksRes.json();
+            const tasks = Array.isArray(payload?.data) ? payload.data : [];
+            setTotalTasksCount(tasks.length);
+            const completedCount = tasks.filter((task: any) => {
+              const status = String(task?.status || '').toLowerCase();
+              const lastStageLower = lastStageId.toLowerCase();
+              return ['done', 'completed', 'approved'].includes(status) || status === lastStageLower;
+            }).length;
+            setCompletedTasksCount(completedCount);
+            setRecentTasks(
+              tasks.slice(0, 5).map((task: any) => ({
+                id: String(task.publicId || task.id || ''),
+                title: String(task.title || 'Untitled task'),
+                status: String(task.status || 'backlog'),
+                assigneeName: memberMap.get(String(task.assigneeId || ''))?.name || 'Unassigned',
+              }))
+            );
+          }
 
-        if (documentsRes.ok) {
-          const payload = await documentsRes.json();
-          setDocumentsCount(Number(payload?.data?.total || 0));
+          if (documentsRes.ok) {
+            const payload = await documentsRes.json();
+            setDocumentsCount(Number(payload?.data?.total || 0));
+          }
         }
       } catch { /* silent refresh */ }
     };
@@ -313,7 +380,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
       cancelled = true;
       delete (window as any).__refreshPackageTasks;
     };
-  }, [packageId, projectPublicId]);
+  }, [packageId, projectPublicId, isGuest, guestToken]);
 
   useEffect(() => {
     setDueDateInput(pkg?.dueDate ? utcDateStringToLocalDateString(String(pkg.dueDate)) : '');
@@ -332,6 +399,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
   }, [pkg?.lifecycleStatus, pkg?.status]);
 
   useEffect(() => {
+    if (isGuest) return; // No socket needed for guest mode
     const socket = getSocket();
 
     const handleTaskCountChanged = (data: { packageId: string; projectId: string }) => {
@@ -347,7 +415,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
       socket.off('package:task-count-changed', handleTaskCountChanged);
       socket.emit('package:leave', { packageId });
     };
-  }, [packageId]);
+  }, [packageId, isGuest]);
 
   const stats = useMemo(() => {
     const total = Math.max(totalTasksCount, 0);
@@ -865,7 +933,7 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
               { id: 'tasks', label: 'Tasks' },
               { id: 'documents', label: 'Documents' },
               { id: 'team', label: 'Team' },
-              { id: 'activity', label: 'Activity' },
+              ...(isGuest ? [] : [{ id: 'activity' as const, label: 'Activity' }]),
             ] as const).map((tab) => (
               <button
                 key={tab.id}
@@ -941,12 +1009,21 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
                   <CheckCircle className="h-5 w-5 text-muted-foreground" />
                   <h3 className="font-semibold text-foreground">Due Soon</h3>
                 </div>
-                <ScopedTasksPanel
-                  scope={{ type: 'package', projectId: pkg.projectId, packageId }}
-                  projectRole={projectRole}
-                  variant="compact"
-                  onTaskClick={() => setActiveTab('tasks')}
-                />
+                {isGuest && guestToken ? (
+                  <GuestScopedTasksPanel
+                    projectId={pkg.projectId}
+                    packageId={packageId}
+                    guestToken={guestToken}
+                    variant="compact"
+                  />
+                ) : (
+                  <ScopedTasksPanel
+                    scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+                    projectRole={projectRole}
+                    variant="compact"
+                    onTaskClick={() => setActiveTab('tasks')}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -954,10 +1031,19 @@ export default function PackageDetailPage({ projectPublicId, packageId }: Packag
 
         {activeTab === 'tasks' && (
           <div className="-mx-6 lg:-mx-[80px] xl:-mx-[160px]">
-            <ScopedTasksPanel
-              scope={{ type: 'package', projectId: pkg.projectId, packageId }}
-              projectRole={projectRole}
-            />
+            {isGuest && guestToken ? (
+              <GuestScopedTasksPanel
+                projectId={pkg.projectId}
+                packageId={packageId}
+                guestToken={guestToken}
+                variant="full"
+              />
+            ) : (
+              <ScopedTasksPanel
+                scope={{ type: 'package', projectId: pkg.projectId, packageId }}
+                projectRole={projectRole}
+              />
+            )}
           </div>
         )}
 
