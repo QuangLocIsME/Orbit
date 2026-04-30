@@ -13,14 +13,14 @@ const createLimiter = ({ windowMs, limit, message }) =>
     });
 
 const loginLimiter = createLimiter({
-    windowMs: 10 * 60 * 1000,
-    limit: 10,
+    windowMs: 60 * 1000,
+    limit: 20,
     message: 'Too many login attempts. Please try again later.',
 });
 
 const forgotPasswordLimiter = createLimiter({
-    windowMs: 15 * 60 * 1000,
-    limit: 5,
+    windowMs: 60 * 1000,
+    limit: 10,
     message: 'Too many password reset requests. Please try again later.',
 });
 

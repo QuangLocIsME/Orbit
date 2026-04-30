@@ -15,7 +15,6 @@ interface WorkflowTemplatesDropdownProps {
   selectedWorkflow?: string;
   projectId?: string;
   canApply?: boolean;
-  disabledReason?: string;
   onSelect?: (workflowId: string, stages: WorkflowStageInfo[]) => void;
   onConfigureClick?: () => void;
 }
@@ -24,21 +23,26 @@ export default function WorkflowTemplatesDropdown({
   selectedWorkflow = '',
   projectId,
   canApply = true,
-  disabledReason,
   onSelect,
   onConfigureClick 
 }: WorkflowTemplatesDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState(selectedWorkflow);
   const [customTemplates, setCustomTemplates] = useState<WorkflowTemplate[]>([]);
+  const [myTemplates, setMyTemplates] = useState<WorkflowTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Sync selected with prop
+  // Sync selected with prop and set default to first "My Templates" item
   useEffect(() => {
-    setSelected(selectedWorkflow);
-  }, [selectedWorkflow]);
+    if (selectedWorkflow) {
+      setSelected(selectedWorkflow);
+    } else if (myTemplates.length > 0 && !selected) {
+      setSelected(myTemplates[0].publicId);
+      onSelect?.(myTemplates[0].publicId, myTemplates[0].stages.map((s: any) => ({ id: s.id, name: s.name })));
+    }
+  }, [selectedWorkflow, myTemplates, selected, onSelect]);
 
   // Fetch selectable templates (my + downloaded + library)
   useEffect(() => {
@@ -50,6 +54,8 @@ export default function WorkflowTemplatesDropdown({
           workflowTemplateService.getDownloadedTemplates({ limit: 50 }),
           workflowTemplateService.getTemplates({ limit: 100, sort: 'recent' }),
         ]);
+
+        setMyTemplates(myRes.templates);
 
         const byId = new Map<string, WorkflowTemplate>();
         [...myRes.templates, ...downloadedRes.templates, ...libraryRes.templates].forEach((template) => {
@@ -86,11 +92,6 @@ export default function WorkflowTemplatesDropdown({
     name: t.name,
     stages: t.stages.map(s => ({ id: s.id, name: s.name })),
   }));
-  const isDisabledByReason = Boolean(disabledReason);
-  const isDropdownDisabled =
-    allTemplates.length === 0 || isApplying || isDisabledByReason || (!canApply && allTemplates.length <= 1);
-  const triggerTitle = disabledReason || (!canApply ? 'Only project owner/admin can change workflow' : undefined);
-
   const selectedTemplate = allTemplates.find(w => w.publicId === selected) || null;
 
   useEffect(() => {
@@ -107,7 +108,7 @@ export default function WorkflowTemplatesDropdown({
   const handleSelect = async (workflowId: string) => {
     const template = allTemplates.find(w => w.publicId === workflowId);
     const isChangingWorkflow = selected !== workflowId;
-    const shouldApplyToProject = Boolean(projectId) && canApply && isChangingWorkflow && !isDisabledByReason;
+    const shouldApplyToProject = Boolean(projectId) && canApply && isChangingWorkflow;
     
     // Apply workflow template to project when user has permission
     if (shouldApplyToProject) {
@@ -149,13 +150,12 @@ export default function WorkflowTemplatesDropdown({
   };
 
   return (
-    <div className="relative" ref={dropdownRef} title={triggerTitle}>
+    <div className="relative" ref={dropdownRef}>
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        disabled={isDropdownDisabled}
+        disabled={allTemplates.length === 0 || isApplying}
         className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 text-[14px] text-[#101828] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        title={triggerTitle}
       >
         <span className="inline-flex items-center gap-2 leading-none">
         {isApplying ? (
@@ -203,7 +203,7 @@ export default function WorkflowTemplatesDropdown({
                 <button
                   key={workflow.publicId}
                   onClick={() => handleSelect(workflow.publicId)}
-                  disabled={isApplying || isDisabledByReason || (!canApply && selected !== workflow.publicId)}
+                  disabled={isApplying}
                   className={cn(
                     "w-full flex items-center justify-between px-4 py-3 text-left transition-colors",
                     selected === workflow.publicId
@@ -211,7 +211,6 @@ export default function WorkflowTemplatesDropdown({
                       : "text-[#101828] hover:bg-gray-50",
                     isApplying && "opacity-50 cursor-not-allowed"
                   )}
-                  title={disabledReason || (!canApply && selected !== workflow.publicId ? 'Only project owner/admin can change workflow' : undefined)}
                 >
                   <span className={cn(
                     "text-[14px]",

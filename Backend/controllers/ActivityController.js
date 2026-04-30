@@ -29,7 +29,7 @@ const TYPE_CONFIG = {
     project_update:     { icon: 'settings', color: 'bg-green-100 text-green-600',  label: 'updated project settings' },
 };
 
-const buildActivityItem = (item) => {
+const buildActivityItem = (item, scope = {}) => {
     const config = TYPE_CONFIG[item.type] || { icon: 'settings', color: 'bg-gray-100 text-gray-600' };
     let action = item.action || '';
 
@@ -50,12 +50,15 @@ const buildActivityItem = (item) => {
         user: item.userName || item.user || 'System',
         createdAt: item.createdAt,
         metadata: item.metadata || {},
+        targetId: item.targetId || null,
+        projectId: item.projectId || scope.projectId || null,
+        packageId: item.packageId || scope.packageId || null,
     };
 };
 
 class ActivityController {
     async listByProject(req, res) {
-        return this.listByScope(req, res, { packageId: null });
+        return this.listByScope(req, res, { packageId: undefined });
     }
 
     async listByPackage(req, res) {
@@ -85,18 +88,20 @@ class ActivityController {
                 }
             }
 
-            const LIMIT = 20;
+            const LIMIT = 50;
             const since = new Date(Date.now() - THIRTY_DAYS_MS);
 
             const scopeFilter = { projectId };
-            if (packageId) {
-                scopeFilter.packageId = packageId;
-            } else {
+            if (packageId === undefined) {
+                // include all activities (project-level + all package activities)
+            } else if (packageId === null) {
                 scopeFilter.$or = [
                     { packageId: null },
                     { packageId: '' },
                     { packageId: { $exists: false } },
                 ];
+            } else {
+                scopeFilter.packageId = packageId;
             }
 
             // Fetch new Activity logs + legacy data in parallel
@@ -109,7 +114,7 @@ class ActivityController {
                     .sort({ createdAt: -1 })
                     .limit(LIMIT)
                     .lean(),
-                !packageId
+                packageId === undefined
                     ? ChangeRequest.find({ projectId, createdAt: { $gte: since } })
                         .sort({ createdAt: -1 })
                         .limit(LIMIT)
@@ -137,8 +142,9 @@ class ActivityController {
             }
 
             // Merge all activities
+            const scope = { projectId, packageId: packageId !== undefined ? packageId : null };
             const merged = [
-                ...activities.map((a) => buildActivityItem(a)),
+                ...activities.map((a) => buildActivityItem(a, scope)),
                 ...documents.map((doc) => ({
                     id: `doc-${doc.publicId}`,
                     type: 'document',
@@ -148,6 +154,9 @@ class ActivityController {
                     user: userMap[doc.uploadedBy] || 'Unknown',
                     createdAt: doc.createdAt,
                     metadata: {},
+                    targetId: doc.publicId || null,
+                    projectId: doc.projectId || projectId,
+                    packageId: doc.packageId !== undefined ? doc.packageId : null,
                 })),
                 ...changeRequests.map((cr) => ({
                     id: `cr-${cr.publicId}`,
@@ -158,13 +167,16 @@ class ActivityController {
                     user: userMap[cr.createdBy] || 'Unknown',
                     createdAt: cr.createdAt,
                     metadata: {},
+                    targetId: cr.publicId || null,
+                    projectId: cr.projectId || projectId,
+                    packageId: null,
                 })),
             ];
 
             merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-            // Add project update if relevant (only for project-level)
-            if (!packageId) {
+            // Add project update if relevant (only for project-level, not package-level)
+            if (packageId !== undefined) {
                 const Project = require('../models/Project');
                 const project = await Project.findOne({ publicId: projectId }, { updatedAt: 1 }).lean();
                 if (project?.updatedAt && new Date(project.updatedAt) >= since) {
@@ -177,6 +189,9 @@ class ActivityController {
                         user: 'System',
                         createdAt: project.updatedAt,
                         metadata: {},
+                        targetId: null,
+                        projectId,
+                        packageId: null,
                     });
                 }
             }

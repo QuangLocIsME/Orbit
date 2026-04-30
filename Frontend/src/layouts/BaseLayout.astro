@@ -1,4 +1,5 @@
 ---
+import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 
 interface Props {
@@ -44,7 +45,3 @@ const {
     <slot />
   </body>
 </html>
-
-<style is:global>
-  @import '../styles/global.css';
-</style>

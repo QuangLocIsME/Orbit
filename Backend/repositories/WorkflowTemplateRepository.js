@@ -115,12 +115,15 @@ class WorkflowTemplateRepository {
     async findUserTemplates(authorId, { page = 1, limit = 20 } = {}) {
         const skip = (page - 1) * limit;
 
-        // Only return templates that user CREATED (no sourcePublicId means it's original)
-        // Templates that user copied should only appear in findDownloadedTemplates
-        const query = {
-            authorId,
-            sourcePublicId: { $exists: false } // Exclude copied templates
-        };
+        // Only return templates that user CREATED (sourcePublicId is null means it's original)
+    // Templates that user copied have sourcePublicId set to the source template's publicId
+    const query = {
+        authorId,
+        $or: [
+            { sourcePublicId: { $exists: false } },
+            { sourcePublicId: null }
+        ]
+    };
 
         const [templates, total] = await Promise.all([
             WorkflowTemplate.find(query)

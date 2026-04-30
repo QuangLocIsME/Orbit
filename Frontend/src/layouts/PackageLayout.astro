@@ -1,18 +1,27 @@
 ---
-import ProjectTopBar from '@/components/layout/ProjectTopBar';
+import '../styles/global.css';
+import ProjectTopBarWrapper from '@/components/layout/ProjectTopBarWrapper';
 
 interface Props {
   title?: string;
   projectName: string;
   projectSlug: string;
   packageName: string;
+  packageId?: string;
+  isGuest?: boolean;
+  guestToken?: string | null;
+  allowedPages?: string[];
 }
 
 const {
   title = 'ORBIT - Package Detail',
   projectName,
   projectSlug,
-  packageName
+  packageName,
+  packageId,
+  isGuest = false,
+  guestToken,
+  allowedPages = [],
 } = Astro.props;
 ---
 
@@ -38,31 +47,65 @@ const {
       hydrateApp();
       initAppSocket();
     </script>
-    <ProjectTopBar
-      projectName={projectName}
-      projectSlug={projectSlug}
-      packageName={packageName}
-      activeTab="packages"
-      tabs={[
-        { id: 'overview', label: 'Overview' },
-        { id: 'packages', label: 'Packages' },
-        { id: 'documents', label: 'Documents' },
-        { id: 'versions', label: 'Versions' },
-        { id: 'changes', label: 'Changes' },
-        { id: 'tasks', label: 'Tasks' },
-        { id: 'clashes', label: 'Clashes' },
-        { id: 'teams', label: 'Teams' },
-        { id: 'activity', label: 'Activity' },
-        { id: 'settings', label: 'Settings' },
-      ]}
-      client:load
-    />
-    <main class="min-h-[calc(100vh-130px)] bg-[#F2F4F7] pt-[130px]">
-      <slot />
-    </main>
+
+    {isGuest ? (
+      <div>
+        {/* Guest banner */}
+        <div class="bg-amber-50 border-b border-amber-200 px-6 lg:px-16 py-2 text-center">
+          <p class="text-sm text-amber-800">
+            <span class="font-medium">Guest View</span>
+            {' — '}You have view-only access. Contact the project owner to request full access.
+          </p>
+        </div>
+
+        {/* Guest header */}
+        <header class="bg-white border-b border-gray-200 sticky top-0 z-40">
+          <div class="max-w-6xl mx-auto px-6 lg:px-16 py-3">
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2 text-sm text-gray-500">
+                <a href="/" class="hover:text-gray-700 transition-colors">Home</a>
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <a href={`/projects/${projectSlug}`} class="hover:text-gray-700 transition-colors">{projectName}</a>
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <span class="text-gray-900 font-medium">{packageName}</span>
+              </div>
+              <div class="ml-auto flex items-center gap-2">
+                <span class="inline-flex items-center gap-1.5 px-2 py-1 bg-amber-50 rounded-full text-xs font-medium text-amber-700">
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  View Only
+                </span>
+              </div>
+            </div>
+          </div>
+        </header>
+        <main class="min-h-[calc(100vh-80px)] bg-[#F2F4F7] pt-4">
+          <slot />
+        </main>
+      </div>
+    ) : (
+      <ProjectTopBarWrapper
+        projectName={projectName}
+        projectSlug={projectSlug}
+        packageName={packageName}
+        packageId={packageId}
+        activeTab="packages"
+        tabs={[
+          { id: 'overview', label: 'Overview' },
+          { id: 'packages', label: 'Packages' },
+          { id: 'versions', label: 'Versions' },
+          { id: 'documents', label: 'Documents' },
+          { id: 'changes', label: 'Changes' },
+          { id: 'tasks', label: 'Tasks' },
+          { id: 'clashes', label: 'Clashes' },
+          { id: 'teams', label: 'Teams' },
+          { id: 'activity', label: 'Activity' },
+          { id: 'settings', label: 'Settings' },
+        ]}
+        client:load
+      />
+      <main class="min-h-[calc(100vh-130px)] bg-[#F2F4F7] pt-[130px]">
+        <slot />
+      </main>
+    )}
   </body>
 </html>
-
-<style is:global>
-  @import '../styles/global.css';
-</style>

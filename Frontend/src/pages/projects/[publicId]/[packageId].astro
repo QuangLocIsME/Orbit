@@ -1,39 +1,106 @@
 ---
+// Package Detail Page — SSR: supports both authenticated users and guest access via share links (?guest=1&token=xxx).
 export const prerender = false;
-import ProjectTopBar from '@/components/layout/ProjectTopBar';
+import '@/styles/global.css';
+import ProjectTopBarWrapper from '@/components/layout/ProjectTopBarWrapper';
 import PackageDetailPage from '@/components/features/PackageDetailPage';
 
 const backendUrl = import.meta.env.BACKEND_URL ?? 'http://localhost:3000';
-const accessToken = Astro.cookies.get('accessToken')?.value;
 const publicId = Astro.params.publicId as string;
 const packageId = Astro.params.packageId as string;
+const accessToken = Astro.cookies.get('accessToken')?.value;
+const guestToken = Astro.url.searchParams.get('token');
+const isGuest = Astro.url.searchParams.get('guest') === '1';
 
 if (!publicId || !packageId) {
   return Astro.redirect('/projects');
 }
 
-let project: any = null;
+let project = null;
+let pkg = null;
+let error = null;
 
-try {
-  const res = await fetch(`${backendUrl}/api/projects/me`, {
-    headers: {
-      Cookie: `accessToken=${accessToken}`,
-      Accept: 'application/json',
-    },
-    credentials: 'include',
-  });
-
-  if (res.ok) {
-    const payload = await res.json();
-    const projects: Array<Record<string, unknown>> = Array.isArray(payload?.data) ? payload.data : [];
-    project = projects.find((p: Record<string, unknown>) => String(p.publicId) === publicId);
+if (isGuest && guestToken) {
+  // ── Guest access via share link ────────────────────────────────────────────
+  try {
+    const projectRes = await fetch(`${backendUrl}/api/guest/project/${encodeURIComponent(publicId)}?token=${encodeURIComponent(guestToken)}`);
+    if (projectRes.ok) {
+      const payload = await projectRes.json();
+      if (payload.success) {
+        project = payload.data;
+      } else {
+        error = payload.message || 'Share link is invalid or expired.';
+      }
+    } else {
+      error = 'Failed to load project.';
+    }
+  } catch {
+    error = 'Failed to load project.';
   }
-} catch {
-  // ignore and redirect below
+
+  if (!error) {
+    try {
+      const pkgRes = await fetch(`${backendUrl}/api/guest/packages/${encodeURIComponent(publicId)}?token=${encodeURIComponent(guestToken)}`);
+      if (pkgRes.ok) {
+        const pkgPayload = await pkgRes.json();
+        if (pkgPayload.success) {
+          const packages = Array.isArray(pkgPayload.data) ? pkgPayload.data : [];
+          pkg = packages.find((p) => String(p.publicId) === packageId);
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+} else {
+  // ── Authenticated user ─────────────────────────────────────────────────────
+  try {
+    const res = await fetch(`${backendUrl}/api/projects/me`, {
+      headers: {
+        Cookie: `accessToken=${accessToken}`,
+        Accept: 'application/json',
+      },
+      credentials: 'include',
+    });
+
+    if (res.ok) {
+      const payload = await res.json();
+      const projects = Array.isArray(payload?.data) ? payload.data : [];
+      project = projects.find((p) => String(p.publicId) === publicId);
+    }
+  } catch {
+    error = 'Failed to load project';
+  }
+
+  if (!project) {
+    return Astro.redirect('/projects');
+  }
+
+  // Fetch package info for the breadcrumb
+  try {
+    const pkgRes = await fetch(`${backendUrl}/api/projects/packages/list`, {
+      method: 'POST',
+      headers: {
+        Cookie: `accessToken=${accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ projectId: publicId, listType: 'all' }),
+    });
+
+    if (pkgRes.ok) {
+      const pkgPayload = await pkgRes.json();
+      const packages = Array.isArray(pkgPayload?.data) ? pkgPayload.data : [];
+      pkg = packages.find((p) => String(p.publicId) === packageId);
+    }
+  } catch {
+    // non-fatal
+  }
 }
 
-if (!project) {
-  return Astro.redirect('/projects');
+if (error) {
+  return Astro.redirect(`/share/invalid?message=${encodeURIComponent(error)}`);
 }
 ---
 
@@ -46,21 +113,24 @@ if (!project) {
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <title>{`Package Detail - ${String(project.name)} - ORBIT`}</title>
+    <title>{`${pkg?.name || 'Package'} - ${String(project?.name)} - ORBIT`}</title>
   </head>
   <body class="min-h-screen font-sans bg-[#F2F4F7]">
-    <ProjectTopBar
-      projectName={String(project.name)}
-      projectSlug={String(project.publicId)}
-      packageName="Package"
+    <ProjectTopBarWrapper
+      projectName={String(project?.name)}
+      projectSlug={String(project?.publicId)}
+      packageName={pkg?.name || 'Package'}
+      packageId={packageId}
       client:load
     />
     <main class="min-h-[calc(100vh-130px)] bg-[#F2F4F7] pt-[130px]">
-      <PackageDetailPage projectPublicId={publicId} packageId={packageId} client:load />
+      <PackageDetailPage
+        projectPublicId={publicId}
+        packageId={packageId}
+        isGuest={isGuest}
+        guestToken={guestToken}
+        client:load
+      />
     </main>
   </body>
 </html>
-
-<style is:global>
-  @import '../../styles/global.css';
-</style>

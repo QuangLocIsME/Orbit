@@ -45,6 +45,8 @@ interface ApprovalItem {
   conversionStatus: string | null;
   createdAt: string;
   updatedAt: string;
+  packageId: string | null;
+  packageName: string | null;
 }
 
 interface ApprovalComment {
@@ -498,6 +500,12 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
                           {approval.isNewVersion && (
                             <span className="rounded px-2 py-0.5 bg-[#EEF2FF] text-[#432DD7] font-medium">New version</span>
                           )}
+                          {approval.packageName && (
+                            <span className="flex items-center gap-1 rounded px-2 py-0.5 bg-[#F0FDF4] text-[#15803D] font-medium">
+                              <Box className="h-3 w-3" />
+                              {approval.packageName}
+                            </span>
+                          )}
                           <span>{formatFileSize(approval.size)}</span>
                         </div>
                       </div>
@@ -550,6 +558,15 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
                         <div className="col-span-2">
                           <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Folder</p>
                           <p className="font-medium text-[#101828]">{approval.folderPath}</p>
+                        </div>
+                      )}
+                      {approval.packageName && (
+                        <div className="col-span-2">
+                          <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold">Package</p>
+                          <p className="font-medium text-[#101828] flex items-center gap-1.5">
+                            <Box className="h-3.5 w-3.5 text-[#15803D]" />
+                            {approval.packageName}
+                          </p>
                         </div>
                       )}
                       {approval.versionDescription && (

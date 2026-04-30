@@ -120,6 +120,14 @@ class ProjectMemberRepository {
             'projectId role status lastVisitedAt isFavorite'
         );
     }
+
+    async findMembersByRole(projectId, roles) {
+        return await ProjectMember.find({
+            projectId,
+            role: { $in: roles },
+            status: 'accepted',
+        }).select('userId role');
+    }
 }
 
 module.exports = new ProjectMemberRepository();

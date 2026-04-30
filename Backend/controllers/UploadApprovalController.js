@@ -50,6 +50,17 @@ class UploadApprovalController {
                 }
             }
 
+            // Batch-fetch packages to get names
+            const packageIds = [...new Set(approvals.map((a) => a.packageId || docMap.get(a.documentId)?.packageId).filter(Boolean))];
+            let packageMap = new Map();
+            if (packageIds.length > 0) {
+                const Package = require('../models/Package');
+                const packages = await Package.find({ publicId: { $in: packageIds } }).select('publicId name').lean();
+                for (const pkg of packages) {
+                    packageMap.set(pkg.publicId, pkg.name);
+                }
+            }
+
             const uploaderIds = [...new Set(approvals.map((a) => a.uploaderId))];
             const validIds = uploaderIds.filter((id) => {
                 try {
@@ -77,6 +88,11 @@ class UploadApprovalController {
                         return {
                             publicId: a.publicId,
                             documentId: a.documentId,
+                            packageId: a.packageId || (docMap.get(a.documentId)?.packageId || null),
+                            packageName: (() => {
+                                const resolvedPkgId = a.packageId || docMap.get(a.documentId)?.packageId;
+                                return resolvedPkgId ? (packageMap.get(resolvedPkgId) || null) : null;
+                            })(),
                             jobId: a.jobId,
                             originalName: a.originalName,
                             mimeType: a.mimeType,
@@ -201,7 +217,7 @@ class UploadApprovalController {
 
             await ActivityService.log({
                 projectId: normalizedProjectId,
-                packageId: null,
+                packageId: doc?.packageId || null,
                 userId,
                 type: 'upload_approved',
                 targetId: approval.documentId,
@@ -267,9 +283,11 @@ class UploadApprovalController {
 
             await DocumentRepository.updateApprovalStatus(approval.documentId, 'rejected');
 
+            const doc = await DocumentRepository.findByPublicId(approval.documentId);
+
             await ActivityService.log({
                 projectId: normalizedProjectId,
-                packageId: null,
+                packageId: doc?.packageId || null,
                 userId,
                 type: 'upload_rejected',
                 targetId: approval.documentId,
