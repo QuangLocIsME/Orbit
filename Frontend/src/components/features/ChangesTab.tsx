@@ -883,7 +883,7 @@ function nameToColor(name: string) {
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
 function DetailModal({
-  cr, disciplines, modelFiles, teamMembers, projectPublicId, currentUserId, currentRole, workflowStages, onClose, onStatusChange, onTaskLinked, onTaskUnlinked,
+  cr, disciplines, modelFiles, teamMembers, projectPublicId, currentUserId, currentRole, workflowStages, onClose, onStatusChange, onTaskLinked, onTaskUnlinked, onRefreshCR,
 }: {
   cr: ChangeRequest;
   disciplines: Discipline[];
@@ -897,6 +897,7 @@ function DetailModal({
   onStatusChange: (id: string, s: ChangeRequest['status']) => void;
   onTaskLinked?: (taskId: string) => void;
   onTaskUnlinked?: (taskId: string) => void;
+  onRefreshCR?: (freshCR: ChangeRequest) => void;
 }) {
   const [updating, setUpdating] = useState(false);
   const [comments, setComments] = useState<CRComment[]>([]);
@@ -930,8 +931,8 @@ function DetailModal({
   const [creatingVersion, setCreatingVersion] = useState(false);
 
   const disc = disciplines.find(d => d.id === cr.disciplineId);
-  const sc = STATUS_CFG[cr.status];
-  const pc = PRIORITY_CFG[cr.priority];
+  const sc = STATUS_CFG[cr.status] ?? { label: cr.status, bg: 'bg-gray-100', text: 'text-gray-700' };
+  const pc = PRIORITY_CFG[cr.priority] ?? { label: cr.priority, bg: 'bg-gray-100', text: 'text-gray-700' };
 
   const resolveTaskStatusLabel = (status: string) => {
     const stage = (workflowStages || []).find(s => s.id === status);
@@ -966,7 +967,7 @@ function DetailModal({
 
   // ── Load linked tasks ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!cr.linkedTaskIds || cr.linkedTaskIds.length === 0) {
+    if (!cr.linkedTaskIds || cr.linkedTaskIds?.length === 0) {
       setLinkedTasks([]);
       return;
     }
@@ -982,7 +983,7 @@ function DetailModal({
         if (res.ok && !cancelled) {
           const d = await res.json();
           const allTasks: LinkedTask[] = d?.data ?? [];
-          const linked = allTasks.filter(t => cr.linkedTaskIds.includes(t.id || t.publicId));
+          const linked = allTasks.filter(t => cr.linkedTaskIds?.includes(t.id || t.publicId));
           if (!cancelled) setLinkedTasks(linked);
         }
       } catch { /* silent */ }
@@ -990,6 +991,30 @@ function DetailModal({
     })();
     return () => { cancelled = true; };
   }, [cr.linkedTaskIds, projectPublicId]);
+
+  // ── Reload CR data on mount to get fresh linkedTaskIds ──────────────────────
+  // Tasks can be linked via CreateTaskModal (ScopedTasksPanel), which updates the
+  // backend CR but not the parent's cached detailCR. Fetch fresh CR data here.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/change-requests/detail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ crId: cr.publicId, projectId: projectPublicId }),
+        });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          const fresh = d?.data;
+          if (fresh && onRefreshCR) {
+            onRefreshCR(fresh);
+          }
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, []); // run once on mount only
 
   // ── Load version history ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -1023,7 +1048,7 @@ function DetailModal({
         if (res.ok && !cancelled) {
           const d = await res.json();
           const allTasks: LinkedTask[] = d?.data ?? [];
-          const available = allTasks.filter(t => !cr.linkedTaskIds.includes(t.publicId));
+          const available = allTasks.filter(t => !cr.linkedTaskIds?.includes(t.publicId));
           if (!cancelled) setAvailableTasks(available);
         }
       } catch { /* silent */ }
@@ -1279,7 +1304,7 @@ function DetailModal({
           {cr.structuredSections?.context && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Context</p>
-              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections.context}</p>
+              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections?.context}</p>
             </div>
           )}
           {(!cr.structuredSections?.context) && cr.description && (
@@ -1301,7 +1326,7 @@ function DetailModal({
           {cr.structuredSections?.proposedChange && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Proposed Change</p>
-              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections.proposedChange}</p>
+              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections?.proposedChange}</p>
             </div>
           )}
 
@@ -1320,13 +1345,13 @@ function DetailModal({
           </div>
 
           {/* ── Assignees + Reviewers ───────────────────────────────────────── */}
-          {(cr.assignedTo.length > 0 || cr.reviewers.length > 0) && (
+          {(cr.assignedTo?.length > 0 || cr.reviewers?.length > 0) && (
             <div className="grid grid-cols-2 gap-4">
-              {cr.assignedTo.length > 0 && (
+              {cr.assignedTo?.length > 0 && (
                 <div>
                   <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Assigned To</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {cr.assignedTo.map(id => {
+                    {cr.assignedTo?.map(id => {
                       const m = teamMembers.find(x => x.userId === id);
                       return m ? (
                         <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[12px] text-[#1D4ED8]">
@@ -1337,11 +1362,11 @@ function DetailModal({
                   </div>
                 </div>
               )}
-              {cr.reviewers.length > 0 && (
+              {cr.reviewers?.length > 0 && (
                 <div>
                   <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Reviewers</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {cr.reviewers.map(id => {
+                    {cr.reviewers?.map(id => {
                       const m = teamMembers.find(x => x.userId === id);
                       return m ? (
                         <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-1 pr-2 py-0.5 text-[12px] text-[#166534]">
@@ -1356,7 +1381,7 @@ function DetailModal({
           )}
 
           {/* ── Section 4: Impact ──────────────────────────────────────────── */}
-          {(cr.estimatedImpact || cr.affectedModels.length > 0 || cr.structuredSections?.impact) && (
+          {(cr.estimatedImpact || cr.affectedModels?.length > 0 || cr.structuredSections?.impact) && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-2">Impact</p>
               <div className="space-y-2">
@@ -1376,11 +1401,11 @@ function DetailModal({
                     <span className="rounded px-2 py-0.5 text-[12px] font-medium bg-[#FFF1F2] text-[#C70036]">Yes</span>
                   </div>
                 )}
-                {cr.affectedModels.length > 0 && (
+                {cr.affectedModels?.length > 0 && (
                   <div>
                     <span className="text-[13px] text-[#364153]">Affected Models:</span>
                     <div className="flex flex-wrap gap-1.5 mt-1">
-                      {cr.affectedModels.map((id, i) => {
+                      {cr.affectedModels?.map((id, i) => {
                         const f = modelFiles.find(m => m.id === id);
                         return (
                           <span key={i} className="inline-flex items-center gap-1 rounded-[6px] bg-[#F3F4F6] px-2 py-1 text-[12px] text-[#364153]">
@@ -1396,11 +1421,11 @@ function DetailModal({
           )}
 
           {/* ── Attachments ─────────────────────────────────────────────────── */}
-          {cr.attachments.length > 0 && (
+          {cr.attachments?.length > 0 && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Attachments</p>
               <div className="rounded-[10px] border border-[#E5E7EB] divide-y divide-[#F3F4F6]">
-                {cr.attachments.map((a, i) => (
+                {cr.attachments?.map((a, i) => (
                   <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                     <FileIcon className="shrink-0 text-[#6A7282]" />
                     <div className="min-w-0 flex-1">
@@ -1558,7 +1583,7 @@ function DetailModal({
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Result Files</p>
               <div className="rounded-[10px] border border-[#E5E7EB] divide-y divide-[#F3F4F6]">
-                {cr.resultAttachments.map((a, i) => (
+                {cr.resultAttachments?.map((a, i) => (
                   <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                     <FileIcon className="shrink-0 text-[#6A7282]" />
                     <div className="min-w-0 flex-1">
@@ -1954,7 +1979,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
     if (filter === 'published'    && cr.status !== 'published')    return false;
     if (search) {
       const q = search.toLowerCase();
-      return cr.title.toLowerCase().includes(q) || cr.crId.toLowerCase().includes(q) || cr.description.toLowerCase().includes(q);
+      return cr.title?.toLowerCase().includes(q) || cr.crId?.toLowerCase().includes(q) || cr.description?.toLowerCase().includes(q);
     }
     return true;
   });
@@ -2088,11 +2113,11 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
           </div>
         ) : (
           filtered.map((cr, idx) => {
-            const sc   = STATUS_CFG[cr.status];
-            const pc   = PRIORITY_CFG[cr.priority];
+            const sc   = STATUS_CFG[cr.status] ?? { label: cr.status, bg: 'bg-gray-100', text: 'text-gray-700' };
+            const pc   = PRIORITY_CFG[cr.priority] ?? { label: cr.priority, bg: 'bg-gray-100', text: 'text-gray-700' };
             const disc = disciplines.find(d => d.id === cr.disciplineId);
-            const assigneeMembers  = cr.assignedTo.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
-            const reviewerMembers  = cr.reviewers.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
+            const assigneeMembers  = cr.assignedTo?.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
+            const reviewerMembers  = cr.reviewers?.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
             const canEdit = currentRole === 'admin' || cr.createdBy === currentUserId;
 
             return (
@@ -2115,14 +2140,14 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
                   {cr.description && <p className="text-[13px] text-[#4A5565] mb-3 line-clamp-2">{cr.description}</p>}
 
                   {/* Affected models */}
-                  {cr.affectedModels.length > 0 && (
+                  {cr.affectedModels?.length > 0 && (
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
                       <span className="text-[11px] text-[#6A7282]">Models:</span>
-                      {cr.affectedModels.slice(0, 3).map((id, i) => {
+                      {cr.affectedModels?.slice(0, 3).map((id, i) => {
                         const f = modelFiles.find(m => m.id === id);
                         return <span key={i} className="inline-flex items-center gap-1 rounded bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#4A5565]"><FileIcon />{f ? f.name : id}</span>;
                       })}
-                      {cr.affectedModels.length > 3 && <span className="rounded bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#6A7282]">+{cr.affectedModels.length - 3} more</span>}
+                      {cr.affectedModels?.length > 3 && <span className="rounded bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#6A7282]">+{cr.affectedModels?.length - 3} more</span>}
                     </div>
                   )}
 
@@ -2164,12 +2189,12 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
 
                   {/* Meta row */}
                   <div className="flex items-center gap-3 text-[11px] text-[#6A7282] mt-2">
-                    {cr.attachments.length > 0 && (
+                    {cr.attachments?.length > 0 && (
                       <span className="flex items-center gap-1">
                         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/>
                         </svg>
-                        {cr.attachments.length} file{cr.attachments.length > 1 ? 's' : ''}
+                        {cr.attachments?.length} file{cr.attachments?.length > 1 ? 's' : ''}
                       </span>
                     )}
                     <span>{fmtRel(cr.createdAt)}</span>
@@ -2245,6 +2270,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
           onStatusChange={handleStatusChange}
           onTaskLinked={(taskId) => setDetailCR(prev => prev ? { ...prev, linkedTaskIds: [...prev.linkedTaskIds, taskId] } : prev)}
           onTaskUnlinked={(taskId) => setDetailCR(prev => prev ? { ...prev, linkedTaskIds: prev.linkedTaskIds.filter(id => id !== taskId) } : prev)}
+          onRefreshCR={(fresh) => setDetailCR(fresh)}
         />
       )}
       {editCR && (

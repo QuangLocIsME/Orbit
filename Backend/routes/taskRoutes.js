@@ -10,6 +10,7 @@ router.post('/list', authenticate, (req, res) => TaskController.listTasks(req, r
 router.post('/my', authenticate, (req, res) => TaskController.listMyTasks(req, res));
 router.post('/detail', authenticate, (req, res) => TaskController.detailTask(req, res));
 router.post('/change-status', authenticate, (req, res) => TaskController.changeStatus(req, res));
+router.post('/request-review', authenticate, (req, res) => TaskController.requestReview(req, res));
 router.post('/comments/list', authenticate, (req, res) => TaskController.listComments(req, res));
 router.post('/comments/create', authenticate, (req, res) => TaskController.createComment(req, res));
 router.put('/comments', authenticate, (req, res) => TaskController.updateComment(req, res));

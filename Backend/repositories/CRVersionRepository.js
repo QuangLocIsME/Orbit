@@ -43,6 +43,14 @@ class CRVersionRepository {
             { returnDocument: 'after' }
         );
     }
+
+    async updateResultFiles(publicId, resultFiles) {
+        return await CRVersion.findOneAndUpdate(
+            { publicId },
+            { $set: { resultFiles } },
+            { returnDocument: 'after' }
+        );
+    }
 }
 
 module.exports = new CRVersionRepository();

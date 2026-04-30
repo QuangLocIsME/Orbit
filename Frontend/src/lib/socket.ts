@@ -31,6 +31,11 @@ export interface ServerToClientEvents {
   'documents:refresh': (data: { projectId: string; packageId: string }) => void;
   'task:assigned': (data: { taskId: string; projectId: string; assignedTo: string; title: string }) => void;
   'task:completed': (data: { taskId: string; projectId: string; completedBy: string }) => void;
+  'task:status-changed': (data: { projectId: string; packageId: string | null; taskId: string; status: string }) => void;
+  'task:created': (data: { projectId: string; packageId: string | null; taskId: string }) => void;
+  'task:deleted': (data: { projectId: string; packageId: string | null; taskId: string }) => void;
+  'task:commented': (data: { projectId: string; packageId: string | null; taskId: string; commentId: string }) => void;
+  'package:task-count-changed': (data: { projectId: string; packageId: string; action: string; taskId?: string; status?: string }) => void;
   'approval:new': (data: { projectId: string; approvalId: string }) => void;
   'approval:updated': (data: { projectId: string; approvalId: string; status: string }) => void;
   'approval:deleted': (data: { projectId: string; approvalId: string }) => void;
@@ -104,7 +109,6 @@ export function getSocket(): OrbitSocket {
   });
 
   socket.on('connect_error', (err) => {
-    // NO_TOKEN / INVALID_TOKEN → user is not logged in, silently ignore
     if (err.message === 'NO_TOKEN' || err.message === 'INVALID_TOKEN') {
       console.debug('[WS] Not authenticated — socket disabled');
       socket?.disconnect();

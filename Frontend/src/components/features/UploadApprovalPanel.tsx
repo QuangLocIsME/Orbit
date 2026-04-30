@@ -256,6 +256,59 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
   const [crVersionActionLoading, setCrVersionActionLoading] = useState<string | null>(null);
   const [crVersionRejectReason, setCrVersionRejectReason] = useState<{ id: string; reason: string } | null>(null);
 
+  // CR version file conversion status: Record<sourceDocumentId, conversionStatus>
+  const [crFileConversionStatus, setCrFileConversionStatus] = useState<Record<string, string>>({});
+
+  const fetchCrFileConversionStatus = async (documentId: string, fileName?: string): Promise<{ fileId: string; status: string } | null> => {
+    const cacheKey = documentId || fileName || '';
+    if (cacheKey && crFileConversionStatus[cacheKey]) return { fileId: cacheKey, status: crFileConversionStatus[cacheKey] };
+    try {
+      const res = await apiFetch('/api/projects/packages/documents/view-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          fileId: documentId || '',
+          versionId: documentId || '',
+          fileName: fileName || '',
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const resolvedFileId = data.data.fileId || cacheKey;
+        const resolvedStatus = data.data.status || 'NOT_SUPPORTED';
+        setCrFileConversionStatus(prev => ({ ...prev, [resolvedFileId]: resolvedStatus }));
+        return { fileId: resolvedFileId, status: resolvedStatus };
+      }
+    } catch { /* silent */ }
+    return null;
+  };
+
+  const retryConversion = async (fileId: string, fileName: string, onStatusUpdate: (status: string) => void) => {
+    toast.loading('Re-queuing conversion...', { id: `retry-${fileId || fileName}` });
+    try {
+      const res = await apiFetch('/api/projects/packages/documents/retry-conversion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          fileId: fileId || '',
+          versionId: fileId || '',
+          fileName: fileName || '',
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        onStatusUpdate('PROCESSING');
+        toast.success('Conversion re-queued', { id: `retry-${fileId || fileName}` });
+      } else {
+        toast.error(data.message || 'Failed to re-queue conversion', { id: `retry-${fileId || fileName}` });
+      }
+    } catch {
+      toast.error('Failed to re-queue conversion', { id: `retry-${fileId || fileName}` });
+    }
+  };
+
   const ITEMS_PER_PAGE = 10;
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -300,7 +353,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
 
   const fetchChangeRequests = async () => {
     try {
-      const res = await apiFetch(`/api/change-requests/projects-by-id/${projectId}/change-requests`, {
+      const res = await apiFetch(`/api/projects-by-id/${projectId}/change-requests`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -972,16 +1025,24 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
                         versionId: approval.documentId,
                         fileName: approval.originalName,
                       });
+                    } else if (approval.conversionStatus === 'PROCESSING') {
+                      toast.info('Model is still being converted. Please wait...');
                     } else {
-                      toast.error('Model is not ready yet. Please wait for conversion to complete.');
+                      retryConversion(approval.documentId, approval.originalName, (newStatus) => {
+                        setApprovals(prev => prev.map(a =>
+                          a.publicId === approval.publicId ? { ...a, conversionStatus: newStatus } : a
+                        ));
+                      });
                     }
                   }}
                   disabled={approval.conversionStatus === 'PROCESSING'}
                   className={cn(
                     'inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-[12px] transition-colors',
                     approval.conversionStatus === 'READY'
-                      ? 'border-[#155DFC] bg-[#155DFC]/5 text-[#155DFC] hover:bg-[#155DFC]/10 font-medium'
-                      : 'border-[#E5E7EB] bg-white text-[#6A7282] cursor-not-allowed opacity-60'
+                      ? 'border-[#155DFC] bg-[#155DFC]/5 text-[#155DFC] hover:bg-[#155DFC]/10 font-medium cursor-pointer'
+                      : approval.conversionStatus === 'PROCESSING'
+                      ? 'border-[#E5E7EB] bg-white text-[#6A7282] cursor-not-allowed opacity-60'
+                      : 'border-[#E5E7EB] bg-white text-[#6A7282] hover:border-[#FCA5A5] hover:text-[#DC2626] hover:bg-[#FEF2F2] cursor-pointer'
                   )}
                 >
                   <Box className="h-3.5 w-3.5" />
@@ -990,7 +1051,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
                 </button>
               )}
 
-              {approval.fileUrl && /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) && !isIfcFile(approval.mimeType, approval.originalName) ? (
+              {approval.fileUrl && /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) ? (
                 <button
                   onClick={async () => {
                     setIsLoadingTextPreview(true);
@@ -1010,13 +1071,6 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
                 >
                   <Eye className="h-3.5 w-3.5" />Preview
                 </button>
-              ) : null}
-
-              {approval.fileUrl && !isIfcFile(approval.mimeType, approval.originalName) && !/\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(approval.originalName) ? (
-                <a href={approval.fileUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
-                  <Eye className="h-3.5 w-3.5" />Preview
-                </a>
               ) : null}
 
               {approval.fileUrl && (
@@ -1258,29 +1312,102 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
               <div className="mb-4">
                 <p className="text-[11px] text-[#6A7282] uppercase tracking-wide font-semibold mb-2">Files ({version.resultFiles.length})</p>
                 <div className="space-y-2">
-                  {version.resultFiles.map((file: any, idx: number) => (
+                  {version.resultFiles.map((file: any, idx: number) => {
+                    const isText = /\.(txt|md|json|csv|xml|html|css|js|ts|log|ini|cfg|yaml|yml|env|sh|bat|ps1)$/i.test(file.name);
+                    const isIfc = isIfcFile(file.mimeType, file.name);
+                    const fileStatus = isIfc ? crFileConversionStatus[file.sourceDocumentId || file.name] : null;
+
+                    return (
                     <div key={idx} className="flex items-center justify-between rounded-[8px] border border-[#E5E7EB] bg-[#FAFAFA] px-3 py-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <FileText className="h-4 w-4 text-[#6A7282] shrink-0" />
                         <span className="text-[13px] text-[#101828] truncate">{file.name}</span>
                         <span className="text-[11px] text-[#9CA3AF] shrink-0">{formatFileSize(file.size)}</span>
+                        {fileStatus && fileStatus !== 'READY' && fileStatus !== 'PROCESSING' && (
+                          <span className="text-[11px] text-[#6A7282] shrink-0">({fileStatus.toLowerCase()})</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {isIfc && (
+                          <button
+                            onClick={async () => {
+                              const key = file.sourceDocumentId || file.name;
+                              let status = crFileConversionStatus[key];
+                              let resolvedFileId = key;
+
+                              if (!status) {
+                                const result = await fetchCrFileConversionStatus(file.sourceDocumentId || '', file.name);
+                                if (result) {
+                                  status = result.status;
+                                  resolvedFileId = result.fileId;
+                                }
+                              }
+
+                              if (status === 'READY') {
+                                setXktViewerState({
+                                  projectId,
+                                  fileId: resolvedFileId,
+                                  versionId: resolvedFileId,
+                                  fileName: file.name,
+                                });
+                              } else {
+                                await retryConversion(resolvedFileId, file.name, (newStatus) => {
+                                  setCrFileConversionStatus(prev => ({ ...prev, [resolvedFileId]: newStatus }));
+                                });
+                              }
+                            }}
+                            disabled={fileStatus === 'PROCESSING'}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-[12px] transition-colors',
+                              fileStatus === 'READY'
+                                ? 'border-[#155DFC] bg-[#155DFC]/5 text-[#155DFC] hover:bg-[#155DFC]/10 font-medium cursor-pointer'
+                                : fileStatus === 'PROCESSING'
+                                ? 'border-[#E5E7EB] bg-white text-[#6A7282] cursor-not-allowed opacity-60'
+                                : 'border-[#E5E7EB] bg-white text-[#6A7282] hover:border-[#FCA5A5] hover:text-[#DC2626] hover:bg-[#FEF2F2] cursor-pointer'
+                            )}
+                          >
+                            <Box className="h-3.5 w-3.5" />
+                            3D Preview
+                            {fileStatus === 'PROCESSING' && <Loader2 className="h-3 w-3 animate-spin" />}
+                          </button>
+                        )}
+                        {file.url && isText ? (
+                          <button
+                            onClick={async () => {
+                              setIsLoadingTextPreview(true);
+                              setPreviewTextFileName(file.name);
+                              try {
+                                const res = await fetch(file.url);
+                                if (!res.ok) throw new Error('Failed to load file');
+                                const text = await res.text();
+                                setPreviewTextContent(text);
+                              } catch {
+                                setPreviewTextContent('Failed to load file content.');
+                              } finally {
+                                setIsLoadingTextPreview(false);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                          >
+                            <Eye className="h-3.5 w-3.5" />Preview
+                          </button>
+                        ) : null}
+                        {file.url && !isText && !isIfc ? (
+                          <a href={file.url} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
+                            <Eye className="h-3.5 w-3.5" />Preview
+                          </a>
+                        ) : null}
                         {file.url && (
-                          <>
-                            <a href={file.url} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded-[6px] border border-[#E5E7EB] bg-white px-2 py-1 text-[11px] text-[#364153] hover:bg-gray-50 transition-colors">
-                              <Eye className="h-3 w-3" />Preview
-                            </a>
-                            <a href={file.url} download={file.name}
-                              className="inline-flex items-center gap-1 rounded-[6px] border border-[#E5E7EB] bg-white px-2 py-1 text-[11px] text-[#364153] hover:bg-gray-50 transition-colors">
-                              <Download className="h-3 w-3" />Download
-                            </a>
-                          </>
+                          <a href={file.url} download={file.name}
+                            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors">
+                            <Download className="h-3.5 w-3.5" />Download
+                          </a>
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (

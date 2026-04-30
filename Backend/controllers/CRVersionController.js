@@ -14,6 +14,38 @@ const normalizeString = (val) => {
     return val.trim();
 };
 
+function extractS3KeyFromUrl(url, bucket) {
+    if (!url || !url.startsWith('http')) return url || '';
+    try {
+        const parsed = new URL(url);
+        const segments = parsed.pathname.split('/');
+        const bucketIdx = segments.indexOf(bucket);
+        if (bucketIdx >= 0 && bucketIdx < segments.length - 1) {
+            return segments.slice(bucketIdx + 1).join('/');
+        }
+        return url;
+    } catch (_) {
+        return url;
+    }
+}
+
+const SUPABASE_AVATAR_BUCKET = 'orbit-files';
+
+function extractSupabaseKeyFromUrl(url) {
+    if (!url || !url.startsWith('http')) return '';
+    try {
+        const parsed = new URL(url);
+        const segments = parsed.pathname.split('/');
+        const bucketIdx = segments.indexOf(SUPABASE_AVATAR_BUCKET);
+        if (bucketIdx >= 0 && bucketIdx < segments.length - 1) {
+            return segments.slice(bucketIdx + 1).join('/');
+        }
+        return '';
+    } catch (_) {
+        return '';
+    }
+}
+
 class CRVersionController {
     async listByCR(req, res) {
         try {
@@ -170,6 +202,80 @@ class CRVersionController {
                 }
             }
 
+            // Create Document records for task attachments so they can be previewed immediately.
+            // The conversion job will run in the background; preview is available once it completes.
+            const newDocIds = [];
+            for (const attachment of taskAttachments) {
+                if (!attachment.url) continue;
+
+                try {
+                    const existingDoc = await Document.findOne({
+                        projectId: changeRequest.projectId,
+                        originalName: attachment.name,
+                        approvalStatus: 'approved',
+                    }).sort({ versionNumber: -1 }).lean();
+
+                    const nextVersionNumber = existingDoc ? (existingDoc.versionNumber || 1) + 1 : 1;
+                    const versionGroupId = existingDoc?.versionGroupId || `VG-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+                    const s3Key = extractS3KeyFromUrl(attachment.url, S3_BUCKET) || '';
+                    const supabaseFileKey = extractSupabaseKeyFromUrl(attachment.url);
+
+                    const newDoc = new Document({
+                        projectId: changeRequest.projectId,
+                        originalName: attachment.name,
+                        storedName: attachment.name,
+                        mimeType: attachment.mimeType || '',
+                        size: attachment.size || 0,
+                        s3Bucket: s3Key ? S3_BUCKET : '',
+                        s3Key: s3Key,
+                        s3Url: attachment.url || '',
+                        supabaseFileKey: supabaseFileKey,
+                        supabaseFileUrl: attachment.url || '',
+                        uploadedBy: userId,
+                        versionGroupId,
+                        versionNumber: nextVersionNumber,
+                        versionLabel: `${normalizeString(versionLabel) || `v${nextVersionNumber}`}`,
+                        versionDescription: `Created from CR Version by ${userId}`,
+                        approvalStatus: 'pending',
+                        folderType: 'files',
+                        folderPath: '',
+                    });
+                    await newDoc.save();
+                    newDocIds.push({ docId: newDoc.publicId, url: attachment.url });
+
+                    const ext = (attachment.name || '').toLowerCase();
+                    if (ext.endsWith('.ifc')) {
+                        try {
+                            await publishIfcConversionJob({
+                                projectId: changeRequest.projectId,
+                                documentId: newDoc.publicId,
+                                versionId: newDoc.publicId,
+                                ifcS3Bucket: newDoc.s3Bucket || '',
+                                ifcS3Key: newDoc.s3Key || '',
+                                supabaseFileKey: newDoc.supabaseFileKey || '',
+                                requestedBy: userId,
+                            });
+                            console.log(`[CRVersionController] IFC conversion job queued for document ${newDoc.publicId} (${attachment.name})`);
+                        } catch (convErr) {
+                            console.warn('[CRVersionController] IFC conversion job publish failed:', convErr.message);
+                        }
+                    }
+                } catch (docErr) {
+                    console.warn('[CRVersionController] Failed to create document from attachment:', docErr.message);
+                }
+            }
+
+            // Update resultFiles with correct Document publicIds
+            if (newDocIds.length > 0 && resultFiles.length > 0) {
+                const urlToDocIdMap = new Map(newDocIds.map(d => [d.url, d.docId]));
+                for (const rf of resultFiles) {
+                    if (rf.url && urlToDocIdMap.has(rf.url)) {
+                        rf.sourceDocumentId = urlToDocIdMap.get(rf.url);
+                    }
+                }
+            }
+
             const version = await CRVersionRepository.create({
                 crId,
                 projectId: changeRequest.projectId,
@@ -240,89 +346,21 @@ class CRVersionController {
             // Update version status to approved
             await CRVersionRepository.updateStatus(versionId, 'approved', userId);
 
-            // For each task attachment in the version's resultFiles, create/update a Document
-            const snapshot = version.snapshot || {};
-            const taskIds = snapshot.taskIds || [];
-            const taskAttachments = [];
+            // Documents were already created during CRVersion.create.
+            // Here we just update their approvalStatus to 'approved'.
+            const existingResultFiles = version?.resultFiles || [];
+            const docIds = existingResultFiles
+                .map(rf => rf.sourceDocumentId)
+                .filter(Boolean);
 
-            if (taskIds.length > 0) {
+            if (docIds.length > 0) {
                 try {
-                    const tasks = await Task.find({
-                        publicId: { $in: taskIds }
-                    }).select('publicId title attachments').lean();
-
-                    for (const task of tasks) {
-                        const taskFiles = Array.isArray(task.attachments) ? task.attachments : [];
-                        for (const file of taskFiles) {
-                            taskAttachments.push({
-                                name: file.name || 'Untitled',
-                                size: file.size || 0,
-                                url: file.url || '',
-                                mimeType: file.mimeType || '',
-                                sourceDocumentId: task.publicId || '',
-                            });
-                        }
-                    }
-                } catch (taskErr) {
-                    console.warn('[CRVersionController] Failed to fetch task attachments:', taskErr.message);
-                }
-            }
-
-            // Create Document records from task attachments
-            for (const attachment of taskAttachments) {
-                if (!attachment.url) continue;
-
-                try {
-                    // Find existing document by same name in project (to get versionGroupId)
-                    const existingDoc = await Document.findOne({
-                        projectId: version.projectId,
-                        originalName: attachment.name,
-                        approvalStatus: 'approved',
-                    }).sort({ versionNumber: -1 }).lean();
-
-                    const nextVersionNumber = existingDoc ? (existingDoc.versionNumber || 1) + 1 : 1;
-                    const versionGroupId = existingDoc?.versionGroupId || `VG-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-                    const newDoc = new Document({
-                        projectId: version.projectId,
-                        originalName: attachment.name,
-                        storedName: attachment.name,
-                        mimeType: attachment.mimeType || '',
-                        size: attachment.size || 0,
-                        s3Bucket: S3_BUCKET || '',
-                        s3Key: attachment.url || '',
-                        s3Url: attachment.url || '',
-                        supabaseFileKey: '',
-                        supabaseFileUrl: '',
-                        uploadedBy: userId,
-                        versionGroupId,
-                        versionNumber: nextVersionNumber,
-                        versionLabel: `${version.versionLabel || `v${version.versionNumber}`}`,
-                        versionDescription: `Created from CR Version ${version.versionLabel || version.versionNumber}`,
-                        approvalStatus: 'approved',
-                        folderType: 'files',
-                        folderPath: '',
-                    });
-                    await newDoc.save();
-
-                    // Trigger IFC conversion for approved IFC files
-                    const ext = (attachment.name || '').toLowerCase();
-                    if (ext.endsWith('.ifc')) {
-                        try {
-                            await publishIfcConversionJob({
-                                projectId: version.projectId,
-                                documentId: newDoc.publicId,
-                                versionId: newDoc.publicId,
-                                ifcS3Bucket: newDoc.s3Bucket,
-                                ifcS3Key: newDoc.s3Key,
-                                requestedBy: userId,
-                            });
-                        } catch (convErr) {
-                            console.warn('[CRVersionController] IFC conversion job publish failed:', convErr.message);
-                        }
-                    }
+                    await Document.updateMany(
+                        { publicId: { $in: docIds } },
+                        { $set: { approvalStatus: 'approved', updatedAt: new Date() } }
+                    );
                 } catch (docErr) {
-                    console.warn('[CRVersionController] Failed to create document from attachment:', docErr.message);
+                    console.warn('[CRVersionController] Failed to update document approvalStatus:', docErr.message);
                 }
             }
 

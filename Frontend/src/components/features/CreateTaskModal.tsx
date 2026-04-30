@@ -386,8 +386,8 @@ export default function CreateTaskModal({
             <div className="flex flex-col gap-1.5">
               <label className="text-[14px] font-medium text-[#101828]">Link Change Request</label>
               <select
-                value={changeRequestSuggestions.some(item => item.value === formData.linkedItems) ? formData.linkedItems : ''}
-                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
+                value={formData.linkedItems.startsWith('cr:') ? formData.linkedItems.replace('cr:', '') : ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value ? `cr:${e.target.value}` : '' }))}
                 className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]"
               >
                 <option value="">{changeRequestSuggestions.length > 0 ? 'Select a change request...' : 'No change requests available'}</option>

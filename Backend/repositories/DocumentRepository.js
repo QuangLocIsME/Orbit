@@ -26,6 +26,10 @@ class DocumentRepository {
         return await Document.find({ projectId }).sort({ createdAt: -1 });
     }
 
+    async findByNameInProject(projectId, originalName) {
+        return await Document.findOne({ projectId, originalName }).sort({ createdAt: -1 });
+    }
+
     async listByProjectAndPackage(projectId, packageId) {
         return await Document.find({ projectId, packageId }).sort({ createdAt: -1 });
     }

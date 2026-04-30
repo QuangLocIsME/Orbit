@@ -1086,7 +1086,58 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   useEffect(() => {
     if (activeTab !== 'tasks') return;
     loadProjectTasks();
-  }, [activeTab, loadProjectTasks]);
+
+    const socket = getSocket();
+
+    // Handle status change — update task in place or refresh board
+    const handleTaskStatusChanged = ({ projectId, taskId, status }: { projectId: string; taskId: string; status: string }) => {
+      console.debug('[WS] task:status-changed received', { projectId, taskId, status, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      setTasksData(prev => {
+        const exists = prev.some(t => t.id === taskId);
+        if (exists) {
+          return prev.map(t => t.id === taskId ? { ...t, status } : t);
+        }
+        loadProjectTasks();
+        return prev;
+      });
+    };
+
+    // Handle task created — refresh board
+    const handleTaskCreated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:created received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
+    // Handle task deleted — refresh board
+    const handleTaskDeleted = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:deleted received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
+    // Handle new comment — refresh board to update comment count
+    const handleTaskCommented = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:commented received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
+    console.debug('[WS] Registering task listeners for project:', project.publicId);
+    socket.on('task:status-changed', handleTaskStatusChanged);
+    socket.on('task:created', handleTaskCreated);
+    socket.on('task:deleted', handleTaskDeleted);
+    socket.on('task:commented', handleTaskCommented);
+
+    return () => {
+      console.debug('[WS] Unregistering task listeners for project:', project.publicId);
+      socket.off('task:status-changed', handleTaskStatusChanged);
+      socket.off('task:created', handleTaskCreated);
+      socket.off('task:deleted', handleTaskDeleted);
+      socket.off('task:commented', handleTaskCommented);
+    };
+  }, [activeTab, loadProjectTasks, project.publicId]);
 
   const handleTaskStatusChange = useCallback((taskId: string, newStatus: string) => {
     setTasksData(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as any } : t));

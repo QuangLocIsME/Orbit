@@ -118,6 +118,7 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
   const [projectRole, setProjectRole] = useState<ProjectRole>('member');
   const [workflowStages, setWorkflowStages] = useState<WorkflowStage[]>(fallbackStages);
   const [updatingStage, setUpdatingStage] = useState(false);
+  const [reviewingTask, setReviewingTask] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
@@ -401,6 +402,36 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
     }
   };
 
+  const handleReviewRequest = async (action: 'approve' | 'reject') => {
+    if (!task || reviewingTask) return;
+    setReviewingTask(true);
+    try {
+      const res = await apiFetch('/api/tasks/request-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          projectId: projectPublicId,
+          action,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.message || `Failed to ${action} task`);
+        return;
+      }
+      if (data.success && data.data?.status) {
+        setTask(prev => prev ? { ...prev, status: data.data.status } : prev);
+      }
+      toast.success(data.message || (action === 'approve' ? 'Task approved' : 'Task returned'));
+      if (onClose) setTimeout(onClose, 1200);
+    } catch {
+      toast.error(`Failed to ${action} task`);
+    } finally {
+      setReviewingTask(false);
+    }
+  };
+
   const updateStage = async (nextStageId: string) => {
     if (!task || !canReviewAndMoveStage || task.status === nextStageId) return;
 
@@ -645,6 +676,44 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">Only owner/admin/manager or the assigned member can review and move stage.</p>
+      )}
+
+      {/* CR-linked task awaiting review - show approve/reject controls for owner/admin */}
+      {task.status === 'pending-review' && (projectRole === 'owner' || projectRole === 'admin') && (
+        <div className="space-y-3 p-4 bg-[#FEF9EC] rounded-[8px] border border-[#FCD34D]">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 text-[#D97706]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+            <p className="text-[13px] font-semibold text-[#92400E]">Pending Review</p>
+          </div>
+          <p className="text-[12px] text-[#92400E]">
+            This task is linked to a Change Request. Review and approve or reject before it can be marked as complete.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleReviewRequest('approve')}
+              disabled={reviewingTask}
+              className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-[6px] bg-[#16A34A] text-white text-[13px] font-medium hover:bg-[#15803D] transition-colors disabled:opacity-60"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Approve
+            </button>
+            <button
+              onClick={() => handleReviewRequest('reject')}
+              disabled={reviewingTask}
+              className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-[6px] bg-white border border-[#DC2626] text-[#DC2626] text-[13px] font-medium hover:bg-[#FEE2E2] transition-colors disabled:opacity-60"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Reject
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="h-px bg-border" />

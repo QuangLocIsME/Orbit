@@ -149,7 +149,28 @@ class ChangeRequestController {
                     publicId: cr.publicId,
                     crId: cr.crId,
                     title: cr.title,
+                    description: cr.description || '',
                     status: cr.status,
+                    priority: cr.priority,
+                    affectedModels: Array.isArray(cr.affectedModels) ? cr.affectedModels : [],
+                    disciplineId: cr.disciplineId || null,
+                    assignedTo: Array.isArray(cr.assignedTo) ? cr.assignedTo : (cr.assignedTo ? [cr.assignedTo] : []),
+                    reviewers: Array.isArray(cr.reviewers) ? cr.reviewers : [],
+                    attachments: Array.isArray(cr.attachments) ? cr.attachments : [],
+                    estimatedImpact: cr.estimatedImpact || null,
+                    estimatedCost: cr.estimatedCost ?? null,
+                    estimatedDuration: cr.estimatedDuration || '',
+                    deadline: cr.deadline || null,
+                    detailedDescription: cr.detailedDescription || '',
+                    createdBy: cr.createdBy,
+                    createdAt: cr.createdAt,
+                    updatedAt: cr.updatedAt,
+                    linkedTaskIds: Array.isArray(cr.linkedTaskIds) ? cr.linkedTaskIds : [],
+                    primaryTaskId: cr.primaryTaskId || null,
+                    affectedDocuments: Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
+                    derivedPackageIds: Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
+                    structuredSections: cr.structuredSections || null,
+                    resultAttachments: Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
                 },
             });
         } catch (error) {
@@ -798,6 +819,12 @@ class ChangeRequestController {
             const linkedTaskIds = [...new Set([...(changeRequest.linkedTaskIds || []), normalizedTaskId])];
             const updated = await ChangeRequestRepository.update(normalizedCrId, { linkedTaskIds });
 
+            // Update task's linkedUrl
+            await Task.updateOne(
+                { publicId: normalizedTaskId },
+                { linkedUrl: `cr:${normalizedCrId}` }
+            );
+
             return res.status(200).json({
                 success: true,
                 message: 'Task linked to CR',
@@ -832,6 +859,12 @@ class ChangeRequestController {
                 : changeRequest.primaryTaskId;
 
             const updated = await ChangeRequestRepository.update(normalizedCrId, { linkedTaskIds, primaryTaskId });
+
+            // Clear task's linkedUrl
+            await Task.updateOne(
+                { publicId: normalizedTaskId },
+                { linkedUrl: '' }
+            );
 
             return res.status(200).json({
                 success: true,

@@ -10,6 +10,7 @@ import TaskBoard, { type WorkflowStage } from './TaskBoard';
 import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
+import { getSocket } from '@/lib/socket';
 
 type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 
@@ -347,6 +348,56 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     loadTasks();
   }, [loadTasks]);
 
+  // WebSocket realtime — refresh task board when task events occur
+  useEffect(() => {
+    const socket = getSocket();
+    console.debug('[WS] ScopedTasksPanel: Registering listeners for project:', scope.projectId);
+
+    const handleTaskStatusChanged = ({ projectId, taskId, status }: { projectId: string; taskId: string; status: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:status-changed', { projectId, taskId, status, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      setTasksData(prev => {
+        const exists = prev.some(t => t.id === taskId);
+        if (exists) {
+          return prev.map(t => t.id === taskId ? { ...t, status } : t);
+        }
+        loadTasks();
+        return prev;
+      });
+    };
+
+    const handleTaskCreated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:created', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleTaskDeleted = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:deleted', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleTaskCommented = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:commented', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    socket.on('task:status-changed', handleTaskStatusChanged);
+    socket.on('task:created', handleTaskCreated);
+    socket.on('task:deleted', handleTaskDeleted);
+    socket.on('task:commented', handleTaskCommented);
+
+    return () => {
+      console.debug('[WS] ScopedTasksPanel: Unregistering listeners for project:', scope.projectId);
+      socket.off('task:status-changed', handleTaskStatusChanged);
+      socket.off('task:created', handleTaskCreated);
+      socket.off('task:deleted', handleTaskDeleted);
+      socket.off('task:commented', handleTaskCommented);
+    };
+  }, [scope.projectId, loadTasks]);
+
   const loadProjectWorkflowData = useCallback(async () => {
     try {
       const res = await apiFetch('/api/projects/workflow', {
@@ -604,9 +655,20 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
         setTasksData(previousTasks);
-        toast.error('Failed to update task status');
+        toast.error(data.message || 'Failed to update task status');
+        return;
+      }
+
+      // If task is pending review (CR-linked task moved to last stage),
+      // update UI to show 'pending-review' instead of the target stage.
+      if (data.pendingReview) {
+        setTasksData((prev) => prev.map((t) => t.id === taskId ? { ...t, status: 'pending-review' } : t));
+        toast.success(data.message || 'Task submitted for review');
+        return;
       }
     } catch {
       setTasksData(previousTasks);
