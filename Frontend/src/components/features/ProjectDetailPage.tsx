@@ -395,7 +395,13 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 );
 
 function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
+  const [initialCrId, setInitialCrId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setInitialCrId(params.get('crId') ?? undefined);
+  }, []);
   const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
   const [projectCoverImageUrl, setProjectCoverImageUrl] = useState(project.coverImageUrl || '');
   const [isUploadingCoverImage, setIsUploadingCoverImage] = useState(false);
@@ -1122,6 +1128,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               id: String(s.id || ''),
               name: String(s.label || s.name || ''),
               description: String(s.description || ''),
+              color: s.color || undefined,
             })));
           }
           // Set workflow template ID if available
@@ -1679,7 +1686,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         )}
         {/* Changes Tab */}
         {activeTab === 'changes' && (
-          <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} />
+          <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} initialCrId={initialCrId} />
         )}
         {activeTab === 'changes_DISABLED_INLINE' && (
           <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

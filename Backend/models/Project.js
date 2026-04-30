@@ -24,14 +24,15 @@ const ProjectSchema = new mongoose.Schema({
                 {
                     id: { type: String, required: true },
                     label: { type: String, required: true },
+                    color: { type: String, default: '#6A7280' },
                 },
             ],
             default: [
-                { id: 'backlog', label: 'Backlog' },
-                { id: 'todo', label: 'To Do' },
-                { id: 'in-progress', label: 'In Progress' },
-                { id: 'review', label: 'Review' },
-                { id: 'done', label: 'Done' },
+                { id: 'backlog',      label: 'Backlog',      color: '#6A7280' },
+                { id: 'todo',         label: 'To Do',         color: '#155DFC' },
+                { id: 'in-progress',  label: 'In Progress',   color: '#F59E0B' },
+                { id: 'review',       label: 'Review',        color: '#8B5CF6' },
+                { id: 'done',         label: 'Done',           color: '#10B981' },
             ],
         },
         settings: {

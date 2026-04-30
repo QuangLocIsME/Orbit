@@ -181,6 +181,7 @@ class TaskController {
                 dueDate: req.body?.dueDate ? new Date(req.body.dueDate) : null,
                 linkedUrl: normalizeString(req.body?.linkedUrl),
                 tags: Array.isArray(req.body?.tags) ? req.body.tags.map((t) => normalizeString(t)).filter(Boolean) : [],
+                affectedModels: Array.isArray(req.body?.affectedModels) ? req.body.affectedModels : [],
                 createdBy: userId,
                 updatedAt: new Date(),
             });
@@ -793,7 +794,7 @@ class TaskController {
             if (!member || member.status !== 'accepted') return forbidden(res);
             if (!['owner', 'admin', 'manager'].includes(member.role)) return forbidden(res);
 
-            const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags } = req.body || {};
+            const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags, affectedModels } = req.body || {};
 
             const oldAssigneeIds = [...(task.assigneeIds || [])];
             const oldReviewerIds = [...(task.reviewerIds || [])];
@@ -812,6 +813,7 @@ class TaskController {
             }
             if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
             if (tags !== undefined) task.tags = Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [];
+            if (affectedModels !== undefined) task.affectedModels = Array.isArray(affectedModels) ? affectedModels : [];
             task.updatedAt = new Date();
 
             await task.save();
@@ -954,6 +956,109 @@ class TaskController {
             return res.status(200).json({ success: true, message: 'Task deleted' });
         } catch {
             return serverError(res, 'Delete task failed');
+        }
+    }
+
+    async uploadAttachments(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            if (!taskId) return badRequest(res, 'Missing taskId');
+            if (!req.files || req.files.length === 0) return badRequest(res, 'No files provided');
+
+            const task = await Task.findOne({ publicId: taskId });
+            if (!task) return notFound(res, 'Task not found');
+
+            const member = await ProjectMemberRepository.findMember(task.projectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin', 'manager', 'member'].includes(member.role)) return forbidden(res);
+
+            const supabaseStorage = require('../services/supabaseStorageService');
+            const uploaded = [];
+
+            for (const file of req.files) {
+                const storagePath = supabaseStorage.buildSupabaseAttachmentPath({
+                    projectId: task.projectId,
+                    crId: taskId,
+                    fileName: file.originalname,
+                });
+
+                let url;
+                try {
+                    const result = await supabaseStorage.uploadAttachmentBuffer(file.buffer, storagePath);
+                    url = result.publicUrl;
+                } catch (uploadErr) {
+                    console.error('[TaskAttachment] Upload failed:', uploadErr.message);
+                    continue;
+                }
+
+                task.attachments.push({
+                    name: file.originalname,
+                    size: file.size,
+                    url,
+                    mimeType: file.mimetype || '',
+                    uploadedAt: new Date(),
+                });
+                uploaded.push({ name: file.originalname, size: file.size, url, mimeType: file.mimetype });
+            }
+
+            task.attachmentsCount = task.attachments.length;
+            task.updatedAt = new Date();
+            await task.save();
+
+            // Broadcast update
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'task:updated', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    taskId: task.publicId,
+                });
+            }
+
+            return res.status(200).json({ success: true, data: { attachments: uploaded } });
+        } catch {
+            return serverError(res, 'Upload attachments failed');
+        }
+    }
+
+    async deleteAttachment(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            const attachmentIndex = parseInt(req.body?.attachmentIndex, 10);
+            if (!taskId || isNaN(attachmentIndex)) return badRequest(res, 'Missing taskId or attachmentIndex');
+
+            const task = await Task.findOne({ publicId: taskId });
+            if (!task) return notFound(res, 'Task not found');
+
+            const member = await ProjectMemberRepository.findMember(task.projectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin', 'manager', 'member'].includes(member.role)) return forbidden(res);
+
+            if (attachmentIndex < 0 || attachmentIndex >= task.attachments.length) {
+                return badRequest(res, 'Invalid attachment index');
+            }
+
+            task.attachments.splice(attachmentIndex, 1);
+            task.attachmentsCount = task.attachments.length;
+            task.updatedAt = new Date();
+            await task.save();
+
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'task:updated', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    taskId: task.publicId,
+                });
+            }
+
+            return res.status(200).json({ success: true, message: 'Attachment deleted' });
+        } catch {
+            return serverError(res, 'Delete attachment failed');
         }
     }
 }

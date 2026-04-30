@@ -248,14 +248,75 @@ export function AffectedModelsPicker({
 
 // ─── AttachPicker ─────────────────────────────────────────────────────────────
 
+export interface TaskAttachment {
+  name: string;
+  size: number;
+  url: string;
+  mimeType?: string;
+}
+
+interface AttachFileEntry {
+  file: File;
+  displayName: string;
+}
+
 interface AttachPickerProps {
   files: File[];
   onChange: (files: File[]) => void;
+  existingAttachments?: TaskAttachment[];
+  onRemoveExisting?: (index: number) => void;
 }
 
-export function AttachPicker({ files, onChange }: AttachPickerProps) {
+export function AttachPicker({ files, onChange, existingAttachments = [], onRemoveExisting }: AttachPickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const existingRenameInputRef = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
+
+  const [entries, setEntries] = useState<AttachFileEntry[]>([]);
+
+  useEffect(() => {
+    setEntries(files.map(f => ({ file: f, displayName: f.name })));
+  }, [files]);
+
+  const [renamingIdx, setRenamingIdx] = useState<number | null>(null);
+  const [renamingType, setRenamingType] = useState<'new' | 'existing' | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [existingDisplayNames, setExistingDisplayNames] = useState<Record<number, string>>({});
+
+  const startRename = (type: 'new' | 'existing', idx: number) => {
+    setRenamingType(type);
+    setRenamingIdx(idx);
+    const currentName = type === 'existing'
+      ? (existingDisplayNames[idx] ?? existingAttachments[idx]?.name ?? '')
+      : (entries[idx]?.displayName ?? '');
+    setRenameValue(currentName);
+    setTimeout(() => {
+      if (type === 'existing') {
+        existingRenameInputRef.current?.select();
+      } else {
+        renameInputRef.current?.select();
+      }
+    }, 0);
+  };
+
+  const commitRename = () => {
+    if (renamingIdx === null) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) { setRenamingIdx(null); setRenamingType(null); return; }
+    if (renamingType === 'existing') {
+      setExistingDisplayNames(prev => ({ ...prev, [renamingIdx]: trimmed }));
+    } else {
+      setEntries(prev => prev.map((e, i) => i === renamingIdx ? { ...e, displayName: trimmed } : e));
+    }
+    setRenamingIdx(null);
+    setRenamingType(null);
+  };
+
+  const cancelRename = () => {
+    setRenamingIdx(null);
+    setRenamingType(null);
+  };
 
   const add = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -272,19 +333,90 @@ export function AttachPicker({ files, onChange }: AttachPickerProps) {
 
   const remove = (idx: number) => onChange(files.filter((_, i) => i !== idx));
 
+  const totalCount = existingAttachments.length + files.length;
+
   return (
     <div className="flex flex-col gap-1.5">
       <label className="text-[14px] font-medium text-[#101828]">
         Attachments <span className="font-normal text-[#6A7282]">(max 50 MB each)</span>
       </label>
 
-      {files.length > 0 && (
+      {totalCount > 0 && (
         <div className="rounded-[10px] border border-[#E5E7EB] divide-y divide-[#F3F4F6] bg-white">
+          {existingAttachments.map((att, i) => {
+            const displayName = existingDisplayNames[i] ?? att.name;
+            const isRenaming = renamingType === 'existing' && renamingIdx === i;
+            return (
+              <div key={`existing-${i}`} className="flex items-center gap-3 px-4 py-2.5">
+                <FileIcon className="shrink-0 text-[#6A7282]" />
+                <div className="min-w-0 flex-1">
+                  {isRenaming ? (
+                    <input
+                      ref={existingRenameInputRef}
+                      type="text"
+                      value={renameValue}
+                      onChange={e => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') commitRename();
+                        if (e.key === 'Escape') cancelRename();
+                      }}
+                      className="w-full text-[14px] text-[#101828] border border-[#155DFC] rounded px-1 py-0.5 outline-none bg-white"
+                    />
+                  ) : (
+                    <a
+                      href={att.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[14px] text-[#101828] hover:text-[#155DFC] truncate block cursor-pointer"
+                      title="Double-click to rename"
+                      onDoubleClick={() => startRename('existing', i)}
+                    >
+                      {displayName}
+                    </a>
+                  )}
+                  <p className="text-[11px] text-[#6A7282]">{fmtSize(att.size)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRemoveExisting?.(i)}
+                  className="shrink-0 p-1 text-[#99A1AF] hover:text-[#DC2626] transition-colors rounded"
+                  title="Remove attachment"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
+
           {files.map((f, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+            <div key={`new-${i}`} className="flex items-center gap-3 px-4 py-2.5">
               <FileIcon className="shrink-0 text-[#6A7282]" />
               <div className="min-w-0 flex-1">
-                <p className="text-[14px] text-[#101828] truncate">{f.name}</p>
+                {renamingIdx === i ? (
+                  <input
+                    ref={renameInputRef}
+                    type="text"
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename();
+                      if (e.key === 'Escape') cancelRename();
+                    }}
+                    className="w-full text-[14px] text-[#101828] border border-[#155DFC] rounded px-1 py-0.5 outline-none bg-white"
+                  />
+                ) : (
+                  <p
+                    className="text-[14px] text-[#101828] truncate cursor-pointer hover:text-[#155DFC]"
+                    onDoubleClick={() => startRename('new', i)}
+                    title="Double-click to rename"
+                  >
+                    {entries[i]?.displayName ?? f.name}
+                  </p>
+                )}
                 <p className="text-[11px] text-[#6A7282]">{fmtSize(f.size)}</p>
               </div>
               <button

@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getTodayLocalDateString, utcDateStringToLocalDateString } from '@/lib/utils';
 import { MemberPicker, AffectedModelsPicker, AttachPicker } from './TaskFormShared';
+import type { TaskAttachment } from './TaskFormShared';
 
 interface Discipline {
   id: string;
@@ -45,6 +46,8 @@ interface CreateTaskModalProps {
     dueDate: string;
     tags: string[];
     linkedItems?: string;
+    affectedModels?: string[];
+    existingAttachments?: TaskAttachment[];
   } | null;
   tagOptions?: string[];
   linkedItemSuggestions?: { label: string; value: string }[];
@@ -68,6 +71,7 @@ interface TaskFormData {
   linkedItems: string;
   affectedModels: string[];
   attachments: File[];
+  removedExistingAttachmentIndices: number[];
 }
 
 const defaultStages: WorkflowStage[] = [
@@ -104,6 +108,8 @@ export default function CreateTaskModal({
   const resolvedTagOptions = Array.isArray(tagOptions) ? tagOptions : [];
   const [customTagOptions, setCustomTagOptions] = useState<string[]>([]);
   const [newTagInput, setNewTagInput] = useState('');
+  const [existingAttachments, setExistingAttachments] = useState<TaskAttachment[]>([]);
+  const [removedExistingIndices, setRemovedExistingIndices] = useState<Set<number>>(new Set());
   const linkedSuggestions = useMemo(
     () => (linkedItemSuggestions || [])
       .map((item) => ({ label: String(item?.label || '').trim(), value: String(item?.value || '').trim() }))
@@ -137,6 +143,7 @@ export default function CreateTaskModal({
       linkedItems: '',
       affectedModels: [] as string[],
       attachments: [] as File[],
+      removedExistingAttachmentIndices: [] as number[],
     };
     if (editTask) {
       return {
@@ -150,6 +157,7 @@ export default function CreateTaskModal({
         dueDate: editTask.dueDate ? utcDateStringToLocalDateString(editTask.dueDate) : '',
         tags: editTask.tags || [],
         linkedItems: editTask.linkedItems || '',
+        affectedModels: editTask.affectedModels || [],
       };
     }
     return base;
@@ -169,7 +177,9 @@ export default function CreateTaskModal({
     if (!isOpen) return;
     setCustomTagOptions([]);
     setNewTagInput('');
+    setRemovedExistingIndices(new Set());
     if (editTask) {
+      setExistingAttachments(editTask.existingAttachments || []);
       setFormData({
         title: editTask.title,
         status: editTask.status || resolvedInitialStageId,
@@ -180,10 +190,12 @@ export default function CreateTaskModal({
         dueDate: editTask.dueDate ? utcDateStringToLocalDateString(editTask.dueDate) : '',
         tags: editTask.tags || [],
         linkedItems: editTask.linkedItems || '',
-        affectedModels: [],
+        affectedModels: editTask.affectedModels || [],
         attachments: [],
+        removedExistingAttachmentIndices: [],
       });
     } else {
+      setExistingAttachments([]);
       setFormData({
         title: '',
         status: resolvedInitialStageId,
@@ -196,6 +208,7 @@ export default function CreateTaskModal({
         linkedItems: '',
         affectedModels: [],
         attachments: [],
+        removedExistingAttachmentIndices: [],
       });
     }
   }, [isOpen, editTask, resolvedInitialStageId]);
@@ -375,7 +388,7 @@ export default function CreateTaskModal({
               <select
                 value={changeRequestSuggestions.some(item => item.value === formData.linkedItems) ? formData.linkedItems : ''}
                 onChange={(e) => setFormData(prev => ({ ...prev, linkedItems: e.target.value }))}
-                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]"
               >
                 <option value="">{changeRequestSuggestions.length > 0 ? 'Select a change request...' : 'No change requests available'}</option>
                 {changeRequestSuggestions.map((item) => (
@@ -469,15 +482,26 @@ export default function CreateTaskModal({
           <AttachPicker
             files={formData.attachments}
             onChange={(files) => setFormData(prev => ({ ...prev, attachments: files }))}
+            existingAttachments={existingAttachments.filter((_, i) => !removedExistingIndices.has(i))}
+            onRemoveExisting={(index) => {
+              const actualIndex = existingAttachments
+                .map((_, i) => i)
+                .filter(i => !removedExistingIndices.has(i))[index];
+              setRemovedExistingIndices(prev => new Set([...prev, actualIndex]));
+            }}
           />
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-[#E5E7EB] shrink-0">
           <p className="text-[12px] text-[#6A7282]">
-            {formData.attachments.length > 0
-              ? `${formData.attachments.length} file${formData.attachments.length > 1 ? 's' : ''} attached`
-              : ''}
+            {(() => {
+              const newCount = formData.attachments.length;
+              const existingCount = existingAttachments.filter((_, i) => !removedExistingIndices.has(i)).length;
+              const total = newCount + existingCount;
+              if (total === 0) return '';
+              return `${total} file${total !== 1 ? 's' : ''} attached`;
+            })()}
           </p>
           <div className="flex items-center gap-3">
             <button

@@ -65,25 +65,25 @@ const invalidateUserCaches = async (userId) => {
 
 const workflowTemplates = {
     'construction-standard': [
-        { id: 'backlog', label: 'Backlog' },
-        { id: 'todo', label: 'To Do' },
-        { id: 'in-progress', label: 'In Progress' },
-        { id: 'review', label: 'Review' },
-        { id: 'done', label: 'Done' },
+        { id: 'backlog',      label: 'Backlog',      color: '#6A7280' },
+        { id: 'todo',         label: 'To Do',         color: '#155DFC' },
+        { id: 'in-progress',  label: 'In Progress',   color: '#F59E0B' },
+        { id: 'review',       label: 'Review',        color: '#8B5CF6' },
+        { id: 'done',         label: 'Done',           color: '#10B981' },
     ],
     'agile-scrum': [
-        { id: 'product-backlog', label: 'Product Backlog' },
-        { id: 'sprint-backlog', label: 'Sprint Backlog' },
-        { id: 'in-progress', label: 'In Progress' },
-        { id: 'testing', label: 'Testing' },
-        { id: 'review', label: 'Review' },
-        { id: 'done', label: 'Done' },
+        { id: 'product-backlog', label: 'Product Backlog', color: '#6A7280' },
+        { id: 'sprint-backlog', label: 'Sprint Backlog', color: '#155DFC' },
+        { id: 'in-progress',    label: 'In Progress',    color: '#F59E0B' },
+        { id: 'testing',        label: 'Testing',        color: '#EF4444' },
+        { id: 'review',         label: 'Review',          color: '#8B5CF6' },
+        { id: 'done',           label: 'Done',             color: '#10B981' },
     ],
     'design-review': [
-        { id: 'draft', label: 'Draft' },
-        { id: 'review', label: 'Review' },
-        { id: 'revision', label: 'Revision' },
-        { id: 'approved', label: 'Approved' },
+        { id: 'draft',     label: 'Draft',     color: '#6A7280' },
+        { id: 'review',    label: 'Review',    color: '#155DFC' },
+        { id: 'revision',  label: 'Revision',  color: '#F59E0B' },
+        { id: 'approved',  label: 'Approved',  color: '#10B981' },
     ],
 };
 

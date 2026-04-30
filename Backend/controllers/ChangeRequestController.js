@@ -1,11 +1,31 @@
 const ChangeRequestRepository = require('../repositories/ChangeRequestRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const Project = require('../models/Project');
 const { errorResponse } = require('../utils/response');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../config/s3');
+const CRVersionRepository = require('../repositories/CRVersionRepository');
+const Task = require('../models/Task');
 
 const MAX_ATTACH_SIZE_MB = Number(process.env.CR_ATTACHMENT_MAX_SIZE_MB) || 50;
 const MAX_ATTACH_SIZE_BYTES = MAX_ATTACH_SIZE_MB * 1024 * 1024;
+
+// Valid status transitions
+const STATUS_TRANSITIONS = {
+    'pending':       ['in-progress', 'rejected'],
+    'in-progress':   ['approved', 'rejected'],
+    'approved':       ['completed', 'rejected'],
+    'completed':      ['published', 'rejected'],
+    'published':      [],
+    'rejected':       [],
+};
+
+const normalizeStatus = (val) => {
+    if (typeof val !== 'string') return null;
+    const normalized = val.trim().toLowerCase();
+    return ['pending', 'in-progress', 'approved', 'completed', 'published', 'rejected'].includes(normalized)
+        ? normalized : null;
+};
 
 // Validate attachment size - reject if any file exceeds limit
 function validateAttachmentSize(files) {
@@ -47,7 +67,7 @@ function getArrayField(body, key, arrayKey) {
 class ChangeRequestController {
     async listByProject(req, res) {
         try {
-            const projectId = req.params?.projectSlug || req.body?.projectId || req.query?.projectId;
+            const projectId = req.params?.projectId || req.params?.projectSlug || req.body?.projectId || req.query?.projectId;
             if (!projectId) {
                 return errorResponse(res, 400, 'Missing projectId');
             }
@@ -86,10 +106,54 @@ class ChangeRequestController {
                     createdBy: cr.createdBy,
                     createdAt: cr.createdAt,
                     updatedAt: cr.updatedAt,
+                    // New fields
+                    linkedTaskIds: Array.isArray(cr.linkedTaskIds) ? cr.linkedTaskIds : [],
+                    primaryTaskId: cr.primaryTaskId || null,
+                    affectedDocuments: Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
+                    derivedPackageIds: Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
+                    structuredSections: cr.structuredSections || null,
+                    resultAttachments: Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
                 })),
             });
         } catch (error) {
             return errorResponse(res, 500, error.message || 'Failed to list change requests');
+        }
+    }
+
+    async getDetail(req, res) {
+        try {
+            const { crId } = req.body;
+            if (!crId) {
+                return errorResponse(res, 400, 'Missing crId');
+            }
+
+            const userId = req.user?.id;
+            if (!userId) {
+                return errorResponse(res, 401, 'Unauthorized');
+            }
+
+            const cr = await ChangeRequestRepository.findByPublicId(crId);
+            if (!cr) {
+                return errorResponse(res, 404, 'Change request not found');
+            }
+
+            // Check membership
+            const member = await ProjectMemberRepository.findMember(cr.projectId, userId);
+            if (!member) {
+                return errorResponse(res, 403, 'Forbidden');
+            }
+
+            return res.status(200).json({
+                success: true,
+                data: {
+                    publicId: cr.publicId,
+                    crId: cr.crId,
+                    title: cr.title,
+                    status: cr.status,
+                },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to get change request detail');
         }
     }
 
@@ -104,7 +168,7 @@ class ChangeRequestController {
             const rawDesc        = getField(body, 'description', null);
             const rawPriority    = getField(body, 'priority', null);
             const rawAffected    = getArrayField(body, 'affectedModels', 'affectedModels[]');
-            const rawDiscipline  = getField(body, 'discipline', 'disciplineId'); // hỗ trợ cả "discipline" và "disciplineId"
+            const rawDiscipline  = getField(body, 'discipline', 'disciplineId');
             const rawAssigned    = getArrayField(body, 'assignedTo', 'assignedTo[]');
             const rawReviewers   = getArrayField(body, 'reviewers', 'reviewers[]');
             const rawImpact      = getField(body, 'estimatedImpact', null);
@@ -112,6 +176,8 @@ class ChangeRequestController {
             const rawDuration    = getField(body, 'estimatedDuration', null);
             const rawDeadline    = getField(body, 'deadline', null);
             const rawDetailed    = getField(body, 'detailedDescription', null);
+            const rawProposed    = getField(body, 'proposedChange', null);
+            const rawClash       = getField(body, 'clashCheckRequired', null);
 
             if (!projectId) {
                 return errorResponse(res, 400, 'Missing projectId');
@@ -147,6 +213,8 @@ class ChangeRequestController {
             const normalizedEstimatedDuration = normalizeString(rawDuration);
             const normalizedDeadline = rawDeadline ? new Date(rawDeadline) : null;
             const normalizedDetailedDescription = normalizeString(rawDetailed);
+            const normalizedProposedChange = normalizeString(rawProposed);
+            const normalizedClashCheck = rawClash === 'true' || rawClash === true;
 
             // Xử lý attachments từ multer (dùng S3 SDK để upload lên bucket orbit-files)
             const uploadedFiles = req.files || [];
@@ -204,6 +272,16 @@ class ChangeRequestController {
                 deadline: normalizedDeadline,
                 detailedDescription: normalizedDetailedDescription,
                 attachments,
+                structuredSections: {
+                    context: normalizedDescription,
+                    problem: normalizedDetailedDescription,
+                    proposedChange: normalizedProposedChange,
+                    impact: {
+                        estimatedImpact: normalizedEstimatedImpact,
+                        affectedModels: normalizedAffectedModels,
+                        clashCheckRequired: normalizedClashCheck,
+                    },
+                },
                 createdBy: userId,
                 status: 'pending',
             });
@@ -231,6 +309,12 @@ class ChangeRequestController {
                     createdBy: changeRequest.createdBy,
                     createdAt: changeRequest.createdAt,
                     updatedAt: changeRequest.updatedAt,
+                    linkedTaskIds: [],
+                    primaryTaskId: null,
+                    affectedDocuments: [],
+                    derivedPackageIds: [],
+                    structuredSections: null,
+                    resultAttachments: [],
                 },
             });
         } catch (error) {
@@ -240,7 +324,7 @@ class ChangeRequestController {
 
     async update(req, res) {
         try {
-            const { crId, title, description, priority, affectedModels, disciplineId, assignedTo, reviewers, estimatedImpact, estimatedCost, estimatedDuration, deadline, detailedDescription } = req.body || {};
+            const { crId, title, description, priority, affectedModels, disciplineId, assignedTo, reviewers, estimatedImpact, estimatedCost, estimatedDuration, deadline, detailedDescription, proposedChange, clashCheckRequired } = req.body || {};
             const normalizedCrId = normalizeString(crId);
 
             if (!normalizedCrId) return errorResponse(res, 400, 'Missing crId');
@@ -260,19 +344,21 @@ class ChangeRequestController {
                 return errorResponse(res, 403, 'Only admins and the CR creator can edit this change request');
             }
 
-            const updates = {};
-            if (title !== undefined)       updates.title       = normalizeString(title);
-            if (description !== undefined) updates.description = normalizeString(description);
-            if (priority !== undefined && ['low','medium','high','urgent'].includes(priority)) updates.priority = priority;
-            if (affectedModels !== undefined) updates.affectedModels = Array.isArray(affectedModels) ? affectedModels : [];
-            if (disciplineId !== undefined) updates.disciplineId = normalizeString(disciplineId) || null;
-            if (assignedTo !== undefined)  updates.assignedTo  = Array.isArray(assignedTo)  ? assignedTo  : [];
-            if (reviewers !== undefined)   updates.reviewers   = Array.isArray(reviewers)   ? reviewers   : [];
-            if (estimatedImpact !== undefined) updates.estimatedImpact = ['low','medium','high'].includes(estimatedImpact) ? estimatedImpact : null;
-            if (estimatedCost !== undefined) updates.estimatedCost = estimatedCost != null && !isNaN(Number(estimatedCost)) ? Number(estimatedCost) : null;
-            if (estimatedDuration !== undefined) updates.estimatedDuration = normalizeString(estimatedDuration);
-            if (deadline !== undefined) updates.deadline = deadline ? new Date(deadline) : null;
-            if (detailedDescription !== undefined) updates.detailedDescription = normalizeString(detailedDescription);
+            const updates = { $set: {} };
+            if (title !== undefined)              updates.$set.title = normalizeString(title);
+            if (description !== undefined)        updates.$set.description = normalizeString(description);
+            if (priority !== undefined && ['low','medium','high','urgent'].includes(priority)) updates.$set.priority = priority;
+            if (affectedModels !== undefined)     updates.$set.affectedModels = Array.isArray(affectedModels) ? affectedModels : [];
+            if (disciplineId !== undefined)       updates.$set.disciplineId = normalizeString(disciplineId) || null;
+            if (assignedTo !== undefined)         updates.$set.assignedTo = Array.isArray(assignedTo) ? assignedTo : [];
+            if (reviewers !== undefined)          updates.$set.reviewers = Array.isArray(reviewers) ? reviewers : [];
+            if (estimatedImpact !== undefined)    updates.$set.estimatedImpact = ['low','medium','high'].includes(estimatedImpact) ? estimatedImpact : null;
+            if (estimatedCost !== undefined)      updates.$set.estimatedCost = estimatedCost != null && !isNaN(Number(estimatedCost)) ? Number(estimatedCost) : null;
+            if (estimatedDuration !== undefined)  updates.$set.estimatedDuration = normalizeString(estimatedDuration);
+            if (deadline !== undefined)          updates.$set.deadline = deadline ? new Date(deadline) : null;
+            if (detailedDescription !== undefined) updates.$set.detailedDescription = normalizeString(detailedDescription);
+            if (proposedChange !== undefined)    updates.$set['structuredSections.proposedChange'] = normalizeString(proposedChange);
+            if (clashCheckRequired !== undefined) updates.$set['structuredSections.impact.clashCheckRequired'] = !!clashCheckRequired;
 
             const updated = await ChangeRequestRepository.update(normalizedCrId, updates);
 
@@ -299,6 +385,12 @@ class ChangeRequestController {
                     createdBy: updated.createdBy,
                     createdAt: updated.createdAt,
                     updatedAt: updated.updatedAt,
+                    linkedTaskIds: Array.isArray(updated.linkedTaskIds) ? updated.linkedTaskIds : [],
+                    primaryTaskId: updated.primaryTaskId || null,
+                    affectedDocuments: Array.isArray(updated.affectedDocuments) ? updated.affectedDocuments : [],
+                    derivedPackageIds: Array.isArray(updated.derivedPackageIds) ? updated.derivedPackageIds : [],
+                    structuredSections: updated.structuredSections || null,
+                    resultAttachments: Array.isArray(updated.resultAttachments) ? updated.resultAttachments : [],
                 },
             });
         } catch (error) {
@@ -310,7 +402,7 @@ class ChangeRequestController {
         try {
             const { crId, status } = req.body || {};
             const normalizedCrId = normalizeString(crId);
-            const normalizedStatus = ['pending', 'in-progress', 'approved', 'completed', 'rejected'].includes(status) ? status : null;
+            const normalizedStatus = normalizeStatus(status);
 
             if (!normalizedCrId) {
                 return errorResponse(res, 400, 'Missing crId');
@@ -342,7 +434,41 @@ class ChangeRequestController {
                 return errorResponse(res, 403, 'Only admins and the CR creator can update status');
             }
 
+            // Enforce status transition rules
+            const allowedTransitions = STATUS_TRANSITIONS[changeRequest.status] || [];
+            const currentStatus = changeRequest.status;
+            if (currentStatus !== normalizedStatus && !allowedTransitions.includes(normalizedStatus)) {
+                return errorResponse(res, 400, `Cannot transition from "${currentStatus}" to "${normalizedStatus}". Allowed transitions: ${allowedTransitions.join(', ') || 'none'}.`);
+            }
+
             const updated = await ChangeRequestRepository.updateStatus(normalizedCrId, normalizedStatus);
+
+            // Auto-create version snapshot when CR is marked completed
+            if (normalizedStatus === 'completed') {
+                try {
+                    await CRVersionRepository.create({
+                        crId: normalizedCrId,
+                        projectId: changeRequest.projectId,
+                        versionLabel: `${changeRequest.crId} v1`,
+                        snapshot: {
+                            title:            changeRequest.title,
+                            description:      changeRequest.description,
+                            priority:        changeRequest.priority,
+                            estimatedImpact: changeRequest.estimatedImpact || null,
+                            affectedModels:  Array.isArray(changeRequest.affectedModels) ? changeRequest.affectedModels : [],
+                            disciplineId:    changeRequest.disciplineId || null,
+                            attachments:      Array.isArray(changeRequest.attachments) ? changeRequest.attachments : [],
+                            structuredSections: changeRequest.structuredSections || null,
+                            taskIds:        Array.isArray(changeRequest.linkedTaskIds) ? changeRequest.linkedTaskIds : [],
+                            completedBy:    userId,
+                            completedAt:     new Date(),
+                        },
+                        resultFiles: [],
+                    });
+                } catch (versionErr) {
+                    console.warn('[ChangeRequestController] Auto-version creation failed:', versionErr.message);
+                }
+            }
 
             return res.status(200).json({
                 success: true,
@@ -543,7 +669,7 @@ class ChangeRequestController {
             }
 
             const member = await ProjectMemberRepository.findMember(changeRequest.projectId, userId);
-            if (!member || member.role !== 'admin') {
+            if (!member || (member.role !== 'admin' && member.role !== 'owner')) {
                 return errorResponse(res, 403, 'Forbidden');
             }
 
@@ -555,6 +681,165 @@ class ChangeRequestController {
             });
         } catch (error) {
             return errorResponse(res, 500, error.message || 'Failed to delete change request');
+        }
+    }
+
+    // ── Task linking ───────────────────────────────────────────────────────────
+
+    async createTaskFromCR(req, res) {
+        try {
+            const { crId, taskTitle, taskDescription, assigneeIds, priority, dueDate, affectedModels } = req.body || {};
+            const normalizedCrId = normalizeString(crId);
+
+            if (!normalizedCrId) return errorResponse(res, 400, 'Missing crId');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const changeRequest = await ChangeRequestRepository.findByPublicId(normalizedCrId);
+            if (!changeRequest) return errorResponse(res, 404, 'Change request not found');
+
+            const member = await ProjectMemberRepository.findMember(changeRequest.projectId, userId);
+            if (!member || member.role === 'viewer') return errorResponse(res, 403, 'Forbidden');
+
+            const taskTitleStr = normalizeString(taskTitle) || `[${changeRequest.crId}] ${changeRequest.title}`;
+            const taskDescStr = normalizeString(taskDescription)
+                || `Task for Change Request ${changeRequest.crId}: ${changeRequest.description}`;
+
+            // Get the first stage of the project's workflow as default status
+            let defaultStatus = 'backlog';
+            try {
+                const project = await Project.findOne({ publicId: changeRequest.projectId })
+                    .select('workflow workflowTemplateId').lean();
+                if (project) {
+                    const stages = Array.isArray(project.workflow?.stages) && project.workflow.stages.length > 0
+                        ? project.workflow.stages
+                        : null;
+                    if (stages && stages[0]?.id) {
+                        defaultStatus = stages[0].id;
+                    }
+                }
+            } catch {
+                // Fall back to 'backlog' if project lookup fails
+            }
+
+            const task = await Task.create({
+                projectId: changeRequest.projectId,
+                title: taskTitleStr,
+                description: taskDescStr,
+                priority: ['low', 'medium', 'high', 'urgent'].includes(priority) ? priority : changeRequest.priority || 'medium',
+                status: defaultStatus,
+                assigneeId: Array.isArray(assigneeIds) && assigneeIds.length > 0 ? assigneeIds[0] : (changeRequest.assignedTo?.[0] || ''),
+                assigneeIds: Array.isArray(assigneeIds) ? assigneeIds : (changeRequest.assignedTo || []),
+                dueDate: dueDate ? new Date(dueDate) : (changeRequest.deadline || null),
+                linkedUrl: `cr:${normalizedCrId}`,
+                createdBy: userId,
+                affectedModels: Array.isArray(affectedModels) ? affectedModels : (changeRequest.affectedModels || []),
+            });
+
+            // Update CR with task link
+            const linkedTaskIds = [...new Set([...(changeRequest.linkedTaskIds || []), task.publicId])];
+            await ChangeRequestRepository.update(normalizedCrId, {
+                linkedTaskIds,
+                primaryTaskId: changeRequest.primaryTaskId || task.publicId,
+            });
+
+            return res.status(201).json({
+                success: true,
+                message: 'Task created and linked to CR',
+                data: {
+                    task: {
+                        publicId: task.publicId,
+                        title: task.title,
+                        description: task.description,
+                        status: task.status,
+                        priority: task.priority,
+                        assigneeId: task.assigneeId,
+                        assigneeIds: task.assigneeIds,
+                        dueDate: task.dueDate,
+                        createdBy: task.createdBy,
+                        createdAt: task.createdAt,
+                        affectedModels: task.affectedModels,
+                    },
+                    linkedTaskIds,
+                    primaryTaskId: changeRequest.primaryTaskId || task.publicId,
+                },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to create task from CR');
+        }
+    }
+
+    async linkTaskToCR(req, res) {
+        try {
+            const { crId, taskId } = req.body || {};
+            const normalizedCrId = normalizeString(crId);
+            const normalizedTaskId = normalizeString(taskId);
+
+            if (!normalizedCrId) return errorResponse(res, 400, 'Missing crId');
+            if (!normalizedTaskId) return errorResponse(res, 400, 'Missing taskId');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const changeRequest = await ChangeRequestRepository.findByPublicId(normalizedCrId);
+            if (!changeRequest) return errorResponse(res, 404, 'Change request not found');
+
+            const member = await ProjectMemberRepository.findMember(changeRequest.projectId, userId);
+            if (!member || member.role === 'viewer') return errorResponse(res, 403, 'Forbidden');
+
+            // Verify task belongs to same project
+            const task = await Task.findOne({ publicId: normalizedTaskId });
+            if (!task) return errorResponse(res, 404, 'Task not found');
+            if (task.projectId !== changeRequest.projectId) {
+                return errorResponse(res, 400, 'Task must belong to the same project as the CR');
+            }
+
+            const linkedTaskIds = [...new Set([...(changeRequest.linkedTaskIds || []), normalizedTaskId])];
+            const updated = await ChangeRequestRepository.update(normalizedCrId, { linkedTaskIds });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Task linked to CR',
+                data: { linkedTaskIds: updated.linkedTaskIds },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to link task to CR');
+        }
+    }
+
+    async unlinkTaskFromCR(req, res) {
+        try {
+            const { crId, taskId } = req.body || {};
+            const normalizedCrId = normalizeString(crId);
+            const normalizedTaskId = normalizeString(taskId);
+
+            if (!normalizedCrId) return errorResponse(res, 400, 'Missing crId');
+            if (!normalizedTaskId) return errorResponse(res, 400, 'Missing taskId');
+
+            const userId = req.user?.id;
+            if (!userId) return errorResponse(res, 401, 'Unauthorized');
+
+            const changeRequest = await ChangeRequestRepository.findByPublicId(normalizedCrId);
+            if (!changeRequest) return errorResponse(res, 404, 'Change request not found');
+
+            const member = await ProjectMemberRepository.findMember(changeRequest.projectId, userId);
+            if (!member || member.role === 'viewer') return errorResponse(res, 403, 'Forbidden');
+
+            const linkedTaskIds = (changeRequest.linkedTaskIds || []).filter(id => id !== normalizedTaskId);
+            const primaryTaskId = changeRequest.primaryTaskId === normalizedTaskId
+                ? (linkedTaskIds[0] || null)
+                : changeRequest.primaryTaskId;
+
+            const updated = await ChangeRequestRepository.update(normalizedCrId, { linkedTaskIds, primaryTaskId });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Task unlinked from CR',
+                data: { linkedTaskIds: updated.linkedTaskIds, primaryTaskId: updated.primaryTaskId },
+            });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to unlink task from CR');
         }
     }
 }

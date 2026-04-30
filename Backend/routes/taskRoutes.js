@@ -1,6 +1,7 @@
 const express = require('express');
 const TaskController = require('../controllers/TaskController');
 const { authenticate } = require('../middlewares/authMiddleware');
+const { taskAttachmentUpload } = require('../middlewares/taskAttachmentMiddleware');
 
 const router = express.Router();
 
@@ -15,5 +16,7 @@ router.put('/comments', authenticate, (req, res) => TaskController.updateComment
 router.delete('/comments', authenticate, (req, res) => TaskController.deleteComment(req, res));
 router.put('/', authenticate, (req, res) => TaskController.updateTask(req, res));
 router.delete('/', authenticate, (req, res) => TaskController.deleteTask(req, res));
+router.post('/upload-attachments', authenticate, taskAttachmentUpload.array('attachments', 20), (req, res) => TaskController.uploadAttachments(req, res));
+router.post('/delete-attachment', authenticate, (req, res) => TaskController.deleteAttachment(req, res));
 
 module.exports = router;
