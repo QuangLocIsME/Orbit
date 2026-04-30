@@ -463,7 +463,6 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-[24px] font-normal text-[#101828]">Packages</h1>
-          <p className="text-[14px] text-[#6A7282]">Manage and organize project components</p>
         </div>
         <div className="flex items-center gap-3">
           {!fixedProjectId && (
@@ -477,16 +476,16 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
               ))}
             </select>
           )}
-        </div>
 
-        <button
-          onClick={() => setShowCreateModal(true)}
-          disabled={!selectedProjectId}
-          className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-          New Package
-        </button>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            disabled={!selectedProjectId}
+            className="inline-flex items-center justify-center gap-1.5 rounded-[8px] bg-[#155DFC] h-10 px-5 min-w-[150px] text-[13px] font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Package
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -205,11 +205,20 @@ export default function XktViewerDialog({ projectId, fileId, versionId, fileName
         )}
 
         {status === 'error' && (
-          <div className="flex items-center gap-3 px-5 py-3 bg-[#FEE2E2] border-b border-[#FCA5A5]">
-            <svg className="h-4 w-4 text-[#DC2626] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-            </svg>
-            <span className="text-[13px] text-[#DC2626]">{error}</span>
+          <div className="flex flex-col gap-2 px-5 py-4 bg-[#FEE2E2] border-b border-[#FCA5A5]">
+            <div className="flex items-start gap-3">
+              <svg className="h-4 w-4 text-[#DC2626] shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              <div>
+                <p className="text-[13px] font-medium text-[#DC2626]">Failed to load 3D model</p>
+                <p className="text-[12px] text-[#B91C1C] mt-1">{error}</p>
+                <p className="text-[12px] text-[#991B1B] mt-1">
+                  The model may still be converting or the file has not been approved yet.
+                  {error.includes('document ID does not exist') && ' Try re-uploading the file.'}
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

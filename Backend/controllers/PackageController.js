@@ -2074,13 +2074,14 @@ class PackageController {
             const userId = req.user?.id;
             if (!userId) return unauthorized(res);
 
-            const { projectId, fileId, versionId } = req.body || {};
+            const { projectId, fileId, versionId, fileName } = req.body || {};
             const normalizedProjectId = normalizeString(projectId);
             const normalizedFileId = normalizeString(fileId);
             const normalizedVersionId = normalizeString(versionId) || normalizedFileId;
+            const normalizedFileName = normalizeString(fileName);
 
-            if (!normalizedProjectId || !normalizedFileId) {
-                return badRequest(res, 'projectId and fileId are required');
+            if (!normalizedProjectId || (!normalizedFileId && !normalizedFileName)) {
+                return badRequest(res, 'projectId and fileId or fileName are required');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
@@ -2088,7 +2089,14 @@ class PackageController {
                 return forbidden(res, 'Only project members can view documents');
             }
 
-            const doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            // Try lookup by fileId first, fallback to filename
+            let doc = null;
+            if (normalizedFileId) {
+                doc = await DocumentRepository.findByPublicId(normalizedFileId);
+            }
+            if (!doc && normalizedFileName) {
+                doc = await DocumentRepository.findByNameInProject(normalizedProjectId, normalizedFileName);
+            }
             if (!doc || doc.projectId !== normalizedProjectId) {
                 return notFound(res, 'File version not found');
             }
@@ -2127,13 +2135,14 @@ class PackageController {
             const userId = req.user?.id;
             if (!userId) return unauthorized(res);
 
-            const { projectId, fileId, versionId } = req.body || {};
+            const { projectId, fileId, versionId, fileName } = req.body || {};
             const normalizedProjectId = normalizeString(projectId);
             const normalizedFileId = normalizeString(fileId);
             const normalizedVersionId = normalizeString(versionId) || normalizedFileId;
+            const normalizedFileName = normalizeString(fileName);
 
-            if (!normalizedProjectId || !normalizedFileId) {
-                return badRequest(res, 'projectId and fileId are required');
+            if (!normalizedProjectId || (!normalizedFileId && !normalizedFileName)) {
+                return badRequest(res, 'projectId and fileId or fileName are required');
             }
 
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
@@ -2141,7 +2150,14 @@ class PackageController {
                 return forbidden(res, 'Only project members can retry conversion');
             }
 
-            const doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            // Try lookup by fileId first, fallback to filename
+            let doc = null;
+            if (normalizedFileId) {
+                doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            }
+            if (!doc && normalizedFileName) {
+                doc = await DocumentRepository.findByNameInProject(normalizedProjectId, normalizedFileName);
+            }
             if (!doc || doc.projectId !== normalizedProjectId) {
                 return notFound(res, 'File version not found');
             }
@@ -2198,8 +2214,16 @@ class PackageController {
                 return forbidden(res, 'Only project members can access viewer model');
             }
 
-            const doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+            let doc = await DocumentRepository.findByPublicId(normalizedVersionId);
             if (!doc || doc.projectId !== normalizedProjectId) {
+                doc = await DocumentRepository.findByPublicId(normalizedFileId);
+            }
+            if (!doc) {
+                console.error(`[getViewerModel] Document not found by versionId="${normalizedVersionId}" nor fileId="${normalizedFileId}"`);
+                return notFound(res, 'File version not found');
+            }
+            if (doc.projectId !== normalizedProjectId) {
+                console.error(`[getViewerModel] Document projectId mismatch: doc.projectId="${doc.projectId}" !== normalizedProjectId="${normalizedProjectId}"`);
                 return notFound(res, 'File version not found');
             }
 

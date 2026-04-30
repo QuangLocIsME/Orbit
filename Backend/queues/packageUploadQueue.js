@@ -55,14 +55,17 @@ function scheduleReconnect() {
 }
 
 async function publishPackageUpload(jobPublicId, retries = 3, delayMs = 1000) {
+    console.log(`[packageUploadQueue] publishPackageUpload called for job=${jobPublicId}, channel=${!!channel}, retries=${retries}`);
     if (channel) {
         const payload = JSON.stringify({ jobId: jobPublicId });
         channel.sendToQueue(QUEUE_NAME, Buffer.from(payload), { persistent: true });
+        console.log(`[packageUploadQueue] Message sent to queue '${QUEUE_NAME}' for job=${jobPublicId}`);
         return;
     }
     if (retries <= 0) {
         throw new Error(`Channel not ready after retries for upload job: ${jobPublicId}`);
     }
+    console.log(`[packageUploadQueue] No channel, retrying (${retries - 1} left) in ${delayMs}ms...`);
     await new Promise((r) => setTimeout(r, delayMs));
     await createChannelWithRetry();
     await publishPackageUpload(jobPublicId, retries - 1, delayMs * 2);

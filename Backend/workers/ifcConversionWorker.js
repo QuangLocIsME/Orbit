@@ -29,10 +29,34 @@ function ensureTempDir() {
 
 async function downloadIfcToLocal({ bucket, key, targetPath }) {
     const { GetObjectCommand } = require('@aws-sdk/client-s3');
+
+    const S3_BUCKET = process.env.S3_BUCKET || 'orbit-files';
+
+    let normalizedBucket = bucket;
+    let normalizedKey = key;
+
+    if (typeof normalizedKey === 'string' && normalizedKey.startsWith('http')) {
+        try {
+            const parsed = new URL(normalizedKey);
+            const segments = parsed.pathname.split('/');
+            const bucketIdx = segments.indexOf('orbit-files');
+            if (bucketIdx >= 0 && bucketIdx < segments.length - 1) {
+                normalizedBucket = 'orbit-files';
+                normalizedKey = segments.slice(bucketIdx + 1).join('/');
+            } else {
+                const altIdx = segments.indexOf(S3_BUCKET);
+                if (altIdx >= 0 && altIdx < segments.length - 1) {
+                    normalizedBucket = S3_BUCKET;
+                    normalizedKey = segments.slice(altIdx + 1).join('/');
+                }
+            }
+        } catch (_) {}
+    }
+
     const response = await s3Client.send(
         new GetObjectCommand({
-            Bucket: bucket,
-            Key: key,
+            Bucket: normalizedBucket,
+            Key: normalizedKey,
         })
     );
 
@@ -45,7 +69,20 @@ async function downloadIfcToLocal({ bucket, key, targetPath }) {
 
 async function downloadIfcFromSupabase(supabaseFileKey, targetPath) {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${supabaseFileKey}`;
+
+    let normalizedKey = supabaseFileKey;
+    if (normalizedKey.startsWith('http')) {
+        try {
+            const parsed = new URL(normalizedKey);
+            const segments = parsed.pathname.split('/');
+            const bucketIdx = segments.indexOf(SUPABASE_AVATAR_BUCKET);
+            if (bucketIdx >= 0 && bucketIdx < segments.length - 1) {
+                normalizedKey = segments.slice(bucketIdx + 1).join('/');
+            }
+        } catch (_) {}
+    }
+
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_AVATAR_BUCKET}/${normalizedKey}`;
     const res = await fetch(endpoint, {
         method: 'GET',
         headers: {

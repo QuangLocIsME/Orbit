@@ -17,12 +17,31 @@ interface Attachment {
   mimeType: string;
 }
 
+interface StructuredSections {
+  context: string;
+  problem: string;
+  proposedChange: string;
+  impact: {
+    estimatedImpact: 'low' | 'medium' | 'high' | null;
+    affectedModels: string[];
+    clashCheckRequired: boolean;
+  };
+}
+
+interface ResultAttachment {
+  name: string;
+  size: number;
+  url: string;
+  mimeType: string;
+  sourceDocumentId: string;
+}
+
 interface ChangeRequest {
   publicId: string;
   crId: string;
   title: string;
   description: string;
-  status: 'pending' | 'in-progress' | 'approved' | 'completed' | 'rejected';
+  status: 'pending' | 'in-progress' | 'approved' | 'completed' | 'published' | 'rejected';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   affectedModels: string[];
   disciplineId: string | null;
@@ -37,6 +56,50 @@ interface ChangeRequest {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  // New fields
+  linkedTaskIds: string[];
+  primaryTaskId: string | null;
+  affectedDocuments: string[];
+  derivedPackageIds: string[];
+  structuredSections: StructuredSections | null;
+  resultAttachments: ResultAttachment[];
+}
+
+interface LinkedTask {
+  id?: string;
+  publicId: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  assigneeId: string;
+  assigneeIds: string[];
+  dueDate: string | null;
+  createdBy: string;
+  createdAt: string;
+  affectedModels?: string[];
+}
+
+interface CRVersion {
+  publicId: string;
+  crId: string;
+  versionNumber: number;
+  versionLabel: string;
+  snapshot: {
+    title: string;
+    description: string;
+    priority: string;
+    estimatedImpact: string | null;
+    affectedModels: string[];
+    disciplineId: string | null;
+    attachments: Attachment[];
+    structuredSections: StructuredSections | null;
+    taskIds: string[];
+    completedBy: string;
+    completedAt: string;
+  };
+  resultFiles: ResultAttachment[];
+  createdAt: string;
 }
 
 interface Discipline { id: string; name: string; color: string; description: string; }
@@ -44,17 +107,19 @@ interface ModelFile  { id: string; name: string; size?: number; folderPath?: str
 interface TeamMember { publicId: string; userId: string; role: string; status: string; user: { fullName: string; email: string; avatar?: string } | null; }
 interface ChangesTabProps { 
   projectPublicId: string; 
-  onActivityAdded?: () => void; // Callback to refresh activities
+  onActivityAdded?: () => void;
+  initialCrId?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
-  pending:      { label: 'Pending',     bg: 'bg-[#FEF3C7]', text: 'text-[#B45309]' },
-  'in-progress':{ label: 'In Progress', bg: 'bg-[#EEF2FF]', text: 'text-[#432DD7]' },
-  approved:     { label: 'Approved',    bg: 'bg-[#ECFDF5]', text: 'text-[#007A55]' },
-  completed:    { label: 'Completed',   bg: 'bg-[#ECFDF5]', text: 'text-[#007A55]' },
-  rejected:     { label: 'Rejected',    bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]' },
+  pending:       { label: 'Pending',      bg: 'bg-[#FEF3C7]', text: 'text-[#B45309]' },
+  'in-progress': { label: 'In Progress', bg: 'bg-[#EEF2FF]', text: 'text-[#432DD7]' },
+  approved:      { label: 'Approved',     bg: 'bg-[#ECFDF5]', text: 'text-[#007A55]' },
+  completed:     { label: 'Completed',     bg: 'bg-[#10B981]', text: 'text-white' },
+  published:     { label: 'Published',     bg: 'bg-[#059669]', text: 'text-white' },
+  rejected:      { label: 'Rejected',     bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]' },
 } as const;
 
 const PRIORITY_CFG = {
@@ -64,8 +129,8 @@ const PRIORITY_CFG = {
   low:    { label: 'Low',    bg: 'bg-[#F3F4F6]',  text: 'text-[#364153]' },
 } as const;
 
-const ICON_BG     = { pending:'bg-[#EEF2FF]', 'in-progress':'bg-[#EEF2FF]', approved:'bg-[#ECFDF5]', completed:'bg-[#ECFDF5]', rejected:'bg-[#FEE2E2]' } as const;
-const ICON_STROKE = { pending:'#4F39F6', 'in-progress':'#4F39F6', approved:'#009966', completed:'#009966', rejected:'#DC2626' } as const;
+const ICON_BG     = { pending:'bg-[#EEF2FF]', 'in-progress':'bg-[#EEF2FF]', approved:'bg-[#ECFDF5]', completed:'bg-[#10B981]/10', published:'bg-[#059669]/10', rejected:'bg-[#FEE2E2]' } as const;
+const ICON_STROKE = { pending:'#4F39F6', 'in-progress':'#4F39F6', approved:'#009966', completed:'#10B981', published:'#059669', rejected:'#DC2626' } as const;
 const MODEL_EXT = /\.(ifc|rvt|dwg|dxf|nwd|nwf|nwc|skp|fbx|obj|3ds|step|stp)$/i;
 
 function fmtRel(d: string) {
@@ -108,14 +173,16 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
   const [priority, setPriority]                   = useState<ChangeRequest['priority']>('medium');
   const [estimatedImpact, setEstimatedImpact]     = useState<'low' | 'medium' | 'high' | ''>('');
   const [detailedDescription, setDetailedDesc]    = useState('');
+  const [proposedChange, setProposedChange]      = useState('');
   const [estimatedCost, setEstimatedCost]         = useState('');
   const [estimatedDuration, setEstimatedDuration] = useState('');
   const [deadline, setDeadline]                   = useState('');
-  const [disciplineId, setDisciplineId]           = useState('');
-  const [affectedModels, setAffectedModels]       = useState<string[]>([]);
+  const [disciplineId, setDisciplineId]          = useState('');
+  const [affectedModels, setAffectedModels]      = useState<string[]>([]);
+  const [clashCheckRequired, setClashCheckRequired] = useState(false);
   const [assignedTo, setAssignedTo]               = useState<string[]>([]);
   const [reviewers, setReviewers]                 = useState<string[]>([]);
-  const [attachments, setAttachments]             = useState<File[]>([]);
+  const [attachments, setAttachments]              = useState<File[]>([]);
   const [submitting, setSubmitting]               = useState(false);
 
   const toggleModel = (id: string) =>
@@ -126,9 +193,19 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
     if (!description.trim()) { toast.error('Description is required'); return; }
     if (!estimatedImpact)    { toast.error('Estimated Impact is required'); return; }
 
+    const structuredSections = {
+      context: description.trim(),
+      problem: detailedDescription.trim(),
+      proposedChange: proposedChange.trim(),
+      impact: {
+        estimatedImpact: estimatedImpact as 'low' | 'medium' | 'high' | null,
+        affectedModels,
+        clashCheckRequired,
+      },
+    };
+
     setSubmitting(true);
     try {
-      // If attachments present → use FormData, else JSON
       let res: Response;
       if (attachments.length > 0) {
         const form = new FormData();
@@ -137,10 +214,12 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
         form.append('priority', priority);
         form.append('estimatedImpact', estimatedImpact);
         if (detailedDescription.trim()) form.append('detailedDescription', detailedDescription.trim());
+        if (proposedChange.trim()) form.append('proposedChange', proposedChange.trim());
         if (estimatedCost.trim()) form.append('estimatedCost', estimatedCost.trim());
         if (estimatedDuration.trim()) form.append('estimatedDuration', estimatedDuration.trim());
         if (deadline) form.append('deadline', localDateStringToUTCDate(deadline));
         if (disciplineId) form.append('disciplineId', disciplineId);
+        if (clashCheckRequired) form.append('clashCheckRequired', 'true');
         affectedModels.forEach(m => form.append('affectedModels[]', m));
         assignedTo.forEach(a => form.append('assignedTo[]', a));
         reviewers.forEach(r => form.append('reviewers[]', r));
@@ -156,6 +235,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
             priority,
             estimatedImpact,
             detailedDescription: detailedDescription.trim() || undefined,
+            proposedChange: proposedChange.trim() || undefined,
             estimatedCost: estimatedCost.trim() ? Number(estimatedCost) : undefined,
             estimatedDuration: estimatedDuration.trim() || undefined,
             deadline: deadline ? localDateStringToUTCDate(deadline) : undefined,
@@ -163,6 +243,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
             affectedModels,
             assignedTo,
             reviewers,
+            clashCheckRequired,
           }),
         });
       }
@@ -213,97 +294,165 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-          {/* Title */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[14px] font-medium text-[#101828]">Title <span className="text-[#FF2056]">*</span></label>
-            <input
-              type="text"
-              placeholder="Enter change request title..."
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
-            />
-          </div>
-
-          {/* Priority */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[14px] font-medium text-[#101828]">Priority <span className="text-[#FF2056]">*</span></label>
-            <div className="grid grid-cols-4 gap-2">
-              {(['low', 'medium', 'high', 'urgent'] as const).map(p => (
-                <button
-                  key={p} type="button"
-                  onClick={() => setPriority(p)}
-                  className={cn(
-                    'h-10 rounded-[10px] text-[14px] capitalize transition-colors border',
-                    priority === p ? 'bg-[#F0F9FF] border-[#155DFC] text-[#0069A8]' : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
-                  )}
-                >{p.charAt(0).toUpperCase() + p.slice(1)}</button>
-              ))}
+          {/* ── Section 1: Context ─────────────────────────────────── */}
+          <div className="rounded-[10px] border border-[#E5E7EB] p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-1 rounded-full bg-[#155DFC]" />
+              <h3 className="text-[14px] font-semibold text-[#101828]">Context</h3>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Title <span className="text-[#FF2056]">*</span></label>
+              <input
+                type="text"
+                placeholder="Enter change request title..."
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Description <span className="text-[#FF2056]">*</span></label>
+              <textarea
+                placeholder="Brief description of the requested change..."
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                rows={2}
+                className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
+              />
             </div>
           </div>
 
-          {/* Estimated Impact */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[14px] font-medium text-[#101828]">Estimated Impact <span className="text-[#FF2056]">*</span></label>
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { val: 'low',    label: 'Low',    active: 'bg-[#F0FDF4] border-[#22C55E] text-[#15803D]', dot: 'bg-[#22C55E]' },
-                { val: 'medium', label: 'Medium', active: 'bg-[#FFFBEB] border-[#F59E0B] text-[#B45309]', dot: 'bg-[#F59E0B]' },
-                { val: 'high',   label: 'High',   active: 'bg-[#FFF1F2] border-[#F43F5E] text-[#C70036]', dot: 'bg-[#F43F5E]' },
-              ] as const).map(({ val, label, active, dot }) => (
-                <button
-                  key={val} type="button"
-                  onClick={() => setEstimatedImpact(val)}
-                  className={cn(
-                    'h-10 rounded-[10px] text-[14px] font-medium transition-colors border flex items-center justify-center gap-2',
-                    estimatedImpact === val ? active : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
-                  )}
-                >
-                  <span className={cn('h-2 w-2 rounded-full', estimatedImpact === val ? dot : 'bg-[#D1D5DC]')} />
-                  {label}
-                </button>
-              ))}
+          {/* ── Section 2: Problem ──────────────────────────────────── */}
+          <div className="rounded-[10px] border border-[#E5E7EB] p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-1 rounded-full bg-[#F59E0B]" />
+              <h3 className="text-[14px] font-semibold text-[#101828]">Problem</h3>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Detailed Description <span className="text-[12px] font-normal text-[#6A7282]">(optional)</span></label>
+              <textarea
+                placeholder="Provide a thorough explanation of the change, its rationale, and expected outcomes..."
+                value={detailedDescription}
+                onChange={e => setDetailedDesc(e.target.value)}
+                rows={3}
+                className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
+              />
             </div>
           </div>
 
-          {/* Description */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[14px] font-medium text-[#101828]">Description <span className="text-[#FF2056]">*</span></label>
-            <textarea
-              placeholder="Brief description of the requested change..."
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              rows={2}
-              className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
-            />
+          {/* ── Section 3: Proposed Change ───────────────────────────── */}
+          <div className="rounded-[10px] border border-[#E5E7EB] p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-1 rounded-full bg-[#10B981]" />
+              <h3 className="text-[14px] font-semibold text-[#101828]">Proposed Change</h3>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">What should be changed and how? <span className="text-[12px] font-normal text-[#6A7282]">(optional)</span></label>
+              <textarea
+                placeholder="Describe the specific change to be made, including scope, approach, and expected result..."
+                value={proposedChange}
+                onChange={e => setProposedChange(e.target.value)}
+                rows={3}
+                className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
+              />
+            </div>
           </div>
 
-          {/* Detailed Description */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[14px] font-medium text-[#101828]">Detailed Description <span className="text-[12px] font-normal text-[#6A7282]">(optional)</span></label>
-            <textarea
-              placeholder="Provide a thorough explanation of the change, its rationale, and expected outcomes..."
-              value={detailedDescription}
-              onChange={e => setDetailedDesc(e.target.value)}
-              rows={4}
-              className="w-full rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] resize-none"
-            />
+          {/* ── Section 4: Impact ──────────────────────────────────── */}
+          <div className="rounded-[10px] border border-[#E5E7EB] p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-1 rounded-full bg-[#F43F5E]" />
+              <h3 className="text-[14px] font-semibold text-[#101828]">Impact</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[14px] font-medium text-[#101828]">Priority <span className="text-[#FF2056]">*</span></label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {(['low', 'medium', 'high', 'urgent'] as const).map(p => (
+                    <button key={p} type="button" onClick={() => setPriority(p)}
+                      className={cn('h-9 rounded-[8px] text-[13px] capitalize transition-colors border',
+                        priority === p ? 'bg-[#F0F9FF] border-[#155DFC] text-[#0069A8]' : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
+                      )}>{p.charAt(0).toUpperCase() + p.slice(1)}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[14px] font-medium text-[#101828]">Estimated Impact <span className="text-[#FF2056]">*</span></label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {([
+                    { val: 'low',    label: 'Low',    active: 'bg-[#F0FDF4] border-[#22C55E] text-[#15803D]', dot: 'bg-[#22C55E]' },
+                    { val: 'medium', label: 'Medium', active: 'bg-[#FFFBEB] border-[#F59E0B] text-[#B45309]', dot: 'bg-[#F59E0B]' },
+                    { val: 'high',   label: 'High',   active: 'bg-[#FFF1F2] border-[#F43F5E] text-[#C70036]', dot: 'bg-[#F43F5E]' },
+                  ] as const).map(({ val, label, active, dot }) => (
+                    <button key={val} type="button" onClick={() => setEstimatedImpact(val)}
+                      className={cn('h-9 rounded-[8px] text-[13px] font-medium transition-colors border flex items-center justify-center gap-1.5',
+                        estimatedImpact === val ? active : 'bg-white border-[#E5E7EB] text-[#4A5565] hover:bg-gray-50'
+                      )}>
+                      <span className={cn('h-1.5 w-1.5 rounded-full', estimatedImpact === val ? dot : 'bg-[#D1D5DC]')} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => setClashCheckRequired(v => !v)}
+                className={cn('relative inline-flex h-6 w-11 items-center rounded-full transition-colors', clashCheckRequired ? 'bg-[#155DFC]' : 'bg-[#D1D5DC]')}>
+                <span className={cn('inline-block h-4 w-4 transform rounded-full bg-white transition-transform', clashCheckRequired ? 'translate-x-6' : 'translate-x-1')} />
+              </button>
+              <span className="text-[14px] text-[#364153]">Clash check required after change</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[14px] font-medium text-[#101828]">Affected Models</label>
+              {loadingFiles ? (
+                <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#6A7282]">Loading model files...</div>
+              ) : modelFiles.length === 0 ? (
+                <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#6A7282]">No model files found.</div>
+              ) : (
+                <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#F3F4F6] max-h-[140px] overflow-y-auto">
+                  {modelFiles.map(f => (
+                    <label key={f.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[#F9FAFB]">
+                      <input type="checkbox" checked={affectedModels.includes(f.id)} onChange={() => toggleModel(f.id)}
+                        className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]" />
+                      <FileIcon className="shrink-0 text-[#6A7282]" />
+                      <div className="min-w-0">
+                        <p className="text-[14px] text-[#101828] truncate">{f.name}</p>
+                        {f.folderPath && <p className="text-[11px] text-[#6A7282] truncate">{f.folderPath}</p>}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {affectedModels.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {affectedModels.map(id => {
+                    const f = modelFiles.find(m => m.id === id);
+                    return f ? (
+                      <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] px-2 py-0.5 text-[11px] text-[#1D4ED8]">
+                        {f.name}
+                        <button type="button" onClick={() => toggleModel(id)} className="ml-0.5 text-[#93C5FD] hover:text-[#1D4ED8] font-bold">x</button>
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Estimated Cost + Duration — 2 col */}
+          {/* ── Assignees + Reviewers — 2 col ─────────────────────── */}
+          <div className="grid grid-cols-2 gap-4">
+            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} />
+            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers}  />
+          </div>
+
+          {/* ── Estimated Cost + Duration — 2 col ─────────────────── */}
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-[14px] font-medium text-[#101828]">Estimated Cost</label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[14px] text-[#6A7282] select-none">$</span>
-                <input
-                  type="number"
-                  min={0}
-                  placeholder="0.00"
-                  value={estimatedCost}
-                  onChange={e => setEstimatedCost(e.target.value)}
-                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-7 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
+                <input type="number" min={0} placeholder="0.00" value={estimatedCost} onChange={e => setEstimatedCost(e.target.value)}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-7 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -312,39 +461,27 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
                 <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6A7282]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
-                <input
-                  type="text"
-                  placeholder="e.g. 2 weeks"
-                  value={estimatedDuration}
-                  onChange={e => setEstimatedDuration(e.target.value)}
-                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-9 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
-                />
+                <input type="text" placeholder="e.g. 2 weeks" value={estimatedDuration} onChange={e => setEstimatedDuration(e.target.value)}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] pl-9 pr-4 text-[14px] text-[#101828] placeholder:text-[#6A7282] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]" />
               </div>
             </div>
           </div>
 
-          {/* Deadline + Discipline — 2 col */}
+          {/* ── Deadline + Discipline — 2 col ──────────────────────── */}
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-[14px] font-medium text-[#101828]">Deadline</label>
-              <input
-                type="date"
-                value={deadline}
-                onChange={e => setDeadline(e.target.value)}
+              <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)}
                 min={getTodayLocalDateString()}
-                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]"
-              />
+                className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] [color-scheme:light]" />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[14px] font-medium text-[#101828]">Discipline</label>
               {disciplines.length === 0 ? (
                 <p className="text-[13px] text-[#6A7282] mt-1">No disciplines — add in <strong>Settings</strong>.</p>
               ) : (
-                <select
-                  value={disciplineId}
-                  onChange={e => setDisciplineId(e.target.value)}
-                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]"
-                >
+                <select value={disciplineId} onChange={e => setDisciplineId(e.target.value)}
+                  className="w-full h-[38px] rounded-[10px] border border-[#E5E7EB] bg-white px-4 text-[14px] text-[#101828] focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC]">
                   <option value="">Select discipline...</option>
                   {disciplines.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
@@ -352,56 +489,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
             </div>
           </div>
 
-          {/* Assignees + Reviewers — 2 col */}
-          <div className="grid grid-cols-2 gap-4">
-            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} />
-            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers}  />
-          </div>
-
-          {/* Affected Models */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[14px] font-medium text-[#101828]">Affected Models</label>
-            {loadingFiles ? (
-              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#6A7282]">Loading model files…</div>
-            ) : modelFiles.length === 0 ? (
-              <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-3 text-[14px] text-[#6A7282]">
-                No model files found. Upload IFC/RVT/DWG files in the <strong>Documents</strong> tab.
-              </div>
-            ) : (
-              <div className="rounded-[10px] border border-[#E5E7EB] bg-white divide-y divide-[#F3F4F6] max-h-[160px] overflow-y-auto">
-                {modelFiles.map(f => (
-                  <label key={f.id} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[#F9FAFB]">
-                    <input
-                      type="checkbox"
-                      checked={affectedModels.includes(f.id)}
-                      onChange={() => toggleModel(f.id)}
-                      className="h-4 w-4 rounded border-[#D1D5DC] accent-[#155DFC]"
-                    />
-                    <FileIcon className="shrink-0 text-[#6A7282]" />
-                    <div className="min-w-0">
-                      <p className="text-[14px] text-[#101828] truncate">{f.name}</p>
-                      {f.folderPath && <p className="text-[11px] text-[#6A7282] truncate">{f.folderPath}</p>}
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
-            {affectedModels.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {affectedModels.map(id => {
-                  const f = modelFiles.find(m => m.id === id);
-                  return f ? (
-                    <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] px-2 py-0.5 text-[11px] text-[#1D4ED8]">
-                      {f.name}
-                      <button type="button" onClick={() => toggleModel(id)} className="ml-0.5 text-[#93C5FD] hover:text-[#1D4ED8] font-bold">×</button>
-                    </span>
-                  ) : null;
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Attachments */}
+          {/* ── Attachments ─────────────────────────────────────── */}
           <AttachPicker files={attachments} onChange={setAttachments} />
 
         </div>
@@ -795,7 +883,7 @@ function nameToColor(name: string) {
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
 function DetailModal({
-  cr, disciplines, modelFiles, teamMembers, projectPublicId, currentUserId, currentRole, onClose, onStatusChange,
+  cr, disciplines, modelFiles, teamMembers, projectPublicId, currentUserId, currentRole, workflowStages, onClose, onStatusChange, onTaskLinked, onTaskUnlinked, onRefreshCR,
 }: {
   cr: ChangeRequest;
   disciplines: Discipline[];
@@ -804,8 +892,12 @@ function DetailModal({
   projectPublicId: string;
   currentUserId: string;
   currentRole: 'admin' | 'member' | 'viewer';
+  workflowStages?: { id: string; name: string; color?: string }[];
   onClose: () => void;
   onStatusChange: (id: string, s: ChangeRequest['status']) => void;
+  onTaskLinked?: (taskId: string) => void;
+  onTaskUnlinked?: (taskId: string) => void;
+  onRefreshCR?: (freshCR: ChangeRequest) => void;
 }) {
   const [updating, setUpdating] = useState(false);
   const [comments, setComments] = useState<CRComment[]>([]);
@@ -816,9 +908,36 @@ function DetailModal({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
 
+  // ── Task linking state ─────────────────────────────────────────────────────────
+  const [linkedTasks, setLinkedTasks] = useState<LinkedTask[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [showCreateTask, setShowCreateTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
+  const [newTaskAssignees, setNewTaskAssignees] = useState<string[]>([]);
+  const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [showLinkTask, setShowLinkTask] = useState(false);
+  const [availableTasks, setAvailableTasks] = useState<LinkedTask[]>([]);
+  const [loadingAvailable, setLoadingAvailable] = useState(false);
+  const [taskSearch, setTaskSearch] = useState('');
+  const [linkingTask, setLinkingTask] = useState(false);
+
+  // ── Version history state ─────────────────────────────────────────────────────
+  const [versions, setVersions] = useState<CRVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [showCreateVersion, setShowCreateVersion] = useState(false);
+  const [versionLabel, setVersionLabel] = useState('');
+  const [creatingVersion, setCreatingVersion] = useState(false);
+
   const disc = disciplines.find(d => d.id === cr.disciplineId);
-  const sc = STATUS_CFG[cr.status];
-  const pc = PRIORITY_CFG[cr.priority];
+  const sc = STATUS_CFG[cr.status] ?? { label: cr.status, bg: 'bg-gray-100', text: 'text-gray-700' };
+  const pc = PRIORITY_CFG[cr.priority] ?? { label: cr.priority, bg: 'bg-gray-100', text: 'text-gray-700' };
+
+  const resolveTaskStatusLabel = (status: string) => {
+    const stage = (workflowStages || []).find(s => s.id === status);
+    return stage ? stage.name : status;
+  };
 
   // Permission: only admin or CR creator can update status
   const isCreator = cr.createdBy === currentUserId;
@@ -846,6 +965,98 @@ function DetailModal({
     return () => { cancelled = true; };
   }, [cr.publicId, projectPublicId]);
 
+  // ── Load linked tasks ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!cr.linkedTaskIds || cr.linkedTaskIds?.length === 0) {
+      setLinkedTasks([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingTasks(true);
+      try {
+        const res = await apiFetch('/api/tasks/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: projectPublicId }),
+        });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          const allTasks: LinkedTask[] = d?.data ?? [];
+          const linked = allTasks.filter(t => cr.linkedTaskIds?.includes(t.id || t.publicId));
+          if (!cancelled) setLinkedTasks(linked);
+        }
+      } catch { /* silent */ }
+      finally { if (!cancelled) setLoadingTasks(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [cr.linkedTaskIds, projectPublicId]);
+
+  // ── Reload CR data on mount to get fresh linkedTaskIds ──────────────────────
+  // Tasks can be linked via CreateTaskModal (ScopedTasksPanel), which updates the
+  // backend CR but not the parent's cached detailCR. Fetch fresh CR data here.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/change-requests/detail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ crId: cr.publicId, projectId: projectPublicId }),
+        });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          const fresh = d?.data;
+          if (fresh && onRefreshCR) {
+            onRefreshCR(fresh);
+          }
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, []); // run once on mount only
+
+  // ── Load version history ─────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingVersions(true);
+      try {
+        const res = await apiFetch(`/api/change-requests/${cr.publicId}/versions`);
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          setVersions(Array.isArray(d?.data) ? d.data : []);
+        }
+      } catch { /* silent */ }
+      finally { if (!cancelled) setLoadingVersions(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [cr.publicId]);
+
+  // ── Load available tasks for linking ─────────────────────────────────────────
+  useEffect(() => {
+    if (!showLinkTask) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingAvailable(true);
+      try {
+        const res = await apiFetch('/api/tasks/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: projectPublicId }),
+        });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          const allTasks: LinkedTask[] = d?.data ?? [];
+          const available = allTasks.filter(t => !cr.linkedTaskIds?.includes(t.publicId));
+          if (!cancelled) setAvailableTasks(available);
+        }
+      } catch { /* silent */ }
+      finally { if (!cancelled) setLoadingAvailable(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [showLinkTask, projectPublicId, cr.linkedTaskIds]);
+
   const handleStatus = async (status: ChangeRequest['status']) => {
     setUpdating(true);
     try {
@@ -859,6 +1070,127 @@ function DetailModal({
       else toast.error(data.message || 'Failed to update');
     } catch { toast.error('Failed to update status'); }
     finally { setUpdating(false); }
+  };
+
+  // ── Task linking handlers ─────────────────────────────────────────────────────
+
+  const handleCreateTask = async () => {
+    if (!newTaskTitle.trim()) { toast.error('Task title is required'); return; }
+    setCreatingTask(true);
+    try {
+      const res = await apiFetch('/api/change-requests/create-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          crId: cr.publicId,
+          taskTitle: newTaskTitle.trim(),
+          taskDescription: newTaskDescription.trim(),
+          assigneeIds: newTaskAssignees,
+          dueDate: newTaskDueDate || undefined,
+          affectedModels: cr.affectedModels,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Task created and linked to CR');
+        const newTask: LinkedTask = {
+          id: data.data.task.id,
+          publicId: data.data.task.publicId || data.data.task.id,
+          title: data.data.task.title,
+          description: data.data.task.description,
+          status: data.data.task.status,
+          priority: data.data.task.priority,
+          assigneeId: data.data.task.assigneeId,
+          assigneeIds: data.data.task.assigneeIds,
+          dueDate: data.data.task.dueDate,
+          createdBy: data.data.task.createdBy,
+          createdAt: data.data.task.createdAt,
+          affectedModels: data.data.task.affectedModels,
+        };
+        setLinkedTasks(prev => [...prev, newTask]);
+        // Remove from availableTasks so it doesn't still show in "Link Existing" panel
+        setAvailableTasks(prev => prev.filter(t => (t.id || t.publicId) !== data.data.task.publicId));
+        // Notify other components (e.g., Stage board) that a task was created
+        window.dispatchEvent(new CustomEvent('task-created', { detail: { task: newTask } }));
+        onStatusChange(cr.publicId, cr.status); // refresh parent
+        setShowCreateTask(false);
+        setNewTaskTitle('');
+        setNewTaskDescription('');
+        setNewTaskAssignees([]);
+        setNewTaskDueDate('');
+      } else {
+        toast.error(data.message || 'Failed to create task');
+      }
+    } catch { toast.error('Failed to create task'); }
+    finally { setCreatingTask(false); }
+  };
+
+  const handleLinkTask = async (taskId: string) => {
+    setLinkingTask(true);
+    try {
+      const res = await apiFetch('/api/change-requests/link-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crId: cr.publicId, taskId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const taskToLink = availableTasks.find(t => (t.id || t.publicId) === taskId);
+        if (taskToLink) setLinkedTasks(prev => [...prev, taskToLink]);
+        setAvailableTasks(prev => prev.filter(t => (t.id || t.publicId) !== taskId));
+        toast.success('Task linked to CR');
+        onStatusChange(cr.publicId, cr.status);
+        onTaskLinked?.(taskId);
+      } else {
+        toast.error(data.message || 'Failed to link task');
+      }
+    } catch { toast.error('Failed to link task'); }
+    finally { setLinkingTask(false); }
+  };
+
+  const handleUnlinkTask = async (taskId: string) => {
+    try {
+      const res = await apiFetch('/api/change-requests/unlink-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crId: cr.publicId, taskId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLinkedTasks(prev => prev.filter(t => (t.id || t.publicId) !== taskId));
+        toast.success('Task unlinked from CR');
+        onTaskUnlinked?.(taskId);
+        onStatusChange(cr.publicId, cr.status);
+      } else {
+        toast.error(data.message || 'Failed to unlink task');
+      }
+    } catch { toast.error('Failed to unlink task'); }
+  };
+
+  // ── Version handlers ─────────────────────────────────────────────────────────
+
+  const handleCreateVersion = async () => {
+    setCreatingVersion(true);
+    try {
+      const res = await apiFetch(`/api/change-requests/${cr.publicId}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: projectPublicId,
+          versionLabel: versionLabel.trim() || `${cr.crId} v1`,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Version snapshot created');
+        setVersions(prev => [data.data, ...prev]);
+        setShowCreateVersion(false);
+        setVersionLabel('');
+      } else {
+        toast.error(data.message || 'Failed to create version');
+      }
+    } catch { toast.error('Failed to create version'); }
+    finally { setCreatingVersion(false); }
   };
 
   const submitComment = async () => {
@@ -967,13 +1299,38 @@ function DetailModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          {cr.description && (
+
+          {/* ── Section 1: Context ─────────────────────────────────────────── */}
+          {cr.structuredSections?.context && (
             <div>
-              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Description</p>
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Context</p>
+              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections?.context}</p>
+            </div>
+          )}
+          {(!cr.structuredSections?.context) && cr.description && (
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Context</p>
               <p className="text-[14px] text-[#364153] leading-relaxed">{cr.description}</p>
             </div>
           )}
 
+          {/* ── Section 2: Problem ─────────────────────────────────────────── */}
+          {(cr.structuredSections?.problem || cr.detailedDescription) && (
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Problem</p>
+              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections?.problem || cr.detailedDescription}</p>
+            </div>
+          )}
+
+          {/* ── Section 3: Proposed Change ───────────────────────────────────── */}
+          {cr.structuredSections?.proposedChange && (
+            <div>
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Proposed Change</p>
+              <p className="text-[14px] text-[#364153] leading-relaxed">{cr.structuredSections?.proposedChange}</p>
+            </div>
+          )}
+
+          {/* ── Meta row: Discipline + Created ──────────────────────────────── */}
           <div className="grid grid-cols-2 gap-4">
             {disc && (
               <div>
@@ -987,59 +1344,88 @@ function DetailModal({
             </div>
           </div>
 
-          {cr.assignedTo.length > 0 && (
+          {/* ── Assignees + Reviewers ───────────────────────────────────────── */}
+          {(cr.assignedTo?.length > 0 || cr.reviewers?.length > 0) && (
+            <div className="grid grid-cols-2 gap-4">
+              {cr.assignedTo?.length > 0 && (
+                <div>
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Assigned To</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cr.assignedTo?.map(id => {
+                      const m = teamMembers.find(x => x.userId === id);
+                      return m ? (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[12px] text-[#1D4ED8]">
+                          <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />{m.user?.fullName}
+                        </span>
+                      ) : <span key={id} className="text-[12px] text-[#6A7282]">{id}</span>;
+                    })}
+                  </div>
+                </div>
+              )}
+              {cr.reviewers?.length > 0 && (
+                <div>
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Reviewers</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cr.reviewers?.map(id => {
+                      const m = teamMembers.find(x => x.userId === id);
+                      return m ? (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-1 pr-2 py-0.5 text-[12px] text-[#166534]">
+                          <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />{m.user?.fullName}
+                        </span>
+                      ) : <span key={id} className="text-[12px] text-[#6A7282]">{id}</span>;
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Section 4: Impact ──────────────────────────────────────────── */}
+          {(cr.estimatedImpact || cr.affectedModels?.length > 0 || cr.structuredSections?.impact) && (
             <div>
-              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Assigned To</p>
-              <div className="flex flex-wrap gap-2">
-                {cr.assignedTo.map(id => {
-                  const m = teamMembers.find(x => x.userId === id);
-                  return m ? (
-                    <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2.5 py-0.5 text-[12px] text-[#1D4ED8]">
-                      <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />{m.user?.fullName}
-                    </span>
-                  ) : <span key={id} className="text-[13px] text-[#6A7282]">{id}</span>;
-                })}
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-2">Impact</p>
+              <div className="space-y-2">
+                {cr.estimatedImpact && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] text-[#364153]">Level:</span>
+                    <span className={cn('rounded px-2 py-0.5 text-[12px] font-medium',
+                      cr.estimatedImpact === 'low'    ? 'bg-[#F0FDF4] text-[#15803D]' :
+                      cr.estimatedImpact === 'medium' ? 'bg-[#FFFBEB] text-[#B45309]' :
+                      'bg-[#FFF1F2] text-[#C70036]'
+                    )}>{cr.estimatedImpact}</span>
+                  </div>
+                )}
+                {cr.structuredSections?.impact?.clashCheckRequired && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] text-[#364153]">Clash Check Required:</span>
+                    <span className="rounded px-2 py-0.5 text-[12px] font-medium bg-[#FFF1F2] text-[#C70036]">Yes</span>
+                  </div>
+                )}
+                {cr.affectedModels?.length > 0 && (
+                  <div>
+                    <span className="text-[13px] text-[#364153]">Affected Models:</span>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {cr.affectedModels?.map((id, i) => {
+                        const f = modelFiles.find(m => m.id === id);
+                        return (
+                          <span key={i} className="inline-flex items-center gap-1 rounded-[6px] bg-[#F3F4F6] px-2 py-1 text-[12px] text-[#364153]">
+                            <FileIcon className="text-[#6A7282]" />{f ? f.name : id}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {cr.reviewers.length > 0 && (
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Reviewers</p>
-              <div className="flex flex-wrap gap-2">
-                {cr.reviewers.map(id => {
-                  const m = teamMembers.find(x => x.userId === id);
-                  return m ? (
-                    <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-1 pr-2.5 py-0.5 text-[12px] text-[#166534]">
-                      <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />{m.user?.fullName}
-                    </span>
-                  ) : <span key={id} className="text-[13px] text-[#6A7282]">{id}</span>;
-                })}
-              </div>
-            </div>
-          )}
-
-          {cr.affectedModels.length > 0 && (
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Affected Models</p>
-              <div className="flex flex-wrap gap-1.5">
-                {cr.affectedModels.map((id, i) => {
-                  const f = modelFiles.find(m => m.id === id);
-                  return (
-                    <span key={i} className="inline-flex items-center gap-1.5 rounded-[6px] bg-[#F3F4F6] px-2.5 py-1 text-[12px] text-[#364153]">
-                      <FileIcon className="text-[#6A7282]" />{f ? f.name : id}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {cr.attachments.length > 0 && (
+          {/* ── Attachments ─────────────────────────────────────────────────── */}
+          {cr.attachments?.length > 0 && (
             <div>
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Attachments</p>
               <div className="rounded-[10px] border border-[#E5E7EB] divide-y divide-[#F3F4F6]">
-                {cr.attachments.map((a, i) => (
+                {cr.attachments?.map((a, i) => (
                   <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                     <FileIcon className="shrink-0 text-[#6A7282]" />
                     <div className="min-w-0 flex-1">
@@ -1055,12 +1441,264 @@ function DetailModal({
             </div>
           )}
 
-          {/* Status actions — only for admin / creator / reviewer */}
-          {canUpdateStatus && cr.status !== 'completed' && cr.status !== 'rejected' && (
+          {/* ── Section: Linked Tasks ───────────────────────────────────────── */}
+          <div className="border-t border-[#E5E7EB] pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                </svg>
+                <span className="text-sm font-semibold text-foreground">Linked Tasks</span>
+                {linkedTasks.length > 0 && (
+                  <span className="ml-1 inline-flex h-5 items-center rounded-full bg-[#EEF2FF] px-2 text-[10px] font-medium text-[#432DD7]">{linkedTasks.length}</span>
+                )}
+              </div>
+              {canEdit && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setNewTaskTitle(`[${cr.crId}] ${cr.title}`); setNewTaskDescription(cr.description); setShowCreateTask(true); }}
+                    className="rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                  >
+                    + Create Task
+                  </button>
+                  <button
+                    onClick={() => setShowLinkTask(true)}
+                    className="rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                  >
+                    Link Existing
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {loadingTasks ? (
+              <div className="flex items-center justify-center py-4">
+                <svg className="h-4 w-4 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              </div>
+            ) : linkedTasks.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground/60 text-center py-4">No linked tasks. Create a task or link an existing one to track execution.</p>
+            ) : (
+              <div className="space-y-2">
+                {linkedTasks.map(task => {
+                  const assignee = teamMembers.find(m => m.userId === task.assigneeId || task.assigneeIds?.includes(m.userId));
+                  return (
+                    <div
+                      key={task.publicId}
+                      className="flex items-center justify-between rounded-[8px] border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3 hover:bg-[#F3F4F6] cursor-pointer transition-colors"
+                      onClick={() => window.location.href = `/projects/${projectPublicId}?tab=tasks&taskId=${task.id || task.publicId}`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-8 w-8 rounded-[8px] bg-[#EEF2FF] flex items-center justify-center shrink-0">
+                          <svg className="h-4 w-4 text-[#432DD7]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                          </svg>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium text-[#101828] truncate">{task.title}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[11px] text-[#6A7282]">{resolveTaskStatusLabel(task.status)}</span>
+                            {assignee && <span className="text-[11px] text-[#6A7282]">· {assignee.user?.fullName}</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleUnlinkTask(task.id || task.publicId); }}
+                          className="text-[#6A7282] hover:text-[#DC2626] text-[16px] leading-none"
+                          title="Unlink task"
+                        >×</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Create Task inline form ────────────────────────────────────── */}
+          {showCreateTask && (
+            <div className="rounded-[10px] border border-[#BFDBFE] bg-[#EFF6FF] p-4 space-y-3">
+              <p className="text-[13px] font-semibold text-[#1D4ED8]">Create Task from CR</p>
+              <input type="text" placeholder="Task title" value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)}
+                className="w-full h-[36px] rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] focus:border-[#155DFC] focus:outline-none" />
+              <textarea placeholder="Task description" value={newTaskDescription} onChange={e => setNewTaskDescription(e.target.value)} rows={2}
+                className="w-full rounded-[8px] border border-[#E5E7EB] px-3 py-2 text-[13px] resize-none focus:border-[#155DFC] focus:outline-none" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-[#6A7282] block mb-1">Due Date</label>
+                  <input type="date" value={newTaskDueDate} onChange={e => setNewTaskDueDate(e.target.value)}
+                    min={getTodayLocalDateString()}
+                    className="w-full h-[36px] rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] focus:border-[#155DFC] focus:outline-none [color-scheme:light]" />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowCreateTask(false)} className="px-3 py-1.5 text-[12px] text-[#364153] hover:text-[#101828]">Cancel</button>
+                <button onClick={handleCreateTask} disabled={creatingTask}
+                  className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#155DFC] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-blue-700 disabled:opacity-60">
+                  {creatingTask ? <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : ''}
+                  {creatingTask ? 'Creating…' : 'Create & Link'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Link Existing Task modal ─────────────────────────────────────── */}
+          {showLinkTask && (
+            <div className="rounded-[10px] border border-[#E5E7EB] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[13px] font-semibold text-[#101828]">Link Existing Task</p>
+                <button onClick={() => setShowLinkTask(false)} className="text-[#6A7282] hover:text-[#101828] text-[18px] leading-none">×</button>
+              </div>
+              <input type="text" placeholder="Search tasks…" value={taskSearch} onChange={e => setTaskSearch(e.target.value)}
+                className="w-full h-[36px] rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] focus:border-[#155DFC] focus:outline-none" />
+              {loadingAvailable ? (
+                <div className="flex justify-center py-4"><svg className="h-4 w-4 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg></div>
+              ) : (
+                <div className="max-h-[200px] overflow-y-auto space-y-1.5">
+                  {availableTasks
+                    .filter(t => !taskSearch || t.title.toLowerCase().includes(taskSearch.toLowerCase()))
+                    .slice(0, 20)
+                    .map(t => (
+                      <button key={t.id || t.publicId} onClick={() => handleLinkTask(t.id || t.publicId)}
+                        className="w-full flex items-center justify-between rounded-[8px] border border-[#E5E7EB] px-3 py-2.5 text-left hover:bg-[#F9FAFB] transition-colors disabled:opacity-60"
+                        disabled={linkingTask}>
+                        <div className="min-w-0">
+                          <p className="text-[13px] text-[#101828] truncate">{t.title}</p>
+                          <p className="text-[11px] text-[#6A7282]">{resolveTaskStatusLabel(t.status)}</p>
+                        </div>
+                        <span className="text-[#155DFC] text-[12px] shrink-0 ml-2">Link</span>
+                      </button>
+                    ))
+                  }
+                  {availableTasks.length === 0 && (
+                    <p className="text-[13px] text-[#6A7282] text-center py-4">No available tasks found.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Result Attachments (completed CRs) ──────────────────────────── */}
+          {(cr.status === 'completed' || cr.status === 'published') && cr.resultAttachments && cr.resultAttachments.length > 0 && (
             <div>
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Result Files</p>
+              <div className="rounded-[10px] border border-[#E5E7EB] divide-y divide-[#F3F4F6]">
+                {cr.resultAttachments?.map((a, i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                    <FileIcon className="shrink-0 text-[#6A7282]" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[14px] text-[#101828] truncate">{a.name}</p>
+                      <p className="text-[11px] text-[#6A7282]">{fmtSize(a.size)}</p>
+                    </div>
+                    {a.url && (
+                      <a href={a.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[#155DFC] hover:underline text-[12px]">Download</a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Section: Version History ─────────────────────────────────────── */}
+          <div className="border-t border-[#E5E7EB] pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span className="text-sm font-semibold text-foreground">Version History</span>
+                {versions.length > 0 && (
+                  <span className="ml-1 inline-flex h-5 items-center rounded-full bg-[#ECFDF5] px-2 text-[10px] font-medium text-[#007A55]">{versions.length}</span>
+                )}
+              </div>
+              {canUpdateStatus && (cr.status === 'approved' || cr.status === 'completed') && (
+                <button
+                  onClick={() => setShowCreateVersion(true)}
+                  className="rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-1.5 text-[12px] text-[#364153] hover:bg-[#F9FAFB] transition-colors"
+                >
+                  + Create Version
+                </button>
+              )}
+            </div>
+
+            {loadingVersions ? (
+              <div className="flex items-center justify-center py-4">
+                <svg className="h-4 w-4 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              </div>
+            ) : versions.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground/60 text-center py-4">No versions yet. Mark the CR as completed to create a version snapshot.</p>
+            ) : (
+              <div className="space-y-2">
+                {versions.map(v => (
+                  <details key={v.publicId} className="rounded-[8px] border border-[#E5E7EB]">
+                    <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-[#F9FAFB] list-none">
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-[8px] bg-[#ECFDF5] flex items-center justify-center">
+                          <svg className="h-4 w-4 text-[#007A55]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-[13px] font-medium text-[#101828]">{v.versionLabel || `Version ${v.versionNumber}`}</p>
+                          <p className="text-[11px] text-[#6A7282]">{new Date(v.createdAt).toLocaleDateString()} {new Date(v.createdAt).toLocaleTimeString()}</p>
+                        </div>
+                      </div>
+                      <svg className="h-4 w-4 text-[#6A7282] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+                      </svg>
+                    </summary>
+                    <div className="px-4 pb-4 border-t border-[#F3F4F6] pt-3 space-y-2">
+                      {v.snapshot && (
+                        <>
+                          <p className="text-[12px] font-medium text-[#364153]">{v.snapshot.title}</p>
+                          {v.snapshot.description && <p className="text-[12px] text-[#6A7282]">{v.snapshot.description}</p>}
+                          {v.snapshot.completedAt && (
+                            <p className="text-[11px] text-[#6A7282]">Completed: {new Date(v.snapshot.completedAt).toLocaleDateString()}</p>
+                          )}
+                        </>
+                      )}
+                      {v.resultFiles && v.resultFiles.length > 0 && (
+                        <div className="pt-1">
+                          <p className="text-[11px] font-semibold text-[#6A7282] mb-1">Result Files:</p>
+                          {v.resultFiles.map((f, i) => (
+                            <a key={i} href={f.url} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-2 text-[12px] text-[#155DFC] hover:underline">
+                              <FileIcon />{f.name}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Create Version form ─────────────────────────────────────────── */}
+          {showCreateVersion && (
+            <div className="rounded-[10px] border border-[#BFDBFE] bg-[#EFF6FF] p-4 space-y-3">
+              <p className="text-[13px] font-semibold text-[#1D4ED8]">Create Version Snapshot</p>
+              <input type="text" placeholder="Version label (e.g. CR-001 Final)" value={versionLabel}
+                onChange={e => setVersionLabel(e.target.value)}
+                className="w-full h-[36px] rounded-[8px] border border-[#E5E7EB] px-3 text-[13px] focus:border-[#155DFC] focus:outline-none" />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowCreateVersion(false)} className="px-3 py-1.5 text-[12px] text-[#364153]">Cancel</button>
+                <button onClick={handleCreateVersion} disabled={creatingVersion}
+                  className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#007A55] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
+                  {creatingVersion ? <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> : ''}
+                  {creatingVersion ? 'Creating…' : 'Create Version'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Status actions ─────────────────────────────────────────────── */}
+          {canUpdateStatus && cr.status !== 'completed' && cr.status !== 'published' && cr.status !== 'rejected' && (
+            <div className="border-t border-[#E5E7EB] pt-4">
               <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-2">Update Status</p>
               <div className="flex flex-wrap gap-2">
-                {(['pending','in-progress','approved','completed','rejected'] as const)
+                {(['pending','in-progress','approved','completed','published','rejected'] as const)
                   .filter(s => s !== cr.status)
                   .map(s => {
                     const c = STATUS_CFG[s];
@@ -1074,7 +1712,7 @@ function DetailModal({
             </div>
           )}
           {!canUpdateStatus && (
-            <p className="text-[12px] text-[#99A1AF]">Only admins and the CR creator can update status.</p>
+            <p className="text-[12px] text-[#99A1AF] border-t border-[#E5E7EB] pt-4">Only admins and the CR creator can update status.</p>
           )}
 
           {/* ── Comments Section ──────────────────────────────────────────── */}
@@ -1218,7 +1856,7 @@ function DetailModal({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ChangesTab({ projectPublicId, onActivityAdded }: ChangesTabProps) {
+export default function ChangesTab({ projectPublicId, onActivityAdded, initialCrId }: ChangesTabProps) {
   const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
   const [loadingCR, setLoadingCR]           = useState(true);
   const [disciplines, setDisciplines]       = useState<Discipline[]>([]);
@@ -1227,12 +1865,22 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
   const [loadingFiles, setLoadingFiles]     = useState(false);
   const [currentUserId, setCurrentUserId]   = useState('');
   const [currentRole, setCurrentRole]       = useState<'admin' | 'member' | 'viewer'>('member');
-  const [filter, setFilter]                 = useState<'all'|'pending'|'in-progress'|'approved'>('all');
+  const [filter, setFilter]                 = useState<'all'|'pending'|'in-progress'|'approved'|'completed'|'published'>('all');
   const [search, setSearch]                 = useState('');
   const [showCreate, setShowCreate]         = useState(false);
   const [detailCR, setDetailCR]             = useState<ChangeRequest | null>(null);
   const [editCR, setEditCR]                 = useState<ChangeRequest | null>(null);
   const [deleteCR, setDeleteCR]             = useState<ChangeRequest | null>(null);
+  const [workflowStages, setWorkflowStages] = useState<{ id: string; name: string; color?: string }[]>([]);
+
+  // Open detail modal when initialCrId is provided via URL
+  useEffect(() => {
+    if (!initialCrId) return;
+    const cr = changeRequests.find(c => c.publicId === initialCrId);
+    if (cr) {
+      setDetailCR(cr);
+    }
+  }, [initialCrId, changeRequests]);
 
   const loadCR = useCallback(async () => {
     setLoadingCR(true);
@@ -1251,6 +1899,12 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
           estimatedDuration:   cr.estimatedDuration ?? '',
           deadline:            cr.deadline         ?? null,
           detailedDescription: cr.detailedDescription ?? '',
+          linkedTaskIds:       Array.isArray(cr.linkedTaskIds)   ? cr.linkedTaskIds   : [],
+          primaryTaskId:       cr.primaryTaskId ?? null,
+          affectedDocuments:   Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
+          derivedPackageIds:   Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
+          structuredSections:  cr.structuredSections ?? null,
+          resultAttachments:   Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
         }));
         setChangeRequests(normalized);
       }
@@ -1294,6 +1948,23 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
         if (d?.currentUserId) setCurrentUserId(d.currentUserId);
         if (d?.currentRole)   setCurrentRole(d.currentRole as 'admin' | 'member' | 'viewer');
       }
+      // Fetch workflow stages for task status labels
+      try {
+        const wfRes = await apiFetch('/api/projects/workflow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: projectPublicId }),
+        });
+        if (wfRes.ok) {
+          const wf = await wfRes.json();
+          const stages: { id: string; name: string; color?: string }[] = (wf?.data?.stages || []).map((s: any) => ({
+            id: String(s.id || ''),
+            name: String(s.label || s.name || ''),
+            color: s.color || undefined,
+          }));
+          setWorkflowStages(stages);
+        }
+      } catch { /* silent */ }
     } catch { /* silent */ }
     finally { setLoadingFiles(false); }
   }, [projectPublicId]);
@@ -1301,12 +1972,14 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
   useEffect(() => { loadCR(); loadMeta(); }, [loadCR, loadMeta]);
 
   const filtered = changeRequests.filter(cr => {
-    if (filter === 'pending'     && cr.status !== 'pending')     return false;
-    if (filter === 'in-progress' && cr.status !== 'in-progress') return false;
-    if (filter === 'approved'    && cr.status !== 'approved')    return false;
+    if (filter === 'pending'      && cr.status !== 'pending')      return false;
+    if (filter === 'in-progress'  && cr.status !== 'in-progress')  return false;
+    if (filter === 'approved'     && cr.status !== 'approved')     return false;
+    if (filter === 'completed'    && cr.status !== 'completed')    return false;
+    if (filter === 'published'    && cr.status !== 'published')    return false;
     if (search) {
       const q = search.toLowerCase();
-      return cr.title.toLowerCase().includes(q) || cr.crId.toLowerCase().includes(q) || cr.description.toLowerCase().includes(q);
+      return cr.title?.toLowerCase().includes(q) || cr.crId?.toLowerCase().includes(q) || cr.description?.toLowerCase().includes(q);
     }
     return true;
   });
@@ -1325,15 +1998,21 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
     // Normalize all array fields so the list never crashes on missing data
     const safe: ChangeRequest = {
       ...cr,
-      affectedModels:  Array.isArray(cr.affectedModels)  ? cr.affectedModels  : [],
-      assignedTo:      Array.isArray(cr.assignedTo)      ? cr.assignedTo      : [],
-      reviewers:       Array.isArray(cr.reviewers)        ? cr.reviewers       : [],
-      attachments:     Array.isArray(cr.attachments)     ? cr.attachments     : [],
-      estimatedImpact: cr.estimatedImpact ?? null,
-      estimatedCost:   cr.estimatedCost   ?? null,
-      estimatedDuration: cr.estimatedDuration ?? '',
-      deadline:        cr.deadline        ?? null,
+      affectedModels:      Array.isArray(cr.affectedModels)      ? cr.affectedModels      : [],
+      assignedTo:         Array.isArray(cr.assignedTo)         ? cr.assignedTo         : [],
+      reviewers:           Array.isArray(cr.reviewers)           ? cr.reviewers           : [],
+      attachments:        Array.isArray(cr.attachments)         ? cr.attachments         : [],
+      estimatedImpact:    cr.estimatedImpact ?? null,
+      estimatedCost:      cr.estimatedCost   ?? null,
+      estimatedDuration:  cr.estimatedDuration ?? '',
+      deadline:          cr.deadline        ?? null,
       detailedDescription: cr.detailedDescription ?? '',
+      linkedTaskIds:     Array.isArray(cr.linkedTaskIds)     ? cr.linkedTaskIds     : [],
+      primaryTaskId:      cr.primaryTaskId ?? null,
+      affectedDocuments:  Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
+      derivedPackageIds:  Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
+      structuredSections: cr.structuredSections ?? null,
+      resultAttachments:  Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
     };
     setChangeRequests(p => [safe, ...p]);
     // Notify parent to refresh activities
@@ -1347,7 +2026,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
   const total      = changeRequests.length;
   const pending    = changeRequests.filter(c => c.status === 'pending').length;
   const inProgress = changeRequests.filter(c => c.status === 'in-progress').length;
-  const approved   = changeRequests.filter(c => c.status === 'approved' || c.status === 'completed').length;
+  const approved   = changeRequests.filter(c => c.status === 'approved' || c.status === 'completed' || c.status === 'published').length;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
@@ -1358,9 +2037,9 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
         {currentRole !== 'viewer' && (
         <button
           onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#155DFC] h-10 px-5 min-w-[150px] text-[13px] font-medium text-white hover:bg-blue-700 transition-colors"
         >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
           </svg>
           New Request
@@ -1386,7 +2065,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
-          {(['all','pending','in-progress','approved'] as const).map(f => (
+          {(['all','pending','in-progress','approved','completed','published'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={cn('px-3 py-2 rounded-[10px] text-[12px] transition-colors capitalize',
                 filter === f ? 'bg-[#F0F9FF] text-[#0069A8]' : 'bg-white border border-[#E5E7EB] text-[#364153] hover:bg-gray-50'
@@ -1429,16 +2108,16 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
             <p className="text-[14px] font-medium text-[#101828]">{changeRequests.length === 0 ? 'No change requests yet' : 'No results match the filter'}</p>
             <p className="text-[12px] text-[#6A7282] mt-1">{changeRequests.length === 0 ? 'Create your first change request using the button above' : 'Try adjusting your search or filter'}</p>
             {changeRequests.length === 0 && (
-              <button onClick={() => setShowCreate(true)} className="mt-4 inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] text-white hover:bg-blue-700 transition-colors">New Request</button>
+              <button onClick={() => setShowCreate(true)} className="mt-4 inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#155DFC] px-5 min-w-[150px] py-2 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors">New Request</button>
             )}
           </div>
         ) : (
           filtered.map((cr, idx) => {
-            const sc   = STATUS_CFG[cr.status];
-            const pc   = PRIORITY_CFG[cr.priority];
+            const sc   = STATUS_CFG[cr.status] ?? { label: cr.status, bg: 'bg-gray-100', text: 'text-gray-700' };
+            const pc   = PRIORITY_CFG[cr.priority] ?? { label: cr.priority, bg: 'bg-gray-100', text: 'text-gray-700' };
             const disc = disciplines.find(d => d.id === cr.disciplineId);
-            const assigneeMembers  = cr.assignedTo.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
-            const reviewerMembers  = cr.reviewers.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
+            const assigneeMembers  = cr.assignedTo?.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
+            const reviewerMembers  = cr.reviewers?.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
             const canEdit = currentRole === 'admin' || cr.createdBy === currentUserId;
 
             return (
@@ -1461,14 +2140,14 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
                   {cr.description && <p className="text-[13px] text-[#4A5565] mb-3 line-clamp-2">{cr.description}</p>}
 
                   {/* Affected models */}
-                  {cr.affectedModels.length > 0 && (
+                  {cr.affectedModels?.length > 0 && (
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
                       <span className="text-[11px] text-[#6A7282]">Models:</span>
-                      {cr.affectedModels.slice(0, 3).map((id, i) => {
+                      {cr.affectedModels?.slice(0, 3).map((id, i) => {
                         const f = modelFiles.find(m => m.id === id);
                         return <span key={i} className="inline-flex items-center gap-1 rounded bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#4A5565]"><FileIcon />{f ? f.name : id}</span>;
                       })}
-                      {cr.affectedModels.length > 3 && <span className="rounded bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#6A7282]">+{cr.affectedModels.length - 3} more</span>}
+                      {cr.affectedModels?.length > 3 && <span className="rounded bg-[#F3F4F6] px-2 py-0.5 text-[11px] text-[#6A7282]">+{cr.affectedModels?.length - 3} more</span>}
                     </div>
                   )}
 
@@ -1510,12 +2189,12 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
 
                   {/* Meta row */}
                   <div className="flex items-center gap-3 text-[11px] text-[#6A7282] mt-2">
-                    {cr.attachments.length > 0 && (
+                    {cr.attachments?.length > 0 && (
                       <span className="flex items-center gap-1">
                         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/>
                         </svg>
-                        {cr.attachments.length} file{cr.attachments.length > 1 ? 's' : ''}
+                        {cr.attachments?.length} file{cr.attachments?.length > 1 ? 's' : ''}
                       </span>
                     )}
                     <span>{fmtRel(cr.createdAt)}</span>
@@ -1586,8 +2265,12 @@ export default function ChangesTab({ projectPublicId, onActivityAdded }: Changes
           projectPublicId={projectPublicId}
           currentUserId={currentUserId}
           currentRole={currentRole}
+          workflowStages={workflowStages}
           onClose={() => setDetailCR(null)}
           onStatusChange={handleStatusChange}
+          onTaskLinked={(taskId) => setDetailCR(prev => prev ? { ...prev, linkedTaskIds: [...prev.linkedTaskIds, taskId] } : prev)}
+          onTaskUnlinked={(taskId) => setDetailCR(prev => prev ? { ...prev, linkedTaskIds: prev.linkedTaskIds.filter(id => id !== taskId) } : prev)}
+          onRefreshCR={(fresh) => setDetailCR(fresh)}
         />
       )}
       {editCR && (

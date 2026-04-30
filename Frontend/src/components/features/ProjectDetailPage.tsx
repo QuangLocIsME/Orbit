@@ -395,7 +395,13 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 );
 
 function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
+  const [initialCrId, setInitialCrId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setInitialCrId(params.get('crId') ?? undefined);
+  }, []);
   const [isFavorite, setIsFavorite] = useState(project.isFavorite || false);
   const [projectCoverImageUrl, setProjectCoverImageUrl] = useState(project.coverImageUrl || '');
   const [isUploadingCoverImage, setIsUploadingCoverImage] = useState(false);
@@ -563,7 +569,28 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     fetchProjectOverviewData();
     return () => { cancelled = true; };
   }, [project.publicId, settingsUpdated, activitiesVersion]);
-  
+
+  // WebSocket realtime — update team member online status
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleUserOnline = ({ userId }: { userId: string }) => {
+      setTeamMembers(prev => prev.map(m => m.id === userId ? { ...m, isOnline: true } : m));
+    };
+
+    const handleUserOffline = ({ userId }: { userId: string }) => {
+      setTeamMembers(prev => prev.map(m => m.id === userId ? { ...m, isOnline: false } : m));
+    };
+
+    socket.on('user:online', handleUserOnline);
+    socket.on('user:offline', handleUserOffline);
+
+    return () => {
+      socket.off('user:online', handleUserOnline);
+      socket.off('user:offline', handleUserOffline);
+    };
+  }, []);
+
   // Handle settings updated - refresh last activity timestamp
   const handleSettingsUpdated = () => {
     setSettingsUpdated(prev => prev + 1);
@@ -1080,7 +1107,58 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   useEffect(() => {
     if (activeTab !== 'tasks') return;
     loadProjectTasks();
-  }, [activeTab, loadProjectTasks]);
+
+    const socket = getSocket();
+
+    // Handle status change — update task in place or refresh board
+    const handleTaskStatusChanged = ({ projectId, taskId, status }: { projectId: string; taskId: string; status: string }) => {
+      console.debug('[WS] task:status-changed received', { projectId, taskId, status, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      setTasksData(prev => {
+        const exists = prev.some(t => t.id === taskId);
+        if (exists) {
+          return prev.map(t => t.id === taskId ? { ...t, status } : t);
+        }
+        loadProjectTasks();
+        return prev;
+      });
+    };
+
+    // Handle task created — refresh board
+    const handleTaskCreated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:created received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
+    // Handle task deleted — refresh board
+    const handleTaskDeleted = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:deleted received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
+    // Handle new comment — refresh board to update comment count
+    const handleTaskCommented = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:commented received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
+    console.debug('[WS] Registering task listeners for project:', project.publicId);
+    socket.on('task:status-changed', handleTaskStatusChanged);
+    socket.on('task:created', handleTaskCreated);
+    socket.on('task:deleted', handleTaskDeleted);
+    socket.on('task:commented', handleTaskCommented);
+
+    return () => {
+      console.debug('[WS] Unregistering task listeners for project:', project.publicId);
+      socket.off('task:status-changed', handleTaskStatusChanged);
+      socket.off('task:created', handleTaskCreated);
+      socket.off('task:deleted', handleTaskDeleted);
+      socket.off('task:commented', handleTaskCommented);
+    };
+  }, [activeTab, loadProjectTasks, project.publicId]);
 
   const handleTaskStatusChange = useCallback((taskId: string, newStatus: string) => {
     setTasksData(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as any } : t));
@@ -1122,6 +1200,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
               id: String(s.id || ''),
               name: String(s.label || s.name || ''),
               description: String(s.description || ''),
+              color: s.color || undefined,
             })));
           }
           // Set workflow template ID if available
@@ -1679,7 +1758,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         )}
         {/* Changes Tab */}
         {activeTab === 'changes' && (
-          <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} />
+          <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} initialCrId={initialCrId} />
         )}
         {activeTab === 'changes_DISABLED_INLINE' && (
           <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

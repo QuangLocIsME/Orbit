@@ -10,6 +10,7 @@ import TaskBoard, { type WorkflowStage } from './TaskBoard';
 import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
+import { getSocket } from '@/lib/socket';
 
 type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 
@@ -47,13 +48,15 @@ interface TaskItem {
   priority: 'urgent' | 'high' | 'medium' | 'low';
   status: string;
   tags: string[];
-  linkedItem?: { type: 'link'; name: string };
+  linkedItem?: { type: 'link'; name: string; crId?: string };
   comments: number;
   attachments: number;
   dueDate: string;
   assigneeId: string;
   assigneeIds?: string[];
   reviewerIds?: string[];
+  projectId?: string;
+  affectedModels?: string[];
 }
 
 interface EditTaskData {
@@ -68,6 +71,7 @@ interface EditTaskData {
   dueDate: string;
   tags: string[];
   linkedItems: string;
+  affectedModels?: string[];
 }
 type CalendarTaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
 type LinkedSuggestionItem = { label: string; value: string };
@@ -121,16 +125,18 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   const [projectTaskTags, setProjectTaskTags] = useState<string[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<EditTaskData | null>(null);
+  const [crTitles, setCrTitles] = useState<Record<string, string>>({});
 
   // Open task from URL query param (e.g., from notification link)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const taskParam = params.get('taskId');
-    if (taskParam && !selectedTaskId) {
-      setSelectedTaskId(taskParam);
-    }
-  }, [selectedTaskId]);
+  // Disabled: causes dialog to auto-open when navigating to Tasks tab via URL
+  // useEffect(() => {
+  //   if (typeof window === 'undefined') return;
+  //   const params = new URLSearchParams(window.location.search);
+  //   const taskParam = params.get('taskId');
+  //   if (taskParam && !selectedTaskId) {
+  //     setSelectedTaskId(taskParam);
+  //   }
+  // }, [selectedTaskId]);
   const [selectedWorkflowStages, setSelectedWorkflowStages] = useState<WorkflowStage[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
   const [linkedItemSuggestions, setLinkedItemSuggestions] = useState<LinkedSuggestionItem[]>([]);
@@ -271,6 +277,33 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
 
       const payload = await response.json();
       const rawTasks = Array.isArray(payload?.data) ? payload.data : [];
+
+      // Build CR title lookup from the existing tasks (linkedUrl starts with "cr:")
+      const titlesMap: Record<string, string> = {};
+      for (const t of rawTasks) {
+        const linkedUrl = String(t.linkedUrl || '');
+        const crMatch = linkedUrl.match(/^cr:([a-zA-Z0-9-]+)$/);
+        if (crMatch && !titlesMap[crMatch[1]]) {
+          titlesMap[crMatch[1]] = t.linkedUrlName || t.crTitle || crMatch[1];
+        }
+      }
+      // Fetch CRs for titles if we have linkedUrl entries
+      const crIds = Object.keys(titlesMap);
+      if (crIds.length > 0) {
+        try {
+          const crRes = await apiFetch(`/api/projects/${scope.projectId}/change-requests`);
+          if (crRes.ok) {
+            const crPayload = await crRes.json();
+            const crList = Array.isArray(crPayload?.data) ? crPayload.data : [];
+            for (const cr of crList) {
+              if (titlesMap[cr.publicId] === cr.publicId) {
+                titlesMap[cr.publicId] = cr.title || cr.crId || cr.publicId;
+              }
+            }
+          }
+        } catch { /* silent */ }
+      }
+      setCrTitles(prev => ({ ...prev, ...titlesMap }));
       const scopedTasks = rawTasks.filter((task: any) => {
         const taskPackageId = String(task?.packageId || '').trim();
         if (scope.type === 'package') {
@@ -279,19 +312,29 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
         return taskPackageId.length === 0;
       });
 
-      const mapped: TaskItem[] = scopedTasks.map((t: any) => ({
-        id: String(t.publicId || t.id || ''),
-        title: String(t.title || 'Untitled task'),
-        description: String(t.description || ''),
-        priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as TaskItem['priority'],
-        status: String(t.status || 'backlog'),
-        tags: Array.isArray(t.tags) ? t.tags : [],
-        linkedItem: t.linkedUrl ? { type: 'link', name: t.linkedUrl } : undefined,
-        comments: Number(t.commentsCount || 0),
-        attachments: Number(t.attachmentsCount || 0),
-        dueDate: t.dueDate || '',
-        assigneeId: String(t.assigneeId || ''),
-      }));
+      const mapped: TaskItem[] = scopedTasks.map((t: any) => {
+        const linkedUrl = String(t.linkedUrl || '');
+        const crMatch = linkedUrl.match(/^cr:([a-zA-Z0-9-]+)$/);
+        const crId = crMatch ? crMatch[1] : undefined;
+        const crTitle = crId ? (titlesMap[crId] || crId) : undefined;
+        return {
+          id: String(t.publicId || t.id || ''),
+          title: String(t.title || 'Untitled task'),
+          description: String(t.description || ''),
+          priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as TaskItem['priority'],
+          status: String(t.status || 'backlog'),
+          tags: Array.isArray(t.tags) ? t.tags : [],
+          linkedItem: linkedUrl ? { type: 'link', name: crTitle || crId || linkedUrl, crId } : undefined,
+          comments: Number(t.commentsCount || 0),
+          attachments: Number(t.attachmentsCount || 0),
+          dueDate: t.dueDate || '',
+          assigneeId: String(t.assigneeId || ''),
+          assigneeIds: Array.isArray(t.assigneeIds) ? t.assigneeIds : [],
+          reviewerIds: Array.isArray(t.reviewerIds) ? t.reviewerIds : [],
+          projectId: scope.projectId,
+          affectedModels: Array.isArray(t.affectedModels) ? t.affectedModels : [],
+        };
+      });
 
       setTasksData(mapped);
     } catch {
@@ -304,6 +347,56 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
+
+  // WebSocket realtime — refresh task board when task events occur
+  useEffect(() => {
+    const socket = getSocket();
+    console.debug('[WS] ScopedTasksPanel: Registering listeners for project:', scope.projectId);
+
+    const handleTaskStatusChanged = ({ projectId, taskId, status }: { projectId: string; taskId: string; status: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:status-changed', { projectId, taskId, status, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      setTasksData(prev => {
+        const exists = prev.some(t => t.id === taskId);
+        if (exists) {
+          return prev.map(t => t.id === taskId ? { ...t, status } : t);
+        }
+        loadTasks();
+        return prev;
+      });
+    };
+
+    const handleTaskCreated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:created', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleTaskDeleted = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:deleted', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleTaskCommented = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:commented', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    socket.on('task:status-changed', handleTaskStatusChanged);
+    socket.on('task:created', handleTaskCreated);
+    socket.on('task:deleted', handleTaskDeleted);
+    socket.on('task:commented', handleTaskCommented);
+
+    return () => {
+      console.debug('[WS] ScopedTasksPanel: Unregistering listeners for project:', scope.projectId);
+      socket.off('task:status-changed', handleTaskStatusChanged);
+      socket.off('task:created', handleTaskCreated);
+      socket.off('task:deleted', handleTaskDeleted);
+      socket.off('task:commented', handleTaskCommented);
+    };
+  }, [scope.projectId, loadTasks]);
 
   const loadProjectWorkflowData = useCallback(async () => {
     try {
@@ -326,6 +419,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
           id: String(s.id || ''),
           name: String(s.label || s.name || ''),
           description: String(s.description || ''),
+          color: s.color || undefined,
         })));
       }
       if (data.workflowTemplateId) {
@@ -406,6 +500,15 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     };
   }, [loadProjectWorkflowData]);
 
+  // Reload tasks when a task is created from the Changes tab DetailModal
+  useEffect(() => {
+    const handleTaskCreated = () => {
+      void loadTasks();
+    };
+    window.addEventListener('task-created', handleTaskCreated);
+    return () => window.removeEventListener('task-created', handleTaskCreated);
+  }, [loadTasks]);
+
   const filteredTasks = useMemo(() => {
     const base = tasksData.filter((t) => t.title.toLowerCase().includes(tasksSearchQuery.toLowerCase()));
     return [...base].sort((a, b) => {
@@ -482,7 +585,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             if (!crId || !title) continue;
             nextSuggestions.push({
               label: `[Change Request] ${title}`,
-              value: `${scopedPrefix}?tab=changes&crId=${encodeURIComponent(crId)}`,
+              value: crId,
             });
           }
         }
@@ -552,9 +655,20 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
         setTasksData(previousTasks);
-        toast.error('Failed to update task status');
+        toast.error(data.message || 'Failed to update task status');
+        return;
+      }
+
+      // If task is pending review (CR-linked task moved to last stage),
+      // update UI to show 'pending-review' instead of the target stage.
+      if (data.pendingReview) {
+        setTasksData((prev) => prev.map((t) => t.id === taskId ? { ...t, status: 'pending-review' } : t));
+        toast.success(data.message || 'Task submitted for review');
+        return;
       }
     } catch {
       setTasksData(previousTasks);
@@ -732,7 +846,14 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
               onEditRequest={(task) => {
                 if (!canManageTask) return;
                 const fullTask = tasksData.find(t => t.id === task.id);
-                if (fullTask) {
+                if (!fullTask) return;
+                const packageId = scope.type === 'package' ? scope.packageId : undefined;
+                apiFetch('/api/tasks/detail', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ projectId: scope.projectId, packageId, taskId: task.id }),
+                }).then(res => res.json()).then(data => {
+                  const existingAttachments = Array.isArray(data?.data?.attachments) ? data.data.attachments : [];
                   setEditingTask({
                     id: fullTask.id,
                     title: fullTask.title,
@@ -744,10 +865,28 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
                     reviewerIds: fullTask.reviewerIds,
                     dueDate: fullTask.dueDate,
                     tags: fullTask.tags,
-                    linkedItems: fullTask.linkedItem?.name || '',
+                    linkedItems: fullTask.linkedItem?.crId || '',
+                    affectedModels: fullTask.affectedModels,
+                    existingAttachments,
                   });
                   setIsNewTaskModalOpen(true);
-                }
+                }).catch(() => {
+                  setEditingTask({
+                    id: fullTask.id,
+                    title: fullTask.title,
+                    status: fullTask.status,
+                    priority: fullTask.priority,
+                    description: fullTask.description,
+                    assigneeId: fullTask.assigneeId,
+                    assigneeIds: fullTask.assigneeIds,
+                    reviewerIds: fullTask.reviewerIds,
+                    dueDate: fullTask.dueDate,
+                    tags: fullTask.tags,
+                    linkedItems: fullTask.linkedItem?.crId || '',
+                    affectedModels: fullTask.affectedModels,
+                  });
+                  setIsNewTaskModalOpen(true);
+                });
               }}
               onDeleteRequest={(taskId) => {
                 if (!canManageTask) return;
@@ -887,12 +1026,15 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
         )}
 
         <Dialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
-          <DialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
+          <DialogContent
+            className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0"
+          >
             {selectedTaskId && (
               <TaskDetailPage
                 projectPublicId={scope.projectId}
                 packageId={scope.packageId ?? null}
                 taskId={selectedTaskId}
+                onClose={() => setSelectedTaskId(null)}
               />
             )}
           </DialogContent>
@@ -906,37 +1048,55 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             setEditingTask(null);
           }}
           editTask={editingTask}
-          onUpdate={async (taskId, task) => {
-            try {
-              await persistNewTaskTags(task.tags);
-              const res = await apiFetch('/api/tasks/', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  taskId,
-                  title: task.title,
-                  status: task.status,
-                  priority: task.priority,
-                  description: task.description,
-                  assigneeIds: task.assigneeIds,
-                  reviewerIds: task.reviewerIds,
-                  dueDate: task.dueDate || undefined,
-                  linkedUrl: task.linkedItems || undefined,
-                  tags: task.tags,
-                }),
-              });
-              const data = await res.json();
-              if (data.success) {
-                toast.success('Task updated');
-                setEditingTask(null);
-                await loadTasks();
-              } else {
-                toast.error(data.message || 'Failed to update task');
+        onUpdate={async (taskId, task) => {
+          try {
+            await persistNewTaskTags(task.tags);
+            const res = await apiFetch('/api/tasks/', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                taskId,
+                title: task.title,
+                status: task.status,
+                priority: task.priority,
+                description: task.description,
+                assigneeIds: task.assigneeIds,
+                reviewerIds: task.reviewerIds,
+                dueDate: task.dueDate || undefined,
+                linkedUrl: task.linkedItems || undefined,
+                tags: task.tags,
+                affectedModels: task.affectedModels,
+              }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              // Delete removed existing attachments
+              if (task.removedExistingAttachmentIndices?.length > 0) {
+                for (const idx of task.removedExistingAttachmentIndices) {
+                  await apiFetch('/api/tasks/delete-attachment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ taskId, attachmentIndex: idx }),
+                  });
+                }
               }
-            } catch {
-              toast.error('Failed to update task');
+              // Upload new attachments
+              if (task.attachments && task.attachments.length > 0) {
+                const form = new FormData();
+                form.append('taskId', taskId);
+                task.attachments.forEach(f => form.append('attachments', f));
+                await apiFetch('/api/tasks/upload-attachments', { method: 'POST', body: form });
+              }
+              toast.success('Task updated');
+              setEditingTask(null);
+              await loadTasks();
+            } else {
+              toast.error(data.message || 'Failed to update task');
             }
-          }}
+          } catch {
+            toast.error('Failed to update task');
+          }
+        }}
           tagOptions={projectTaskTags}
           linkedItemSuggestions={linkedItemSuggestions}
           workflowStages={selectedWorkflowStages}
@@ -944,43 +1104,54 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
           modelFiles={modelFiles}
           loadingFiles={loadingModelFiles}
           teamMembers={teamMembersForTask}
-          onSubmit={async (task) => {
-            try {
-              await persistNewTaskTags(task.tags);
-              const response = await apiFetch('/api/tasks/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                body: JSON.stringify({
-                  ...scopeRequestBody,
-                  title: task.title,
-                  status: task.status,
-                  priority: task.priority,
-                  description: task.description,
-                  assigneeIds: task.assigneeIds,
-                  reviewerIds: task.reviewerIds,
-                  dueDate: task.dueDate || undefined,
-                  linkedUrl: task.linkedItems || undefined,
-                  tags: task.tags,
-                }),
-              });
+        onSubmit={async (task) => {
+          try {
+            await persistNewTaskTags(task.tags);
+            const response = await apiFetch('/api/tasks/create', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({
+                ...scopeRequestBody,
+                title: task.title,
+                status: task.status,
+                priority: task.priority,
+                description: task.description,
+                assigneeIds: task.assigneeIds,
+                reviewerIds: task.reviewerIds,
+                dueDate: task.dueDate || undefined,
+                linkedUrl: task.linkedItems || undefined,
+                tags: task.tags,
+                affectedModels: task.affectedModels,
+              }),
+            });
 
-              if (response.status === 404) {
-                toast.error('Tasks API is not available yet');
-                return;
-              }
-
-              if (!response.ok) {
-                const payload = await response.json().catch(() => null);
-                toast.error(payload?.message || 'Failed to create task');
-                return;
-              }
-
-              toast.success('Task created');
-              await loadTasks();
-            } catch {
-              toast.error('Failed to create task');
+            if (response.status === 404) {
+              toast.error('Tasks API is not available yet');
+              return;
             }
-          }}
+
+            if (!response.ok) {
+              const payload = await response.json().catch(() => null);
+              toast.error(payload?.message || 'Failed to create task');
+              return;
+            }
+
+            const result = await response.json();
+            if (result.success && result.data?.publicId) {
+              if (task.attachments && task.attachments.length > 0) {
+                const form = new FormData();
+                form.append('taskId', result.data.publicId);
+                task.attachments.forEach(f => form.append('attachments', f));
+                await apiFetch('/api/tasks/upload-attachments', { method: 'POST', body: form });
+              }
+            }
+
+            toast.success('Task created');
+            await loadTasks();
+          } catch {
+            toast.error('Failed to create task');
+          }
+        }}
         />
       </div>
     );
@@ -1145,7 +1316,14 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             onEditRequest={(task) => {
               if (!canManageTask) return;
               const fullTask = tasksData.find(t => t.id === task.id);
-              if (fullTask) {
+              if (!fullTask) return;
+              const packageId = scope.type === 'package' ? scope.packageId : undefined;
+              apiFetch('/api/tasks/detail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectId: scope.projectId, packageId, taskId: task.id }),
+              }).then(res => res.json()).then(data => {
+                const existingAttachments = Array.isArray(data?.data?.attachments) ? data.data.attachments : [];
                 setEditingTask({
                   id: fullTask.id,
                   title: fullTask.title,
@@ -1157,10 +1335,28 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
                   reviewerIds: fullTask.reviewerIds,
                   dueDate: fullTask.dueDate,
                   tags: fullTask.tags,
-                  linkedItems: fullTask.linkedItem?.name || '',
+                  linkedItems: fullTask.linkedItem?.crId || '',
+                  affectedModels: fullTask.affectedModels,
+                  existingAttachments,
                 });
                 setIsNewTaskModalOpen(true);
-              }
+              }).catch(() => {
+                setEditingTask({
+                  id: fullTask.id,
+                  title: fullTask.title,
+                  status: fullTask.status,
+                  priority: fullTask.priority,
+                  description: fullTask.description,
+                  assigneeId: fullTask.assigneeId,
+                  assigneeIds: fullTask.assigneeIds,
+                  reviewerIds: fullTask.reviewerIds,
+                  dueDate: fullTask.dueDate,
+                  tags: fullTask.tags,
+                  linkedItems: fullTask.linkedItem?.crId || '',
+                  affectedModels: fullTask.affectedModels,
+                });
+                setIsNewTaskModalOpen(true);
+              });
             }}
             onDeleteRequest={(taskId) => {
               if (!canManageTask) return;
@@ -1300,12 +1496,15 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       )}
 
       <Dialog open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
-        <DialogContent className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0">
+        <DialogContent
+          className="max-w-[calc(100%-2rem)] w-[1100px] max-h-[90vh] overflow-y-auto p-0"
+        >
           {selectedTaskId && (
             <TaskDetailPage
               projectPublicId={scope.projectId}
               packageId={scope.type === 'package' ? scope.packageId ?? null : null}
               taskId={selectedTaskId}
+              onClose={() => setSelectedTaskId(null)}
             />
           )}
         </DialogContent>
@@ -1340,6 +1539,23 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             });
             const data = await res.json();
             if (data.success) {
+              // Delete removed existing attachments
+              if (task.removedExistingAttachmentIndices?.length > 0) {
+                for (const idx of task.removedExistingAttachmentIndices) {
+                  await apiFetch('/api/tasks/delete-attachment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ taskId, attachmentIndex: idx }),
+                  });
+                }
+              }
+              // Upload new attachments
+              if (task.attachments && task.attachments.length > 0) {
+                const form = new FormData();
+                form.append('taskId', taskId);
+                task.attachments.forEach(f => form.append('attachments', f));
+                await apiFetch('/api/tasks/upload-attachments', { method: 'POST', body: form });
+              }
               toast.success('Task updated');
               setEditingTask(null);
               await loadTasks();
@@ -1357,13 +1573,13 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
           modelFiles={modelFiles}
           loadingFiles={loadingModelFiles}
           teamMembers={teamMembersForTask}
-          onSubmit={async (task) => {
-            try {
-              await persistNewTaskTags(task.tags);
-              const response = await apiFetch('/api/tasks/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                body: JSON.stringify({
+        onSubmit={async (task) => {
+          try {
+            await persistNewTaskTags(task.tags);
+            const response = await apiFetch('/api/tasks/create', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({
                 ...scopeRequestBody,
                 title: task.title,
                 status: task.status,
@@ -1374,6 +1590,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
                 dueDate: task.dueDate || undefined,
                 linkedUrl: task.linkedItems || undefined,
                 tags: task.tags,
+                affectedModels: task.affectedModels,
               }),
             });
 
@@ -1386,6 +1603,16 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
               const payload = await response.json().catch(() => null);
               toast.error(payload?.message || 'Failed to create task');
               return;
+            }
+
+            const result = await response.json();
+            if (result.success && result.data?.publicId) {
+              if (task.attachments && task.attachments.length > 0) {
+                const form = new FormData();
+                form.append('taskId', result.data.publicId);
+                task.attachments.forEach(f => form.append('attachments', f));
+                await apiFetch('/api/tasks/upload-attachments', { method: 'POST', body: form });
+              }
             }
 
             toast.success('Task created');

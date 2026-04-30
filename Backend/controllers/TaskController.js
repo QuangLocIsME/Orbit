@@ -1,9 +1,11 @@
 const Task = require('../models/Task');
 const TaskComment = require('../models/TaskComment');
+const Project = require('../models/Project');
 const User = require('../models/User');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const PackageRepository = require('../repositories/PackageRepository');
 const NotificationRepository = require('../repositories/NotificationRepository');
+const ChangeRequestRepository = require('../repositories/ChangeRequestRepository');
 const ActivityService = require('../services/activityService');
 const DiscordService = require('../services/discordService');
 const socketService = require('../services/socketService');
@@ -12,15 +14,14 @@ const { errorResponse } = require('../utils/response');
 
 const sendDiscordNotification = async (projectId, userId, type, targetName, metadata = {}) => {
     try {
-        const Project = require('../models/Project');
-        const project = await Project.findOne({ publicId: projectId }).select('name integrations').lean();
-        if (!project || !project.integrations?.discordEnabled || !project.integrations?.discordWebhook) return;
+        const projectDoc = await Project.findOne({ publicId: projectId }).select('name integrations').lean();
+        if (!projectDoc || !projectDoc.integrations?.discordEnabled || !projectDoc.integrations?.discordWebhook) return;
 
         const actor = userId ? await User.findById(userId).select('fullName email').lean() : null;
         const userName = actor?.fullName || actor?.email || 'System';
 
-        await DiscordService.sendWebhook(project.integrations.discordWebhook, {
-            projectName: project.name,
+        await DiscordService.sendWebhook(projectDoc.integrations.discordWebhook, {
+            projectName: projectDoc.name,
             userName,
             type,
             targetName,
@@ -181,13 +182,39 @@ class TaskController {
                 dueDate: req.body?.dueDate ? new Date(req.body.dueDate) : null,
                 linkedUrl: normalizeString(req.body?.linkedUrl),
                 tags: Array.isArray(req.body?.tags) ? req.body.tags.map((t) => normalizeString(t)).filter(Boolean) : [],
+                affectedModels: Array.isArray(req.body?.affectedModels) ? req.body.affectedModels : [],
                 createdBy: userId,
                 updatedAt: new Date(),
             });
 
+            // If task is linked to a CR, update the CR's linkedTaskIds
+            if (task.linkedUrl && task.linkedUrl.startsWith('cr:')) {
+                const crPublicId = task.linkedUrl.replace('cr:', '');
+                try {
+                    const cr = await ChangeRequestRepository.findByPublicId(crPublicId);
+                    if (cr) {
+                        const currentLinked = cr.linkedTaskIds || [];
+                        if (!currentLinked.includes(task.publicId)) {
+                            await ChangeRequestRepository.update(crPublicId, {
+                                linkedTaskIds: [...currentLinked, task.publicId],
+                            });
+                        }
+                    }
+                } catch (crErr) {
+                    console.warn('[createTask] Failed to link task to CR:', crErr.message);
+                }
+            }
+
             if (packageId) {
                 await PackageRepository.addTaskIdToPackage(packageId, projectId, task.publicId);
             }
+
+            // Broadcast task:created to all project members for real-time board refresh
+            socketService.broadcastProject(projectId, 'task:created', {
+                projectId,
+                packageId: packageId || null,
+                taskId: task.publicId,
+            });
 
             const taskLink = getTaskLink(projectId, packageId, task.publicId);
 
@@ -470,6 +497,84 @@ class TaskController {
                 return forbidden(res, 'Only owner/admin/manager, assignee, or reviewer can update task status');
             }
 
+            // ── Workflow: CR-linked task moving to last column ─────────────────────────
+            // When a task is linked to a ChangeRequest and is moved to the last workflow
+            // stage, we park it in 'pending-review' so owner/admin can approve/reject it.
+            // Fetch project workflow and settings (also needed for notifications below)
+            const project = await Project.findOne({ publicId: projectId }).select('workflow.stages workflow.settings name integrations').lean();
+            const workflowStages = project?.workflow?.stages || [];
+            const requireApproval = project?.workflow?.settings?.requireApprovalForCompletion;
+            const isLinkedToCR = !!(currentTask.linkedUrl && currentTask.linkedUrl.startsWith('cr:'));
+
+            if (isLinkedToCR && requireApproval && workflowStages.length > 0) {
+                const lastStageId = workflowStages[workflowStages.length - 1].id;
+                if (status === lastStageId && currentTask.status !== 'pending-review') {
+                    // Park task in pending-review instead of the last column.
+                    // The task will only move to the real last stage after owner/admin approves.
+                    const updated = await Task.findOneAndUpdate(
+                        { _id: currentTask._id },
+                        { status: 'pending-review', updatedAt: new Date() },
+                        { returnDocument: 'after' }
+                    ).lean();
+                    if (!updated) return notFound(res, 'Task not found');
+
+                    // Extract CR publicId from linkedUrl
+                    const crPublicId = currentTask.linkedUrl.replace('cr:', '');
+                    const changeRequest = await ChangeRequestRepository.findByPublicId(crPublicId);
+
+                    // Notify owner/admin via socket and notification
+                    const notifiableRoles = ['owner', 'admin'];
+                    const admins = await require('../models/ProjectMember').find({
+                        projectId,
+                        role: { $in: notifiableRoles },
+                        status: 'accepted',
+                    }).select('userId').lean();
+
+                    const taskLink = `/projects/${projectId}/tasks/${taskId}`;
+                    const actorUser = await User.findById(userId).select('fullName').lean();
+                    const actorName = actorUser?.fullName || 'Someone';
+                    const notificationMsg = `${actorName} requested review for task "${currentTask.title}" in CR "${changeRequest?.title || crPublicId}"`;
+
+                    for (const admin of admins) {
+                        if (admin.userId === userId) continue; // don't notify self
+                        const notification = await NotificationRepository.create({
+                            userId: admin.userId,
+                            type: 'info',
+                            title: 'Task review requested',
+                            message: notificationMsg,
+                            link: taskLink,
+                            read: false,
+                            refType: 'task',
+                            refId: taskId,
+                        });
+                        socketService.notifyUser(admin.userId, 'notification:new', {
+                            id: String(notification._id),
+                            type: 'info',
+                            title: 'Task review requested',
+                            message: notificationMsg,
+                            link: taskLink,
+                            read: false,
+                            createdAt: notification.createdAt.toISOString(),
+                        });
+                    }
+
+                    socketService.broadcastProject(projectId, 'task:status-changed', {
+                        projectId,
+                        packageId,
+                        taskId,
+                        status: 'pending-review',
+                    });
+
+                    return res.status(200).json({
+                        success: true,
+                        data: updated,
+                        pendingReview: true,
+                        message: 'Task submitted for review. An owner/admin will approve it.',
+                    });
+                }
+            }
+            // ── End workflow ──────────────────────────────────────────────────────────
+
             const updated = await Task.findOneAndUpdate(
                 { _id: currentTask._id },
                 { status, updatedAt: new Date() },
@@ -483,6 +588,7 @@ class TaskController {
                 taskId,
                 status,
             });
+            console.debug('[WS] Emitted task:status-changed', { projectId, packageId, taskId, status });
 
             // Also broadcast to package room for real-time stat updates
             if (packageId) {
@@ -503,7 +609,6 @@ class TaskController {
             const recipientsToNotify = allRecipients.filter((r) => r !== userId);
 
             if (recipientsToNotify.length > 0) {
-                const project = await require('../models/Project').findOne({ publicId: projectId }).select('workflow.settings workflow.stages').lean();
                 const notifyEnabled = !project || project.workflow?.settings?.notifyOnStatusChange !== false;
                 if (notifyEnabled) {
                     const taskLink = getTaskLink(projectId, packageId, taskId);
@@ -538,7 +643,6 @@ class TaskController {
             }
 
             // Log activity + Discord notification for stage move
-            const project = await require('../models/Project').findOne({ publicId: projectId }).select('workflow.settings workflow.stages name integrations').lean();
             const stageLabel = project?.workflow?.stages?.find((s) => s.id === status)?.label || status;
             const oldStageLabel = project?.workflow?.stages?.find((s) => s.id === currentTask.status)?.label || currentTask.status;
 
@@ -793,7 +897,7 @@ class TaskController {
             if (!member || member.status !== 'accepted') return forbidden(res);
             if (!['owner', 'admin', 'manager'].includes(member.role)) return forbidden(res);
 
-            const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags } = req.body || {};
+            const { title, description, priority, assigneeId, assigneeIds, reviewerIds, dueDate, tags, affectedModels } = req.body || {};
 
             const oldAssigneeIds = [...(task.assigneeIds || [])];
             const oldReviewerIds = [...(task.reviewerIds || [])];
@@ -812,6 +916,7 @@ class TaskController {
             }
             if (dueDate !== undefined) task.dueDate = dueDate ? new Date(dueDate) : null;
             if (tags !== undefined) task.tags = Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [];
+            if (affectedModels !== undefined) task.affectedModels = Array.isArray(affectedModels) ? affectedModels : [];
             task.updatedAt = new Date();
 
             await task.save();
@@ -951,9 +1056,240 @@ class TaskController {
                 });
             }
 
+            // Broadcast task:deleted to all project members for real-time board refresh
+            socketService.broadcastProject(deletedProjectId, 'task:deleted', {
+                projectId: deletedProjectId,
+                packageId: deletedPackageId || null,
+                taskId,
+            });
+
             return res.status(200).json({ success: true, message: 'Task deleted' });
         } catch {
             return serverError(res, 'Delete task failed');
+        }
+    }
+
+    async requestReview(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            const projectId = normalizeString(req.body?.projectId);
+            const action = normalizeString(req.body?.action); // 'approve' or 'reject'
+
+            if (!taskId || !projectId || !action) {
+                return badRequest(res, 'Missing taskId, projectId or action');
+            }
+            if (!['approve', 'reject'].includes(action)) {
+                return badRequest(res, 'Action must be "approve" or "reject"');
+            }
+
+            const member = await ProjectMemberRepository.findMember(projectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can review tasks');
+            }
+            if (member.role !== 'owner' && member.role !== 'admin') {
+                return forbidden(res, 'Only owner or admin can review tasks');
+            }
+
+            const task = await Task.findOne({ publicId: taskId }).lean();
+            if (!task) return notFound(res, 'Task not found');
+
+            if (task.status !== 'pending-review') {
+                return badRequest(res, 'Task is not pending review');
+            }
+
+            // Get the last workflow stage for this project
+            const project = await Project.findOne({ publicId: projectId }).select('workflow.stages').lean();
+            const stages = project?.workflow?.stages || [];
+            if (stages.length === 0) {
+                return serverError(res, 'No workflow stages defined for this project');
+            }
+            const lastStageId = stages[stages.length - 1].id;
+
+            let newStatus;
+            if (action === 'approve') {
+                newStatus = lastStageId;
+            } else {
+                // Reject: move back one stage (or to previous stage if available)
+                const lastStageIndex = stages.findIndex((s) => s.id === lastStageId);
+                const previousStage = lastStageIndex > 0 ? stages[lastStageIndex - 1] : stages[0];
+                newStatus = previousStage.id;
+            }
+
+            const updated = await Task.findOneAndUpdate(
+                { _id: task._id },
+                { status: newStatus, updatedAt: new Date() },
+                { returnDocument: 'after' }
+            ).lean();
+            if (!updated) return notFound(res, 'Task not found');
+
+            // Notify assignees
+            const assigneeIds = task.assigneeIds || [];
+            const assigneeId = task.assigneeId;
+            const allRecipients = [assigneeId, ...assigneeIds].filter(Boolean);
+            const actorUser = await User.findById(userId).select('fullName').lean();
+            const actorName = actorUser?.fullName || 'An admin';
+            const taskLink = `/projects/${projectId}/tasks/${taskId}`;
+            const stageLabel = stages.find((s) => s.id === newStatus)?.label || newStatus;
+
+            for (const recipient of allRecipients) {
+                if (recipient === userId) continue;
+                const notification = await NotificationRepository.create({
+                    userId: recipient,
+                    type: 'info',
+                    title: action === 'approve' ? 'Task approved' : 'Task returned',
+                    message: action === 'approve'
+                        ? `${actorName} approved your task "${task.title}" — moved to ${stageLabel}`
+                        : `${actorName} returned your task "${task.title}" — moved back to ${stageLabel}`,
+                    link: taskLink,
+                    read: false,
+                    refType: 'task',
+                    refId: taskId,
+                });
+                socketService.notifyUser(recipient, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: action === 'approve' ? 'Task approved' : 'Task returned',
+                    message: notification.message,
+                    link: taskLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
+
+            // Log activity
+            await ActivityService.log({
+                projectId,
+                packageId: task.packageId,
+                userId,
+                type: action === 'approve' ? 'task_approved' : 'task_rejected',
+                targetId: taskId,
+                targetName: task.title,
+                metadata: { fromStatus: 'pending-review', toStatus: newStatus },
+            });
+
+            // Broadcast status change
+            socketService.broadcastProject(projectId, 'task:status-changed', {
+                projectId,
+                packageId: task.packageId,
+                taskId,
+                status: newStatus,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: updated,
+                message: action === 'approve'
+                    ? 'Task approved and moved to completion'
+                    : 'Task returned to previous stage',
+            });
+        } catch {
+            return serverError(res, 'Review task failed');
+        }
+    }
+
+    async uploadAttachments(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            if (!taskId) return badRequest(res, 'Missing taskId');
+            if (!req.files || req.files.length === 0) return badRequest(res, 'No files provided');
+
+            const task = await Task.findOne({ publicId: taskId });
+            if (!task) return notFound(res, 'Task not found');
+
+            const member = await ProjectMemberRepository.findMember(task.projectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin', 'manager', 'member'].includes(member.role)) return forbidden(res);
+
+            const supabaseStorage = require('../services/supabaseStorageService');
+            const uploaded = [];
+
+            for (const file of req.files) {
+                const storagePath = supabaseStorage.buildSupabaseAttachmentPath({
+                    projectId: task.projectId,
+                    crId: taskId,
+                    fileName: file.originalname,
+                });
+
+                let url;
+                try {
+                    const result = await supabaseStorage.uploadAttachmentBuffer(file.buffer, storagePath);
+                    url = result.publicUrl;
+                } catch (uploadErr) {
+                    console.error('[TaskAttachment] Upload failed:', uploadErr.message);
+                    continue;
+                }
+
+                task.attachments.push({
+                    name: file.originalname,
+                    size: file.size,
+                    url,
+                    mimeType: file.mimetype || '',
+                    uploadedAt: new Date(),
+                });
+                uploaded.push({ name: file.originalname, size: file.size, url, mimeType: file.mimetype });
+            }
+
+            task.attachmentsCount = task.attachments.length;
+            task.updatedAt = new Date();
+            await task.save();
+
+            // Broadcast update
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'task:updated', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    taskId: task.publicId,
+                });
+            }
+
+            return res.status(200).json({ success: true, data: { attachments: uploaded } });
+        } catch {
+            return serverError(res, 'Upload attachments failed');
+        }
+    }
+
+    async deleteAttachment(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const taskId = normalizeString(req.body?.taskId);
+            const attachmentIndex = parseInt(req.body?.attachmentIndex, 10);
+            if (!taskId || isNaN(attachmentIndex)) return badRequest(res, 'Missing taskId or attachmentIndex');
+
+            const task = await Task.findOne({ publicId: taskId });
+            if (!task) return notFound(res, 'Task not found');
+
+            const member = await ProjectMemberRepository.findMember(task.projectId, userId);
+            if (!member || member.status !== 'accepted') return forbidden(res);
+            if (!['owner', 'admin', 'manager', 'member'].includes(member.role)) return forbidden(res);
+
+            if (attachmentIndex < 0 || attachmentIndex >= task.attachments.length) {
+                return badRequest(res, 'Invalid attachment index');
+            }
+
+            task.attachments.splice(attachmentIndex, 1);
+            task.attachmentsCount = task.attachments.length;
+            task.updatedAt = new Date();
+            await task.save();
+
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'task:updated', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    taskId: task.publicId,
+                });
+            }
+
+            return res.status(200).json({ success: true, message: 'Attachment deleted' });
+        } catch {
+            return serverError(res, 'Delete attachment failed');
         }
     }
 }

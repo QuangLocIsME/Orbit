@@ -11,7 +11,7 @@ const UploadJobSchema = new mongoose.Schema({
     },
 
     projectId: { type: String, required: true, index: true },
-    packageId: { type: String, required: true, index: true },
+    packageId: { type: String, default: null },
     uploaderId: { type: String, required: true, index: true },
 
     fileOriginalName: { type: String, required: true, trim: true },
