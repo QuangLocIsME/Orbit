@@ -2037,9 +2037,9 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
         {currentRole !== 'viewer' && (
         <button
           onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#155DFC] h-10 px-5 min-w-[150px] text-[13px] font-medium text-white hover:bg-blue-700 transition-colors"
         >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
           </svg>
           New Request
@@ -2108,7 +2108,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
             <p className="text-[14px] font-medium text-[#101828]">{changeRequests.length === 0 ? 'No change requests yet' : 'No results match the filter'}</p>
             <p className="text-[12px] text-[#6A7282] mt-1">{changeRequests.length === 0 ? 'Create your first change request using the button above' : 'Try adjusting your search or filter'}</p>
             {changeRequests.length === 0 && (
-              <button onClick={() => setShowCreate(true)} className="mt-4 inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] px-4 py-2 text-[13px] text-white hover:bg-blue-700 transition-colors">New Request</button>
+              <button onClick={() => setShowCreate(true)} className="mt-4 inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#155DFC] px-5 min-w-[150px] py-2 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors">New Request</button>
             )}
           </div>
         ) : (

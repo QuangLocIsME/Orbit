@@ -198,9 +198,15 @@ async function runConsumer() {
 
     await startPackageUploadConsumer(async (parsed) => {
         const jobId = parsed?.jobId;
-        if (!jobId) return;
+        console.log(`[packageUploadWorker] Received message:`, JSON.stringify(parsed));
+        if (!jobId) {
+            console.warn('[packageUploadWorker] No jobId in message, skipping');
+            return;
+        }
         try {
+            console.log(`[packageUploadWorker] Processing job: ${jobId}`);
             await processJob(jobId);
+            console.log(`[packageUploadWorker] Job done: ${jobId}`);
         } catch (err) {
             console.error('[packageUploadWorker] processJob error:', err);
         }

@@ -639,7 +639,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
         {canApprove && (
           <button
             onClick={() => setCreateVersionModal(true)}
-            className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#155DFC] px-3 py-1.5 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors"
+            className="inline-flex items-center justify-center gap-1.5 rounded-[8px] bg-[#155DFC] h-10 px-5 min-w-[150px] text-[13px] font-medium text-white hover:bg-blue-700 transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
             Create Version

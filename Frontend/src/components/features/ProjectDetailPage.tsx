@@ -569,7 +569,28 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     fetchProjectOverviewData();
     return () => { cancelled = true; };
   }, [project.publicId, settingsUpdated, activitiesVersion]);
-  
+
+  // WebSocket realtime — update team member online status
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleUserOnline = ({ userId }: { userId: string }) => {
+      setTeamMembers(prev => prev.map(m => m.id === userId ? { ...m, isOnline: true } : m));
+    };
+
+    const handleUserOffline = ({ userId }: { userId: string }) => {
+      setTeamMembers(prev => prev.map(m => m.id === userId ? { ...m, isOnline: false } : m));
+    };
+
+    socket.on('user:online', handleUserOnline);
+    socket.on('user:offline', handleUserOffline);
+
+    return () => {
+      socket.off('user:online', handleUserOnline);
+      socket.off('user:offline', handleUserOffline);
+    };
+  }, []);
+
   // Handle settings updated - refresh last activity timestamp
   const handleSettingsUpdated = () => {
     setSettingsUpdated(prev => prev + 1);

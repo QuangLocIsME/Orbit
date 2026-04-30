@@ -676,7 +676,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             <button
               onClick={() => setIsCreateFolderOpen(true)}
               disabled={!canManage}
-              className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-gray-200 bg-white px-5 text-[14px] font-normal text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] border border-gray-200 bg-white px-5 min-w-[160px] text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
             >
               <FolderPlus className="h-4 w-4" />
               Create Folder
@@ -686,7 +686,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading || !canManage}
-            className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-[#155DFC] px-5 text-[14px] font-normal text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-[#155DFC] px-5 min-w-[160px] text-[13px] font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
           >
             <Upload className="h-4 w-4" />
             {isUploading
