@@ -3,10 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { DndContext, DragOverlay, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
+import { DndContext, DragOverlay, PointerSensor, rectIntersection, useDroppable, useSensor, useSensors, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, rectSortingStrategy, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { snapCenterToCursor } from '@dnd-kit/modifiers';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
@@ -621,6 +620,12 @@ function TrashDropZone() {
       <a
         href="/trash"
         draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          const img = new Image();
+          img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+          e.dataTransfer.setDragImage(img, 0, 0);
+        }}
         onClick={e => e.stopPropagation()}
         className="shrink-0 rounded-lg px-2 py-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
       >
@@ -724,6 +729,12 @@ function ProjectListItem({ project, isDragging = false, memberCounts, onToggleFa
       <a
         href={`/projects/${project.id}`}
         draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          const img = new Image();
+          img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+          e.dataTransfer.setDragImage(img, 0, 0);
+        }}
         className="flex min-w-0 flex-1 items-center gap-4 px-4 py-3"
         onClick={(e) => {
           // Let dnd-kit handle drag, only navigate on simple click
@@ -880,17 +891,16 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Don't navigate if dnd-kit detected a drag (the distance threshold)
+    if ((e.target as HTMLElement).closest('button, [role="button"]')) return;
+    window.location.href = `/projects/${project.id}`;
+  };
+
   return (
-    <motion.a
+    <motion.div
       ref={setNodeRef}
-      href={`/projects/${project.id}`}
-      draggable={false}
-      onDragStart={(e) => {
-        e.preventDefault();
-        const img = new Image();
-        img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-        e.dataTransfer.setDragImage(img, 0, 0);
-      }}
+      onClick={handleCardClick}
       {...attributes}
       {...listeners}
       layout
@@ -900,7 +910,7 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
         transition,
       }}
       className={cn(
-        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200',
+        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200 cursor-pointer',
         (isDragging || isSortableDragging) && 'scale-[0.98] opacity-40 pointer-events-none'
       )}
     >
@@ -1007,7 +1017,7 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
           </span>
         </div>
       </div>
-    </motion.a>
+    </motion.div>
   );
 }
 
@@ -1088,7 +1098,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 6,
+        distance: 0,
       },
     })
   );
@@ -1705,7 +1715,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={rectIntersection}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
@@ -2037,17 +2047,10 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         </div>
       )}
 
-      <DragOverlay
-        modifiers={[snapCenterToCursor]}
-        dropAnimation={{
-          duration: 320,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        }}
-      >
+      <DragOverlay>
         {activeProject ? (
           viewMode === 'grid' ? (
-            <div className="w-[280px] rounded-xl border border-gray-200 bg-white shadow-xl overflow-hidden">
-              {/* Image */}
+            <div className="w-[280px] rounded-xl border border-gray-200 bg-white shadow-2xl ring-2 ring-blue-400/30 overflow-hidden">
               <div className="relative h-24 overflow-hidden bg-gradient-to-br from-blue-100 to-indigo-100">
                 {activeProject.thumbnail ? (
                   <img
@@ -2061,14 +2064,13 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                   />
                 ) : null}
               </div>
-              {/* Project Info */}
               <div className="p-3">
                 <h4 className="font-medium text-gray-900 text-sm truncate">{activeProject.name}</h4>
                 <p className="text-xs text-gray-500 mt-0.5 truncate">/projects/{activeProject.slug}</p>
               </div>
             </div>
           ) : (
-            <div className="w-full max-w-[760px] rounded-xl border border-gray-200 bg-white shadow-xl overflow-hidden">
+            <div className="w-full max-w-[760px] rounded-xl border border-gray-200 bg-white shadow-2xl ring-2 ring-blue-400/30 overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
                   <svg className="h-5 w-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

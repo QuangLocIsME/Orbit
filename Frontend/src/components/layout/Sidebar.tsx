@@ -980,6 +980,13 @@ function ProjectGroup({ title, projects, currentPath, storageKey }: ProjectGroup
               >
                 <a
                   href={`/projects/${project.slug}`}
+                  draggable={false}
+                  onDragStart={(e) => {
+                    e.preventDefault();
+                    const img = new Image();
+                    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+                    e.dataTransfer.setDragImage(img, 0, 0);
+                  }}
                   className={cn(
                     'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-150',
                     isActive

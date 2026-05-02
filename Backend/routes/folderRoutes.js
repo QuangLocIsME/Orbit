@@ -8,5 +8,6 @@ router.get('/me', authenticate, (req, res) => FolderController.getMyFolders(req,
 router.post('/create', authenticate, (req, res) => FolderController.createFolder(req, res));
 router.post('/update', authenticate, (req, res) => FolderController.updateFolder(req, res));
 router.post('/delete', authenticate, (req, res) => FolderController.deleteFolder(req, res));
+router.delete('/:id', authenticate, (req, res) => FolderController.deleteFolder(req, res));
 
 module.exports = router;
