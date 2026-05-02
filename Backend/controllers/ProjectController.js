@@ -269,6 +269,7 @@ class ProjectController {
                     status: membership?.status || 'accepted',
                     lastVisitedAt: membership?.lastVisitedAt || null,
                     isFavorite: membership?.isFavorite || false,
+                    sortOrder: membership?.sortOrder || 0,
                     progress: progressMap.get(project.publicId) || 0,
                 };
             });
@@ -1178,6 +1179,36 @@ class ProjectController {
             });
         } catch (error) {
             return handleServerError(res, 'Toggle favorite failed');
+        }
+    }
+
+    async saveProjectOrder(req, res) {
+        try {
+            const userId = requireUserId(req, res);
+            if (!userId) return;
+
+            const { projectIds } = req.body || {};
+            if (!Array.isArray(projectIds)) {
+                return badRequest(res, 'projectIds must be an array');
+            }
+
+            const bulkOps = projectIds.map((projectId, index) => ({
+                updateOne: {
+                    filter: { projectId, userId },
+                    update: { $set: { sortOrder: index } },
+                },
+            }));
+
+            if (bulkOps.length > 0) {
+                await ProjectMember.collection.bulkWrite(bulkOps);
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: 'Project order saved',
+            });
+        } catch (error) {
+            return handleServerError(res, 'Save order failed');
         }
     }
 

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { login, register } from '@/modules/auth/service/auth-service.js';
+import { login, register, verify2FA } from '@/modules/auth/service/auth-service.js';
 import { apiUrl } from '@/config/api.js';
 
 // Types
@@ -117,6 +117,12 @@ const GoogleIcon = () => (
   </svg>
 );
 
+const ShieldIcon = () => (
+  <svg className="h-5 w-5 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.67}>
+    <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+  </svg>
+);
+
 const BackIcon = () => (
   <svg className="h-5 w-5 text-[#616874]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.67}>
     <path d="M15 19l-7-7 7-7" />
@@ -129,8 +135,6 @@ const LoadingSpinner = () => (
     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
   </svg>
 );
-
-// Sparkle Icon
 const SparkleIcon = ({ className }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" fill="currentColor">
     <path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" />
@@ -264,17 +268,30 @@ export default function AuthForm({ mode }: AuthFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
+  // 2FA state
+  const [pending2FAEmail, setPending2FAEmail] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState('');
+  const [is2FAStep, setIs2FAStep] = useState(false);
+  const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+
   // Handle mode switch with animation
   const handleModeSwitch = useCallback((newMode: 'login' | 'register') => {
     if (newMode === currentMode || isTransitioning) return;
-    
+
     setIsTransitioning(true);
-    
+
     // Reset form
     setFormData({ fullName: '', email: '', password: '', confirmPassword: '' });
     setErrors({});
     setTouched({});
     setAgreedToTerms(false);
+    // Reset 2FA state
+    setPending2FAEmail('');
+    setTwoFactorCode('');
+    setTwoFactorError('');
+    setIs2FAStep(false);
+    setIsVerifying2FA(false);
     
     // Delay mode switch for smooth animation
     setTimeout(() => {
@@ -372,10 +389,10 @@ export default function AuthForm({ mode }: AuthFormProps) {
     e.preventDefault();
 
     if (!validateForm(true)) return;
-    
+
     setIsLoading(true);
     setErrors({});
-    
+
     try {
       let data;
       if (isRegister) {
@@ -388,6 +405,13 @@ export default function AuthForm({ mode }: AuthFormProps) {
         });
       } else {
         data = await login(formData.email, formData.password);
+      }
+
+      if (data?.requires2FA) {
+        setPending2FAEmail(formData.email);
+        setIs2FAStep(true);
+        setIsLoading(false);
+        return;
       }
 
       const rawUser = data?.data || {};
@@ -405,6 +429,46 @@ export default function AuthForm({ mode }: AuthFormProps) {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Handle 2FA verification
+  const handle2FASubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTwoFactorError('');
+    setIsVerifying2FA(true);
+
+    if (!twoFactorCode || !/^\d{6}$/.test(twoFactorCode)) {
+      setTwoFactorError('Please enter a valid 6-digit code');
+      setIsVerifying2FA(false);
+      return;
+    }
+
+    try {
+      const data = await verify2FA(pending2FAEmail, twoFactorCode);
+
+      const rawUser = data?.data || {};
+      const safeUser = {
+        id: rawUser.id,
+        fullName: rawUser.fullName,
+        email: rawUser.email,
+        avatar: rawUser.avatar ?? null,
+      };
+      localStorage.setItem('orbit_user', JSON.stringify(safeUser));
+      window.location.href = '/home';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Invalid verification code. Please try again.';
+      setTwoFactorError(message);
+    } finally {
+      setIsVerifying2FA(false);
+    }
+  };
+
+  // Handle back to password step
+  const handleBackToPassword = () => {
+    setIs2FAStep(false);
+    setPending2FAEmail('');
+    setTwoFactorCode('');
+    setTwoFactorError('');
   };
 
   // Handle Google sign-in — redirect đến backend OAuth (dùng PUBLIC_API_URL từ .env)
@@ -557,7 +621,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
                 {/* Title */}
                 <h1 className="text-[36px] font-normal leading-[40px] text-[#111827]">
-                  {isRegister ? 'Create your account' : 'Welcome back'}
+                  {isRegister ? 'Create your account' : is2FAStep ? 'Two-Factor Authentication' : 'Welcome back'}
                 </h1>
 
                 {errors.general && (
@@ -566,7 +630,83 @@ export default function AuthForm({ mode }: AuthFormProps) {
                   </div>
                 )}
 
-                {/* Form */}
+                {/* 2FA Verification Step */}
+                {is2FAStep ? (
+                  <form onSubmit={handle2FASubmit} className="mt-8 space-y-4">
+                    <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                      <div className="flex gap-3">
+                        <ShieldIcon />
+                        <div>
+                          <p className="text-sm font-medium text-blue-900">Verify your identity</p>
+                          <p className="mt-1 text-xs text-blue-700">
+                            Enter the 6-digit code from your authenticator app for <span className="font-medium">{pending2FAEmail}</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2FA Code Input */}
+                    <div>
+                      <label className="block text-sm text-[#111827]">
+                        Verification Code <span className="text-[#EF4444]">*</span>
+                      </label>
+                      <div className="relative mt-2">
+                        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                          <ShieldIcon />
+                        </div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          autoComplete="one-time-code"
+                          value={twoFactorCode}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                            setTwoFactorCode(val);
+                            if (twoFactorError) setTwoFactorError('');
+                          }}
+                          placeholder="000000"
+                          className={cn(
+                            "w-full rounded-[14px] border py-4 pl-12 pr-4 text-center text-2xl tracking-[0.5em] font-mono transition-colors",
+                            "placeholder:text-[#616874] focus:border-[#2563EB] focus:outline-none focus:ring-1 focus:ring-[#2563EB]",
+                            twoFactorError ? "border-red-300 bg-red-50" : "border-[#E5E7EB] bg-white"
+                          )}
+                          autoFocus
+                        />
+                      </div>
+                      {twoFactorError && (
+                        <p className="mt-1 text-xs text-red-500">{twoFactorError}</p>
+                      )}
+                    </div>
+
+                    {twoFactorError && (
+                      <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                        {twoFactorError}
+                      </div>
+                    )}
+
+                    {/* Submit */}
+                    <button
+                      type="submit"
+                      disabled={isVerifying2FA || twoFactorCode.length !== 6}
+                      className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-[#2563EB] py-4 text-base font-normal text-white transition-colors hover:bg-[#1D4ED8] disabled:opacity-50"
+                    >
+                      {isVerifying2FA ? <LoadingSpinner /> : null}
+                      {isVerifying2FA ? 'Verifying...' : 'Verify & Sign In'}
+                    </button>
+
+                    {/* Back */}
+                    <button
+                      type="button"
+                      onClick={handleBackToPassword}
+                      className="flex w-full items-center justify-center gap-2 rounded-[10px] border border-[#E5E7EB] py-4 text-base text-[#616874] transition-colors hover:border-[#D1D5DB] hover:bg-gray-50"
+                    >
+                      <BackIcon />
+                      Back to login
+                    </button>
+                  </form>
+                ) : (
+                /* Standard Login / Register Form */
                 <form onSubmit={handleSubmit} className="mt-8 space-y-4">
                   {/* Full Name (Register only) */}
                   {isRegister && (
@@ -805,6 +945,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
                     )}
                   </button>
                 </form>
+                )}
               </div>
             </div>
 
@@ -902,11 +1043,13 @@ export default function AuthForm({ mode }: AuthFormProps) {
                   {/* Content text */}
                   <div className="text-center">
                     <h2 className="text-2xl font-normal text-white">
-                      {isRegister ? 'Join the BIM Revolution' : 'Welcome Back'}
+                      {isRegister ? 'Join the BIM Revolution' : is2FAStep ? 'Secure Access' : 'Welcome Back'}
                     </h2>
                     <p className="mx-auto mt-3 max-w-xs text-sm text-white/80">
-                      {isRegister 
+                      {isRegister
                         ? 'Get started with ORBIT and transform how your team collaborates on construction projects'
+                        : is2FAStep
+                        ? 'Enter your verification code to complete sign in'
                         : 'Sign in to continue your journey with ORBIT'
                       }
                     </p>

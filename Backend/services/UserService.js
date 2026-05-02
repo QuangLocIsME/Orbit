@@ -202,4 +202,6 @@ class UserService {
     }
 }
 
-module.exports = new UserService();
+module.exports = UserService;
+module.exports.UserService = UserService;
+module.exports.userService = new UserService();

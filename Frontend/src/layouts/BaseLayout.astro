@@ -40,6 +40,14 @@ const {
         } catch (_) {}
       })();
     </script>
+    <!-- Service Worker: register early for cache-first API strategy -->
+    <script is:inline>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/orbit-sw.js').catch(function(e) {
+          // SW registration failure is non-fatal
+        });
+      }
+    </script>
   </head>
   <body class="min-h-screen font-sans" transition:animate="none">
     <slot />

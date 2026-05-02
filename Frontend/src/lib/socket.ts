@@ -21,6 +21,9 @@ export interface ServerToClientEvents {
   'invite:revoked': (data: { projectId: string; inviteId: string }) => void;
   'invite:declined': (data: { projectId: string; inviteId: string; declinedBy: string }) => void;
   'project:updated': (data: { projectId: string; changes: Record<string, unknown> }) => void;
+  'project:created': (data: { project?: Record<string, unknown>; data?: Record<string, unknown> }) => void;
+  'project:favorite-toggled': (data: { projectId: string; userId: string; isFavorite: boolean }) => void;
+  'cache:invalidate': (data: { data: { cacheTypes: string[]; userId: string } }) => void;
   'project:member:joined': (data: { projectId: string; userId: string; fullName: string }) => void;
   'project:member:left': (data: { projectId: string; userId: string }) => void;
   'project:member:role-updated': (data: { projectId: string; userId: string; role: string }) => void;

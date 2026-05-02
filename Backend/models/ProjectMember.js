@@ -23,6 +23,7 @@ const ProjectMemberSchema = new mongoose.Schema({
     invitedBy: { type: String, default: null },
     lastVisitedAt: { type: Date, default: null, index: true },
     isFavorite: { type: Boolean, default: false, index: true },
+    sortOrder: { type: Number, default: 0, index: true },
     createdAt: { type: Date, default: Date.now },
 });
 

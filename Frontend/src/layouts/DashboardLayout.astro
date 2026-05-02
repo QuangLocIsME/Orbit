@@ -28,9 +28,39 @@ const { title, pageTitle = 'Home' } = Astro.props;
       navigate('/login');
     });
 
+    // ── SW session sync: write SW-cached API data to sessionStorage ──────────
+    // This makes data available to React components synchronously on mount,
+    // eliminating skeleton flicker on subsequent visits.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'SYNC_SESSION') {
+          const { key, data } = event.data.payload || {};
+          if (key && data) {
+            try {
+              sessionStorage.setItem(key, JSON.stringify(data));
+            } catch (_) { /* ignore quota */ }
+          }
+        }
+        if (event.data?.type === 'CLEAR_SESSION') {
+          try {
+            sessionStorage.removeItem('orbit:projects:me');
+            sessionStorage.removeItem('orbit:folders:me');
+          } catch (_) { /* ignore */ }
+        }
+      });
+    }
+
     // ── Bootstrap: hydrate store + init socket ─────────────────────────────────
     hydrateApp();
     initAppSocket();
+
+    // ── SW prefetch: if SW is available, prefetch API data now ─────────────────
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'PREFETCH_API',
+        payload: { routes: ['/api/projects/me', '/api/folders/me'] },
+      });
+    }
   </script>
   <div class="flex h-screen flex-col overflow-hidden" transition:animate="none">
     <!-- Top Navigation Bar -->

@@ -1,4 +1,4 @@
-const UserService = require('../services/UserService');
+const { UserService, userService } = require('../services/UserService');
 const UserRepository = require('../repositories/UserRepository');
 const emailService = require('../services/emailService');
 const { logSecurityEvent } = require('../utils/securityLog');
@@ -41,7 +41,7 @@ const setAuthCookies = (res, accessToken, refreshToken) => {
 class AuthController {
     async register(req, res) {
         try {
-            const user = await UserService.createUser(req.body);
+            const user = await userService.createUser(req.body);
 
             return res.status(201).json({
                 success: true,
@@ -61,7 +61,18 @@ class AuthController {
     async login(req, res) {
         try {
             const { email, password } = req.body || {};
-            const user = await UserService.loginUser(email, password);
+            const user = await userService.loginUser(email, password);
+
+            if (user.twoFactorVerified && user.twoFactorSecret) {
+                return res.status(200).json({
+                    success: true,
+                    requires2FA: true,
+                    message: 'Two-factor authentication required',
+                    data: {
+                        email: user.email,
+                    },
+                });
+            }
 
             const payload = { id: user._id, email: user.email, role: user.role };
             const accessToken = signAccessToken(payload);
@@ -84,6 +95,70 @@ class AuthController {
             });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Login failed');
+        }
+    }
+
+    async verify2FALogin(req, res) {
+        try {
+            const { email, token } = req.body || {};
+
+            if (!email || !token || !/^\d{6}$/.test(token)) {
+                return errorResponse(res, 400, 'Email and a valid 6-digit code are required');
+            }
+
+            const user = await UserRepository.findByEmail(email);
+            if (!user) {
+                return errorResponse(res, 400, 'Email or password is incorrect.');
+            }
+
+            UserService.checkAccountLock(user);
+
+            if (user.isBlocked === true) {
+                logSecurityEvent('auth.login.blocked', { userId: user._id, email: user.email });
+                throw new Error('User account is blocked.');
+            }
+
+            if (!user.twoFactorSecret) {
+                return errorResponse(res, 400, '2FA is not enabled for this account.');
+            }
+
+            const { decryptSecret } = require('../utils/cryptoUtils');
+            const decryptedSecret = decryptSecret(user.twoFactorSecret);
+            if (!decryptedSecret) {
+                return errorResponse(res, 500, 'Failed to verify 2FA');
+            }
+
+            const { verifyTOTP } = require('../utils/totpUtils');
+            if (!verifyTOTP(decryptedSecret, token)) {
+                logSecurityEvent('auth.2fa.failed', { email });
+                return errorResponse(res, 400, 'Invalid verification code');
+            }
+
+            const payload = { id: user._id, email: user.email, role: user.role };
+            const accessToken = signAccessToken(payload);
+            const refreshToken = signRefreshToken(payload);
+
+            await UserRepository.setSingleRefreshToken(
+                user._id,
+                buildRefreshTokenRecord(refreshToken)
+            );
+            await UserRepository.resetLoginAttempts(user._id);
+            await UserRepository.updateLastLoginAt(user._id);
+
+            setAuthCookies(res, accessToken, refreshToken);
+
+            logSecurityEvent('auth.2fa.success', { userId: user._id, email: user.email });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Login success',
+                data: {
+                    fullName: user.fullName,
+                    email: user.email,
+                },
+            });
+        } catch (error) {
+            return errorResponse(res, 400, error.message || '2FA verification failed');
         }
     }
 
@@ -195,7 +270,7 @@ class AuthController {
     async forgotPassword(req, res) {
         try {
             const { email } = req.body || {};
-            const result = await UserService.requestResetCode(email);
+            const result = await userService.requestResetCode(email);
 
             if (!result.sent) {
                 return res.status(200).json({
@@ -221,7 +296,7 @@ class AuthController {
     async resetPassword(req, res) {
         try {
             const { token, newPassword, confirmPassword, email } = req.body || {};
-            await UserService.resetPassword(token, newPassword, confirmPassword, email);
+            await userService.resetPassword(token, newPassword, confirmPassword, email);
             return res.status(200).json({
                 success: true,
                 message: 'Password has been reset. You can log in with your new password.',

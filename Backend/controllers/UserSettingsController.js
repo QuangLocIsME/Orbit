@@ -12,6 +12,7 @@ const {
     uploadUserAvatarBuffer,
     deleteUserAvatarFile,
 } = require('../services/supabaseStorageService');
+const { verifyTOTP } = require('../utils/totpUtils');
 
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -83,16 +84,6 @@ function generateTOTPCode(secret, timeStep) {
         (h[offset + 3] & 0xff)
     ) % 1000000;
     return String(code).padStart(6, '0');
-}
-
-function verifyTOTP(secret, token, window = 1) {
-    const currentTime = Math.floor(Date.now() / 1000 / 30);
-    for (let i = -window; i <= window; i++) {
-        if (generateTOTPCode(secret, currentTime + i) === token) {
-            return true;
-        }
-    }
-    return false;
 }
 
 class UserSettingsController {

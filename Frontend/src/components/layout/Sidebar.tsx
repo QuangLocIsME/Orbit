@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../../lib/utils';
 import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/auth';
 import { useAppStore, type ApiProject } from '../../stores/appStore';
 import { apiFetch } from '../../lib/api-client';
 import { useNotifications } from '@/hooks/useNotifications';
+import { toast } from 'sonner';
 
 interface SidebarProps {
   currentPath: string;
@@ -21,7 +23,8 @@ interface Project {
   category: 'favorites' | 'shared' | 'private';
   isFavorite?: boolean;
   coverImageUrl?: string;
-  role?: 'admin' | 'member' | 'viewer';
+  role?: 'admin' | 'member' | 'viewer' | 'owner';
+  sortOrder?: number;
 }
 
 const mainNavItems = [
@@ -106,6 +109,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
           isFavorite: p.isFavorite === true,
           coverImageUrl: p.coverImageUrl,
           role: p.role as Project['role'],
+          sortOrder: (p as any).sortOrder || 0,
         }));
         setProjects(mappedProjects);
       }
@@ -119,17 +123,20 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     fetchProjects();
   }, []);
 
-  // Listen for project events to refresh sidebar
+  // Listen for project events (window events) to refresh sidebar
   useEffect(() => {
     const handleProjectRemoved = () => fetchProjects();
     const handleProjectCreated = () => fetchProjects();
+    const handleFavoriteToggledLocal = () => fetchProjects();
 
     window.addEventListener('orbit:project-removed', handleProjectRemoved);
     window.addEventListener('orbit:project-created', handleProjectCreated);
+    window.addEventListener('orbit:favorite-toggled', handleFavoriteToggledLocal);
 
     return () => {
       window.removeEventListener('orbit:project-removed', handleProjectRemoved);
       window.removeEventListener('orbit:project-created', handleProjectCreated);
+      window.removeEventListener('orbit:favorite-toggled', handleFavoriteToggledLocal);
     };
   }, []);
 
@@ -238,11 +245,14 @@ export default function Sidebar({ currentPath }: SidebarProps) {
     : 'W';
 
   // FAVORITES shows only projects with isFavorite: true
-  const favorites = projects.filter(p => p.isFavorite === true);
+  // Sort each group by sortOrder
+  const sortByOrder = (arr: Project[]) => [...arr].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+  const favorites = sortByOrder(projects.filter(p => p.isFavorite === true));
   // MY PROJECTS: role === 'owner' (user created/owns)
-  const myProjects = projects.filter(p => p.role === 'owner' && !p.isFavorite);
+  const myProjects = sortByOrder(projects.filter(p => p.role === 'owner' && !p.isFavorite));
   // SHARED: role !== 'owner' (invited to project or assigned other roles)
-  const shared = projects.filter(p => p.role !== 'owner' && !p.isFavorite);
+  const shared = sortByOrder(projects.filter(p => p.role !== 'owner' && !p.isFavorite));
 
   return (
     <aside
@@ -852,6 +862,14 @@ function ProjectGroup({ title, projects, currentPath, storageKey }: ProjectGroup
     } catch { return true; }
   });
 
+  const [localProjects, setLocalProjects] = useState(projects);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalProjects(projects);
+  }, [projects]);
+
   const toggle = () => {
     setIsOpen(prev => {
       const next = !prev;
@@ -860,7 +878,64 @@ function ProjectGroup({ title, projects, currentPath, storageKey }: ProjectGroup
     });
   };
 
-  if (projects.length === 0) return null;
+  const saveProjectOrder = async (projectIds: string[]) => {
+    try {
+      await fetch('/api/projects/order/save', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectIds }),
+      });
+    } catch {
+      toast.error('Failed to save project order');
+    }
+  };
+
+  const handleDragStart = (e: React.DragEvent, projectId: string) => {
+    setDraggedId(projectId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', projectId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, projectId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (draggedId !== projectId) {
+      setDragOverId(projectId);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (!draggedId || draggedId === targetId) return;
+
+    setLocalProjects((prev) => {
+      const fromIdx = prev.findIndex((p) => p.id === draggedId);
+      const toIdx = prev.findIndex((p) => p.id === targetId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const reordered = [...prev];
+      const [moved] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+      saveProjectOrder(reordered.map((p) => p.id));
+      return reordered;
+    });
+
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+      setDragOverId(null);
+    }
+  };
+
+  if (localProjects.length === 0) return null;
 
   return (
     <div className="mt-6">
@@ -876,12 +951,33 @@ function ProjectGroup({ title, projects, currentPath, storageKey }: ProjectGroup
         <span>{title}</span>
       </button>
       {isOpen && (
+        <AnimatePresence initial={false}>
         <ul id={`${storageKey}-content`} className="space-y-1">
-          {projects.map((project) => {
+          {localProjects.map((project) => {
             const isActive = currentPath === `/projects/${project.slug}`;
+            const isDragging = draggedId === project.id;
+            const isDragOver = dragOverId === project.id;
 
             return (
-              <li key={project.id}>
+              <motion.li
+                key={project.id}
+                layout
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2, ease: 'easeInOut' }}
+                draggable
+                onDragStart={(e) => handleDragStart(e as unknown as React.DragEvent<HTMLElement>, project.id)}
+                onDragOver={(e) => handleDragOver(e as unknown as React.DragEvent<HTMLElement>, project.id)}
+                onDrop={(e) => handleDrop(e as unknown as React.DragEvent<HTMLElement>, project.id)}
+                onDragEnd={handleDragEnd}
+                onDragLeave={handleDragLeave}
+                className={cn(
+                  'relative rounded-lg transition-all duration-150',
+                  isDragging && 'opacity-40',
+                  isDragOver && 'before:absolute before:-left-1 before:top-0 before:bottom-0 before:w-0.5 before:bg-indigo-400 before:rounded-full'
+                )}
+              >
                 <a
                   href={`/projects/${project.slug}`}
                   className={cn(
@@ -893,14 +989,25 @@ function ProjectGroup({ title, projects, currentPath, storageKey }: ProjectGroup
                 >
                   <IconMap.project className="h-4 w-4 shrink-0" />
                   <span className="truncate flex-1">{project.name}</span>
-                  {project.isFavorite && (
-                    <IconMap.star className="h-4 w-4 shrink-0 text-yellow-500" />
-                  )}
+                  <AnimatePresence>
+                    {project.isFavorite && (
+                      <motion.span
+                        key="star-icon"
+                        initial={{ scale: 0, rotate: -30 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        exit={{ scale: 0 }}
+                        transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+                      >
+                        <IconMap.star className="h-4 w-4 shrink-0 text-yellow-500" />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
                 </a>
-              </li>
+              </motion.li>
             );
           })}
         </ul>
+        </AnimatePresence>
       )}
     </div>
   );
