@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { Clash } from '../types/clashes';
 import { useObjectInteraction } from '../hooks/useObjectInteraction';
@@ -13,6 +13,107 @@ import {
 import type { ViewerAdapter } from '../lib/viewerAdapter';
 import { useClashViewerStore } from '../state/clashStore';
 import { XeoKitViewerAdapter } from '../lib/xeoKitViewerAdapter';
+import { useMeasureDistance, type Measurement } from '@/hooks/useMeasureDistance';
+
+/** Compact measurement results panel — shared across overview and clash detail sections. */
+function MeasurePanel({
+  measurements,
+  removeMeasurement,
+  clearAllMeasurements,
+  formatDistance,
+}: {
+  measurements: Measurement[];
+  removeMeasurement: (id: string) => void;
+  clearAllMeasurements: () => void;
+  formatDistance: (meters: number) => string;
+}) {
+  return (
+    <div className="w-64 shrink-0 overflow-y-auto rounded-xl border border-[#2a3245] bg-[#131a2b]">
+      <div className="sticky top-0 z-10 border-b border-[#2a3245] bg-[#0d1117] px-3 py-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xs font-semibold text-slate-200">Measurement Results</h3>
+            <p className="text-[10px] text-slate-500">
+              {measurements.length > 0
+                ? `${measurements.length} measurement${measurements.length > 1 ? 's' : ''}`
+                : 'No measurements yet'}
+            </p>
+          </div>
+          {measurements.length > 0 && (
+            <button
+              onClick={clearAllMeasurements}
+              className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
+            >
+              Clear All
+            </button>
+          )}
+        </div>
+      </div>
+
+      {measurements.length === 0 ? (
+        <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+          <svg className="mb-2 h-8 w-8 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+          <p className="text-[11px] text-slate-500">Click two points on the model to measure.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-800">
+          {measurements.map((m, i) => (
+            <div key={m.id} className="group px-3 py-2.5 hover:bg-white/5 transition-colors">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[10px] font-medium text-indigo-400 bg-indigo-500/15 px-1.5 py-0.5 rounded">
+                  #{i + 1}
+                </span>
+                <button
+                  onClick={() => removeMeasurement(m.id)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-500/20 text-red-400"
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mb-1.5 flex items-baseline gap-1.5">
+                <span className="text-base font-bold text-white">{formatDistance(m.distance)}</span>
+                <span className="text-[10px] text-slate-500">total</span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1">
+                <div className="flex flex-col items-center rounded bg-slate-800/50 p-1">
+                  <span className="text-[9px] text-slate-600">X</span>
+                  <span className="text-[10px] font-medium text-red-400">{formatDistance(m.xDistance)}</span>
+                </div>
+                <div className="flex flex-col items-center rounded bg-slate-800/50 p-1">
+                  <span className="text-[9px] text-slate-600">Y</span>
+                  <span className="text-[10px] font-medium text-green-400">{formatDistance(m.yDistance)}</span>
+                </div>
+                <div className="flex flex-col items-center rounded bg-slate-800/50 p-1">
+                  <span className="text-[9px] text-slate-600">Z</span>
+                  <span className="text-[10px] font-medium text-blue-400">{formatDistance(m.zDistance)}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {measurements.length > 1 && (
+        <div className="border-t border-[#2a3245] bg-[#0d1117] px-3 py-2">
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="text-slate-500">Longest</span>
+            <span className="font-medium text-slate-300">{formatDistance(Math.max(...measurements.map((m) => m.distance)))}</span>
+          </div>
+          <div className="mt-0.5 flex items-center justify-between text-[10px]">
+            <span className="text-slate-500">Shortest</span>
+            <span className="font-medium text-slate-300">{formatDistance(Math.min(...measurements.map((m) => m.distance)))}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Viewer3DProps {
   clash: Clash | null;
@@ -33,6 +134,8 @@ interface Viewer3DProps {
   xktModels?: { id: string }[];
   /** Real mesh triangle positions per object id (flat array, every 9 floats = 1 triangle, world-space meters). */
   objectMeshPositions?: Record<string, number[]>;
+  /** Show measure distance toolbar + panel. Default true. */
+  showMeasureToolbar?: boolean;
 }
 
 export default function Viewer3D({
@@ -52,11 +155,28 @@ export default function Viewer3D({
   projectSlug = null,
   xktModels,
   objectMeshPositions = {},
+  showMeasureToolbar = true,
 }: Viewer3DProps) {
   const xeokitCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const xeokitBootstrappedRef = useRef(false);
   const [xeokitAdapter, setXeokitAdapter] = useState<XeoKitViewerAdapter | null>(null);
+  const [showMeasurePanel, setShowMeasurePanel] = useState(false);
+  /** Raw xeokit Viewer instance — set after async init so useMeasureDistance can attach the plugin. */
+  const rawViewerRef = useRef<unknown>(null);
+  /** Cached doublePickFlyTo value so we can restore it when measurement mode ends. */
+  const prevDoublePickFlyToRef = useRef<boolean>(true);
   const clashStore = useClashViewerStore();
+
+  const {
+    isActive: measureActive,
+    measurements,
+    activateMeasurement,
+    deactivateMeasurement,
+    clearAllMeasurements,
+    removeMeasurement,
+    formatDistance,
+    onViewerReady,
+  } = useMeasureDistance({ viewerRef: rawViewerRef });
 
   const { objects, hasCollision, collisionMessage, selectObject } = useObjectInteraction(
     clash,
@@ -142,6 +262,8 @@ export default function Viewer3D({
           antialias: true,
           dtxEnabled: true,
         });
+        rawViewerRef.current = viewer;
+        onViewerReady();
         canvas.addEventListener('contextmenu', (event) => event.preventDefault());
         viewer.camera.eye = [220, 180, 220];
         viewer.camera.look = [0, 0, 0];
@@ -179,6 +301,42 @@ export default function Viewer3D({
     },
     [xeokitAdapter]
   );
+
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape' && measureActive) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const camCtrl = (rawViewerRef.current as any)?.cameraControl;
+      if (camCtrl) camCtrl.doublePickFlyTo = prevDoublePickFlyToRef.current;
+      deactivateMeasurement();
+    }
+  }, [measureActive, deactivateMeasurement]);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  const cancelMeasure = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const camCtrl = (rawViewerRef.current as any)?.cameraControl;
+    if (camCtrl) camCtrl.doublePickFlyTo = prevDoublePickFlyToRef.current;
+    deactivateMeasurement();
+  };
+
+  const toggleMeasure = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const camCtrl = (rawViewerRef.current as any)?.cameraControl;
+    if (measureActive) {
+      if (camCtrl) camCtrl.doublePickFlyTo = prevDoublePickFlyToRef.current;
+      deactivateMeasurement();
+    } else {
+      if (camCtrl) {
+        prevDoublePickFlyToRef.current = camCtrl.doublePickFlyTo ?? true;
+        camCtrl.doublePickFlyTo = false;
+      }
+      activateMeasurement();
+    }
+  };
 
   useEffect(() => {
     if (!xeokitAdapter) return;
@@ -283,15 +441,110 @@ export default function Viewer3D({
               )}
             </p>
           </div>
-          <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]">
-            <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
-            {!xeokitInteractive && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[#0a0e16] text-xs text-slate-400 backdrop-blur-sm">
-                <div className="flex items-center gap-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-slate-300" />
-                  Initializing 3D viewer...
+
+          <div className="flex flex-1 min-h-0 gap-3">
+            {/* Canvas area with floating toolbar */}
+            <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]">
+              <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
+
+              {/* Floating toolbar inside canvas */}
+              {showMeasureToolbar && (
+                <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-1">
+                  {/* Measure toggle */}
+                  <button
+                    onClick={toggleMeasure}
+                    disabled={!xeokitInteractive}
+                    className={cn(
+                      'pointer-events-auto flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all shadow-lg',
+                      measureActive
+                        ? 'bg-indigo-500 text-white shadow-indigo-500/30'
+                        : 'bg-[#1a2332]/90 border border-[#2a3245] text-slate-300 hover:bg-[#243044]/90 backdrop-blur-sm',
+                      !xeokitInteractive ? 'opacity-40 cursor-not-allowed' : ''
+                    )}
+                    title="Measure Distance"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                    <span>{measureActive ? 'Measuring...' : 'Measure'}</span>
+                    {measurements.length > 0 && (
+                      <span className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-indigo-400 text-white text-[10px]">
+                        {measurements.length}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Cancel (only when measuring) */}
+                  {measureActive && (
+                    <button
+                      onClick={cancelMeasure}
+                      className="pointer-events-auto flex items-center gap-1 rounded-lg bg-[#1a2332]/90 border border-[#2a3245] px-2 py-1.5 text-xs text-slate-300 hover:bg-[#243044]/90 backdrop-blur-sm transition-all shadow-lg"
+                      title="Cancel measurement"
+                    >
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+
+                  {/* Results toggle */}
+                  <button
+                    onClick={() => setShowMeasurePanel(v => !v)}
+                    disabled={!xeokitInteractive}
+                    className={cn(
+                      'pointer-events-auto flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all shadow-lg',
+                      showMeasurePanel
+                        ? 'bg-indigo-500/20 border border-indigo-400/50 text-indigo-300'
+                        : 'bg-[#1a2332]/90 border border-[#2a3245] text-slate-300 hover:bg-[#243044]/90 backdrop-blur-sm',
+                      !xeokitInteractive ? 'opacity-40 cursor-not-allowed' : ''
+                    )}
+                    title="Toggle Results Panel"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <span>Results</span>
+                  </button>
+
+                  {/* Clear All */}
+                  {measurements.length > 0 && (
+                    <button
+                      onClick={clearAllMeasurements}
+                      className="pointer-events-auto flex items-center gap-1 rounded-lg bg-[#1a2332]/90 border border-[#2a3245] px-2 py-1.5 text-xs text-red-300 hover:bg-red-500/15 backdrop-blur-sm transition-all shadow-lg"
+                      title="Clear All Measurements"
+                    >
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  )}
+
+                  {/* Measure hint */}
+                  {measureActive && (
+                    <div className="ml-1 rounded-lg bg-indigo-500/20 border border-indigo-400/30 px-2 py-1 text-[10px] text-indigo-300 shadow-lg backdrop-blur-sm">
+                      Click first point, then second
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {!xeokitInteractive && (
+                <div className="absolute inset-0 flex items-center justify-center bg-[#0a0e16] text-xs text-slate-400 backdrop-blur-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-slate-300" />
+                    Initializing 3D viewer...
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {showMeasureToolbar && showMeasurePanel && xeokitInteractive && (
+              <MeasurePanel
+                measurements={measurements}
+                removeMeasurement={removeMeasurement}
+                clearAllMeasurements={clearAllMeasurements}
+                formatDistance={formatDistance}
+              />
             )}
           </div>
         </div>
@@ -337,59 +590,152 @@ export default function Viewer3D({
         </div>
       </div>
 
-      {/* Canvas area with floating badges */}
-      <div
-        onDoubleClick={() => onFocusClash?.(clash)}
-        className="relative min-h-[220px] flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]"
-      >
-        <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
-        {showScopeBadge && (
-          <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
-            <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2.5 py-1 text-[10px] font-medium text-cyan-200 backdrop-blur-sm">
-              ◎ Highlighted Set A/B
-            </span>
-            <span className={cn(
-              'rounded-full border px-2.5 py-1 text-[10px] font-medium backdrop-blur-sm',
-              hideUnrelatedActive
-                ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
-                : 'border-slate-500/40 bg-slate-600/25 text-slate-300'
-            )}>
-              {hideUnrelatedActive ? '◐ Hiding unrelated' : '○ Show all'}
-            </span>
-          </div>
-        )}
-        {!xeokitInteractive && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0a0e16] text-xs text-slate-400 backdrop-blur-sm">
-            <div className="flex items-center gap-2">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-slate-300" />
-              Initializing 3D viewer...
+      {/* Canvas + Footer + Measure Panel */}
+      <div className="flex flex-1 min-h-0 gap-3">
+        {/* Canvas area with floating toolbar + badges */}
+        <div
+          onDoubleClick={() => onFocusClash?.(clash)}
+          className="relative min-h-[220px] flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]"
+        >
+          <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
+
+          {/* Floating toolbar inside canvas */}
+          {showMeasureToolbar && (
+            <div className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-1">
+              {/* Measure toggle */}
+              <button
+                onClick={toggleMeasure}
+                disabled={!xeokitInteractive}
+                className={cn(
+                  'pointer-events-auto flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all shadow-lg',
+                  measureActive
+                    ? 'bg-indigo-500 text-white shadow-indigo-500/30'
+                    : 'bg-[#1a2332]/90 border border-[#2a3245] text-slate-300 hover:bg-[#243044]/90 backdrop-blur-sm',
+                  !xeokitInteractive ? 'opacity-40 cursor-not-allowed' : ''
+                )}
+                title="Measure Distance"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                <span>{measureActive ? 'Measuring...' : 'Measure'}</span>
+                {measurements.length > 0 && (
+                  <span className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-indigo-400 text-white text-[10px]">
+                    {measurements.length}
+                  </span>
+                )}
+              </button>
+
+              {measureActive && (
+                <button
+                  onClick={cancelMeasure}
+                  className="pointer-events-auto flex items-center gap-1 rounded-lg bg-[#1a2332]/90 border border-[#2a3245] px-2 py-1.5 text-xs text-slate-300 hover:bg-[#243044]/90 backdrop-blur-sm transition-all shadow-lg"
+                  title="Cancel"
+                >
+                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+
+              <button
+                onClick={() => setShowMeasurePanel(v => !v)}
+                disabled={!xeokitInteractive}
+                className={cn(
+                  'pointer-events-auto flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all shadow-lg',
+                  showMeasurePanel
+                    ? 'bg-indigo-500/20 border border-indigo-400/50 text-indigo-300'
+                    : 'bg-[#1a2332]/90 border border-[#2a3245] text-slate-300 hover:bg-[#243044]/90 backdrop-blur-sm',
+                  !xeokitInteractive ? 'opacity-40 cursor-not-allowed' : ''
+                )}
+                title="Toggle Results"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <span>Results</span>
+              </button>
+
+              {measurements.length > 0 && (
+                <button
+                  onClick={clearAllMeasurements}
+                  className="pointer-events-auto flex items-center gap-1 rounded-lg bg-[#1a2332]/90 border border-[#2a3245] px-2 py-1.5 text-xs text-red-300 hover:bg-red-500/15 backdrop-blur-sm transition-all shadow-lg"
+                  title="Clear All"
+                >
+                  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              )}
+
+              {measureActive && (
+                <div className="ml-1 rounded-lg bg-indigo-500/20 border border-indigo-400/30 px-2 py-1 text-[10px] text-indigo-300 shadow-lg backdrop-blur-sm">
+                  Click first point, then second
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Scope badges */}
+          {showScopeBadge && (
+            <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
+              <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2.5 py-1 text-[10px] font-medium text-cyan-200 backdrop-blur-sm">
+                ◎ Highlighted Set A/B
+              </span>
+              <span className={cn(
+                'rounded-full border px-2.5 py-1 text-[10px] font-medium backdrop-blur-sm',
+                hideUnrelatedActive
+                  ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
+                  : 'border-slate-500/40 bg-slate-600/25 text-slate-300'
+              )}>
+                {hideUnrelatedActive ? '◐ Hiding unrelated' : '○ Show all'}
+              </span>
+            </div>
+          )}
+          {!xeokitInteractive && (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#0a0e16] text-xs text-slate-400 backdrop-blur-sm">
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-slate-300" />
+                Initializing 3D viewer...
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col flex-1 min-h-0 gap-3">
+          {/* Footer: object info row */}
+          <div className="shrink-0 rounded-lg border border-[#2a3245] bg-[#131a2b] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+              <span className="flex items-center gap-1.5 font-mono text-slate-400">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400/80" />
+                <span className="text-slate-300" title={clash.objectA}>{clash.objectA}</span>
+              </span>
+              <span className="flex items-center gap-1.5 font-mono text-slate-400">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/80" />
+                <span className="text-slate-300" title={clash.objectB}>{clash.objectB}</span>
+              </span>
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <svg className="h-3 w-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span className="text-slate-300" title={clash.location}>{clash.location}</span>
+              </span>
+              <span className={cn('ml-auto text-[10px]', xeokitInteractive ? 'text-emerald-400/70' : 'text-slate-500')}>
+                {xeokitInteractive ? '✓ 3D navigation ready' : '⟳ loading...'}
+              </span>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* Footer: object info row */}
-      <div className="shrink-0 rounded-lg border border-[#2a3245] bg-[#131a2b] px-3 py-2">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
-          <span className="flex items-center gap-1.5 font-mono text-slate-400">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400/80" />
-            <span className="text-slate-300" title={clash.objectA}>{clash.objectA}</span>
-          </span>
-          <span className="flex items-center gap-1.5 font-mono text-slate-400">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/80" />
-            <span className="text-slate-300" title={clash.objectB}>{clash.objectB}</span>
-          </span>
-          <span className="flex items-center gap-1.5 text-slate-400">
-            <svg className="h-3 w-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span className="text-slate-300" title={clash.location}>{clash.location}</span>
-          </span>
-          <span className={cn('ml-auto text-[10px]', xeokitInteractive ? 'text-emerald-400/70' : 'text-slate-500')}>
-            {xeokitInteractive ? '✓ 3D navigation ready' : '⟳ loading...'}
-          </span>
         </div>
+
+        {showMeasureToolbar && showMeasurePanel && xeokitInteractive && (
+          <MeasurePanel
+            measurements={measurements}
+            removeMeasurement={removeMeasurement}
+            clearAllMeasurements={clearAllMeasurements}
+            formatDistance={formatDistance}
+          />
+        )}
       </div>
     </div>
   );
