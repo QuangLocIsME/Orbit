@@ -248,6 +248,13 @@ class AuthController {
             return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, 'Account is blocked'));
         }
 
+        try {
+            UserService.checkAccountLock(user);
+        } catch (lockErr) {
+            logSecurityEvent('auth.google.locked', { userId: user._id, email: user.email });
+            return res.redirect(this.getFrontendAuthRedirectUrl(false, null, null, lockErr.message));
+        }
+
         const payload = { id: user._id, email: user.email, role: user.role };
         const accessToken = signAccessToken(payload);
         const refreshToken = signRefreshToken(payload);

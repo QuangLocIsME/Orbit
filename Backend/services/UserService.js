@@ -95,7 +95,7 @@ class UserService {
         const user = await UserRepository.findByEmail(normalizedEmail);
 
         if (user) {
-            checkAccountLock(user);
+            UserService.checkAccountLock(user);
 
             if (user.isBlocked === true) {
                 logSecurityEvent('auth.login.blocked', { userId: user._id, email: user.email });
@@ -111,6 +111,7 @@ class UserService {
                     const lockUntil = new Date(Date.now() + LOCKOUT_DURATION_MS);
                     await User.findByIdAndUpdate(user._id, { lockUntil, updatedAt: new Date() });
                     logSecurityEvent('auth.login.locked', { userId: user._id, email: user.email, attempts });
+                    emailService.sendAccountLockedEmail(user.email, user.fullName, lockUntil).catch(() => {});
                     throw new Error(`Account locked due to too many failed attempts. Try again in 15 minutes.`);
                 }
                 logSecurityEvent('auth.login.failed', { email: normalizedEmail, attempts });
@@ -179,7 +180,7 @@ class UserService {
             throw new Error('Invalid or expired reset link. Please request a new one.');
         }
 
-        checkAccountLock(user);
+        UserService.checkAccountLock(user);
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await UserRepository.updatePassword(user._id, hashedPassword);
@@ -191,6 +192,14 @@ class UserService {
     // Export constants for external use (e.g. AuthController)
     static LOCKOUT_DURATION_MS = LOCKOUT_DURATION_MS;
     static MAX_LOGIN_ATTEMPTS = MAX_LOGIN_ATTEMPTS;
+
+    static checkAccountLock(user) {
+        if (!user) return;
+        if (user.lockUntil && user.lockUntil > new Date()) {
+            const remainingMinutes = Math.ceil((user.lockUntil - new Date()) / 60000);
+            throw new Error(`Account is locked. Try again in ${remainingMinutes} minute(s).`);
+        }
+    }
 }
 
 module.exports = new UserService();

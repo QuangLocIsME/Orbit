@@ -27,7 +27,7 @@ const UserSchema = new mongoose.Schema({
         trim: true,
         match: [/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/u, 'Invalid email format'],
     },
-    password: { type: String, required: false, default: null, minlength: 6 },
+    password: { type: String, required: false, default: null },
     fullName: { type: String, required: true, trim: true, minlength: 2, maxlength: 200 },
     googleId: { type: String, sparse: true, unique: true, match: [/^\d+$/, 'Invalid Google ID'] },
     avatar: { type: String, default: null, trim: true },
