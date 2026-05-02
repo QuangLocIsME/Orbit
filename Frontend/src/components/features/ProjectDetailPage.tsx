@@ -1749,7 +1749,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
         {/* Documents Tab */}
         {activeTab === 'documents' && (
-          <ProjectDocumentsManager projectId={project.publicId} initialFileId={initialDocFileId} />
+          <ProjectDocumentsManager projectId={project.publicId} initialFileId={initialDocFileId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
         )}
 
         {/* Versions Tab */}

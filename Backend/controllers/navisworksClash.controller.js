@@ -8,6 +8,7 @@ const navisworksClashService = require('../services/navisworksClash.service');
 const navisworksImportService = require('../services/navisworksImport.service');
 const DocumentRepository = require('../repositories/DocumentRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const { downloadXktBuffer } = require('../services/supabaseStorageService');
 
 const getProjectSlug = (req) => req.params?.projectSlug || req.body?.projectSlug || req.query?.projectSlug;
 
@@ -289,18 +290,42 @@ class NavisworksClashController {
             if (documentIds.length === 0) return errorResponse(res, 400, 'documentIds is required');
 
             const imports = [];
+            const skippedFiles = [];
+
             for (const docId of documentIds) {
                 const doc = await DocumentRepository.findByPublicId(docId);
                 if (!doc || !/\.ifc$/i.test(doc.originalName)) continue;
 
-                if (!doc.s3Url) {
-                    return errorResponse(res, 400, `Document "${doc.originalName}" has no download URL.`);
+                // Prefer XKT already in Supabase storage — skip the IFC→XKT conversion entirely.
+                if (doc.xktKey && doc.conversionStatus === 'READY') {
+                    try {
+                        const xktBuffer = await downloadXktBuffer(doc.xktKey);
+                        imports.push({
+                            buffer: xktBuffer,
+                            originalName: doc.originalName.replace(/\.ifc$/i, '.xkt'),
+                            sourceFormat: 'xkt',
+                            sourceModel: doc.originalName.replace(/\.ifc$/i, ''),
+                        });
+                        console.info(`[importFromDocuments] Using existing XKT for "${doc.originalName}"`);
+                        continue;
+                    } catch (xktErr) {
+                        console.warn(`[importFromDocuments] Failed to download existing XKT for "${doc.originalName}", falling back to IFC: ${xktErr.message}`);
+                        // Fall through to IFC download below.
+                    }
                 }
 
-                // s3Url là Supabase public URL — fetch trực tiếp
+                // No XKT available — fall back to IFC and let importModels convert it.
+                if (!doc.s3Url) {
+                    skippedFiles.push(doc.originalName);
+                    console.warn(`[importFromDocuments] Skipping "${doc.originalName}": no download URL.`);
+                    continue;
+                }
+
                 const response = await fetch(doc.s3Url);
                 if (!response.ok) {
-                    return errorResponse(res, 502, `Failed to download "${doc.originalName}" from storage: ${response.status}`);
+                    skippedFiles.push(doc.originalName);
+                    console.warn(`[importFromDocuments] Failed to download IFC "${doc.originalName}": ${response.status}`);
+                    continue;
                 }
                 const arrayBuffer = await response.arrayBuffer();
                 const buffer = Buffer.from(arrayBuffer);
@@ -313,10 +338,12 @@ class NavisworksClashController {
                 });
             }
 
-            if (imports.length === 0) return errorResponse(res, 400, 'No valid IFC documents found');
+            if (imports.length === 0) {
+                return errorResponse(res, 400, `No valid documents found (${skippedFiles.length > 0 ? skippedFiles.join(', ') : 'no matching IFC files'})`);
+            }
 
-            const { federatedModel, skippedFiles } = await modelService.importModels(projectSlug, imports);
-            return res.status(200).json({ success: true, federatedModel, skippedFiles });
+            const { federatedModel, skippedFiles: convertedSkipped } = await modelService.importModels(projectSlug, imports);
+            return res.status(200).json({ success: true, federatedModel, skippedFiles: [...skippedFiles, ...convertedSkipped] });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to import from documents');
         }

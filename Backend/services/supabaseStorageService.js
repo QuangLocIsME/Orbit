@@ -126,6 +126,28 @@ async function uploadIfcBuffer(buffer, storagePath) {
 }
 
 /**
+ * Download XKT file from Supabase, returns Buffer.
+ * @param {string} storagePath - xktKey saved in Document
+ */
+async function downloadXktBuffer(storagePath) {
+    assertSupabaseConfigured();
+    const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${SUPABASE_XKT_BUCKET}/${storagePath}`;
+    const res = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+        },
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Supabase XKT download failed: ${res.status} ${text}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+}
+
+/**
  * Download IFC file từ Supabase, trả về Buffer.
  * @param {string} storagePath - supabaseIfcKey đã lưu trong Document
  */
@@ -431,6 +453,7 @@ module.exports = {
     uploadXktFile,
     uploadIfcBuffer,
     downloadIfcBuffer,
+    downloadXktBuffer,
     uploadAttachmentBuffer,
     uploadProjectThumbnailBuffer,
     uploadAvatarBuffer,

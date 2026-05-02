@@ -69,7 +69,14 @@ const mergeMatrices = (a, b) => {
 };
 
 const transformBoundingBox = (bbox, matrix, scale = 1) => {
-    const corners = [
+    // Apply scale by pre-multiplying it into the matrix so BOTH translation
+    // and rotation/scale columns are scaled uniformly.  This avoids the
+    // previous bug where translation was scaled twice (once in the corner
+    // scaling step AND again inside multiplyPoint), inflating the position
+    // while keeping the size at unitScale.
+    const scaledMatrix = scale === 1 ? matrix : matrix.map((v, i) => v * scale);
+
+    const transformed = [
         [bbox.min[0], bbox.min[1], bbox.min[2]],
         [bbox.min[0], bbox.min[1], bbox.max[2]],
         [bbox.min[0], bbox.max[1], bbox.min[2]],
@@ -78,9 +85,8 @@ const transformBoundingBox = (bbox, matrix, scale = 1) => {
         [bbox.max[0], bbox.min[1], bbox.max[2]],
         [bbox.max[0], bbox.max[1], bbox.min[2]],
         [bbox.max[0], bbox.max[1], bbox.max[2]],
-    ].map(([x, y, z]) => [x * scale, y * scale, z * scale]);
+    ].map((corner) => multiplyPoint(scaledMatrix, corner));
 
-    const transformed = corners.map((corner) => multiplyPoint(matrix, corner));
     const xs = transformed.map((point) => point[0]);
     const ys = transformed.map((point) => point[1]);
     const zs = transformed.map((point) => point[2]);
@@ -182,6 +188,10 @@ const parseXktModel = (buffer, meta, projectSlug) => {
     const xktFile = `${sourceModelId}.xkt`;
     fs.writeFileSync(path.join(xktDir, xktFile), buffer);
 
+    // Extract object metadata from XKT binary JSON section.
+    const objects = parseXktObjects(buffer, sourceModelId, sourceModel, transform);
+    const categories = [...new Set(objects.map((o) => o.category))].sort();
+
     return {
         model: {
             id: sourceModelId,
@@ -191,12 +201,112 @@ const parseXktModel = (buffer, meta, projectSlug) => {
             unit,
             transform,
             importedAt: new Date().toISOString(),
-            categories: [],
-            objectCount: 0,
+            categories,
+            objectCount: objects.length,
             xktFile,
         },
-        objects: [],
+        objects,
     };
+};
+
+/**
+ * Parse object metadata (id, type, category, boundingBox, transform) from XKT binary.
+ * XKT v8+ stores metadata as a JSON block at a fixed offset before geometry data.
+ * Falls back to the model-level AABB if per-object metadata is unavailable.
+ */
+const parseXktObjects = (buffer, sourceModelId, sourceModel, modelTransform) => {
+    if (!Buffer.isBuffer(buffer)) buffer = Buffer.from(buffer);
+
+    try {
+        // XKT v8+: JSON metadata starts at offset 64 (after 32-byte header + 32-byte schema pointer).
+        const jsonOffset = buffer.readUInt32LE(36);
+        if (!jsonOffset || jsonOffset >= buffer.length) {
+            throw new Error('Invalid JSON offset in XKT header');
+        }
+
+        // Read JSON size (next 4 bytes after offset).
+        const jsonSize = buffer.readUInt32LE(40);
+        if (!jsonSize || jsonOffset + jsonSize > buffer.length) {
+            throw new Error('Invalid JSON size in XKT header');
+        }
+
+        const jsonSlice = buffer.slice(jsonOffset, jsonOffset + jsonSize);
+        const jsonString = jsonSlice.toString('utf8').replace(/\0+$/, '');
+        const meta = JSON.parse(jsonString);
+
+        const objects = [];
+        const objectsData = meta.metadata?.objects || meta.objects || [];
+
+        for (const obj of objectsData) {
+            if (!obj || typeof obj !== 'object') continue;
+            const rawId = obj.id || obj.ifcType || obj.name || obj.objectId;
+            if (!rawId) continue;
+
+            const rawType = String(obj.type || obj.ifcType || 'IfcBuildingElementProxy');
+            const category = obj.category || rawType.replace(/^Ifc/, '') || rawType;
+
+            let bbox = null;
+            if (obj.boundingBox) {
+                bbox = {
+                    min: [(obj.boundingBox.min?.[0] ?? 0), (obj.boundingBox.min?.[1] ?? 0), (obj.boundingBox.min?.[2] ?? 0)],
+                    max: [(obj.boundingBox.max?.[0] ?? 0), (obj.boundingBox.max?.[1] ?? 0), (obj.boundingBox.max?.[2] ?? 0)],
+                };
+            } else if (obj.aabb) {
+                bbox = {
+                    min: [obj.aabb[0] ?? 0, obj.aabb[1] ?? 0, obj.aabb[2] ?? 0],
+                    max: [obj.aabb[3] ?? 0, obj.aabb[4] ?? 0, obj.aabb[5] ?? 0],
+                };
+            }
+
+            let objTransform = modelTransform;
+            if (obj.transform && Array.isArray(obj.transform) && obj.transform.length === 16) {
+                objTransform = mergeMatrices(modelTransform, obj.transform);
+            }
+
+            let finalBbox = bbox;
+            if (bbox) {
+                finalBbox = transformBoundingBox(bbox, modelTransform);
+            }
+
+            objects.push({
+                id: String(rawId),
+                type: rawType,
+                category,
+                boundingBox: finalBbox || {
+                    min: [-1, -1, -1],
+                    max: [1, 1, 1],
+                },
+                transform: objTransform,
+                sourceModel,
+                sourceModelId,
+                sourceFile: sourceModel,
+            });
+        }
+
+        // If no objects extracted from metadata, fall back to model-level AABB.
+        if (objects.length === 0 && meta.aabb && meta.aabb.length === 6) {
+            const modelBbox = {
+                min: [meta.aabb[0], meta.aabb[1], meta.aabb[2]],
+                max: [meta.aabb[3], meta.aabb[4], meta.aabb[5]],
+            };
+            const transformed = transformBoundingBox(modelBbox, modelTransform);
+            objects.push({
+                id: `${sourceModelId}__model_bbox`,
+                type: 'IfcBuildingElementProxy',
+                category: sourceModel,
+                boundingBox: transformed,
+                transform: modelTransform,
+                sourceModel,
+                sourceModelId,
+                sourceFile: sourceModel,
+            });
+        }
+
+        return objects;
+    } catch (err) {
+        console.warn(`[parseXktObjects] Failed to extract metadata from XKT (${sourceModel}): ${err.message}`);
+        return [];
+    }
 };
 
 // Create a fresh IfcAPI instance for each parse to avoid WASM heap exhaustion

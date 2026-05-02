@@ -60,6 +60,7 @@ export type XeoKitSceneObject = {
   size: { width: number; depth: number; height: number };
   isPrimary?: boolean;
   isClashObject?: boolean;
+  isClashObjectB?: boolean;
   isColliding?: boolean;
   isSelected?: boolean;
   isInTestScope?: boolean;
@@ -166,10 +167,11 @@ function waitForXktSceneModelLoaded(
 }
 
 const colorForObject = (object: XeoKitSceneObject): [number, number, number] => {
-  if (object.isClashObject) return [0.96, 0.20, 0.18];
+  if (object.isPrimary) return [0.32, 0.73, 0.98];
+  if (object.isClashObjectB) return [0.96, 0.20, 0.18];
+  if (object.isClashObject) return [0.32, 0.73, 0.98];
   if (object.isDeEmphasized) return [0.50, 0.58, 0.68];
   if (object.isColliding) return [0.92, 0.22, 0.20];
-  if (object.isPrimary) return [0.32, 0.73, 0.98];
   if (object.isInTestScope) return [0.24, 0.80, 0.62];
   return object.isSelected ? [0.30, 0.90, 0.72] : [0.24, 0.80, 0.62];
 };
@@ -183,6 +185,7 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   private readonly meshIdToObjectId = new Map<string, string>();
   private loadedXktModelIds: string[] = [];
   private xktSyncGeneration = 0;
+  private readonly xktObjectModelMap = new Map<string, string>(); // objectId → modelId
 
   constructor(
     private readonly viewer: XeoKitViewer,
@@ -223,13 +226,11 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
 
     objects.forEach((object, index) => {
       const meshId = `orbit-mesh-${index}`;
-      const color = colorForObject(object);
-      const opacity = object.isDeEmphasized ? 0.62 : object.isClashObject ? 0.92 : object.isColliding ? 0.78 : 0.86;
+      const hasRealMesh = Boolean(object.meshPositions && object.meshPositions.length >= 9);
 
-      if (object.meshPositions && object.meshPositions.length >= 9) {
+      if (hasRealMesh) {
         // Render real mesh geometry (viewer-space, pre-transformed by Viewer3D).
-        // meshPositions: flat [x0,y0,z0, x1,y1,z1, x2,y2,z2, ...] already in viewer-space.
-        const pos = object.meshPositions;
+        const pos = object.meshPositions!;
         const vertCount = Math.floor(pos.length / 3);
         const indices: number[] = new Array(vertCount);
         for (let i = 0; i < vertCount; i++) indices[i] = i;
@@ -247,11 +248,11 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
           geometryId: geoId,
           position: [0, 0, 0],
           scale: [1, 1, 1],
-          color,
-          opacity,
+          color: colorForObject(object),
+          opacity: 1,
         });
       } else {
-        // Fallback: bounding box
+        // Fallback: bounding box — semi-transparent so overlap region remains visible.
         const sx = Math.max(1, object.size.width / 2);
         const sy = Math.max(1, object.size.height / 2);
         const sz = Math.max(1, object.size.depth / 2);
@@ -260,8 +261,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
           geometryId: BOX_GEOMETRY_ID,
           position: [object.position.x, object.position.y, object.position.z],
           scale: [sx, sy, sz],
-          color,
-          opacity,
+          color: colorForObject(object),
+          opacity: 0.25,
         });
       }
 
@@ -327,8 +328,13 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
 
   /**
    * Load or refresh XKT models (authenticated fetch). Box overlay from loadSceneObjects is unchanged.
+   * Calls onLoaded callback after all models are ready (for post-load operations like recolor).
    */
-  async syncXktModels(projectSlug: string, modelIds: string[]): Promise<void> {
+  async syncXktModels(
+    projectSlug: string,
+    modelIds: string[],
+    onLoaded?: (loadedIds: string[]) => void
+  ): Promise<void> {
     const gen = ++this.xktSyncGeneration;
     this.destroyXktModels();
 
@@ -374,6 +380,7 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
       requestAnimationFrame(() => {
         if (gen !== this.xktSyncGeneration) return;
         this.fitCameraToXktModels(gen, loadedIds);
+        onLoaded?.(loadedIds);
       });
     });
   }
@@ -474,11 +481,37 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   }
 
   private flyToModel(): void {
-    // Defer one animation frame so xeokit finishes computing the AABB after finalize().
     requestAnimationFrame(() => {
-      const aabb = this.sceneModel?.aabb;
-      if (!Array.isArray(aabb) || aabb.length < 6) return;
-      this.viewer.cameraFlight?.flyTo?.({ aabb });
+      const overlayAabb = this.sceneModel?.aabb;
+      if (!Array.isArray(overlayAabb) || overlayAabb.length < 6) return;
+
+      const scene = this.viewer.scene as { models?: Record<string, { aabb?: number[] }> } | undefined;
+      const pieces: number[][] = [overlayAabb];
+
+      for (const id of this.loadedXktModelIds) {
+        const aabb = scene?.models?.[id]?.aabb;
+        if (Array.isArray(aabb) && aabb.length >= 6) pieces.push(aabb);
+      }
+
+      const merged = unionAABBs(pieces);
+      if (!merged) return;
+
+      const spanX = merged[3] - merged[0];
+      const spanY = merged[4] - merged[1];
+      const spanZ = merged[5] - merged[2];
+      const maxSpan = Math.max(spanX, spanY, spanZ);
+      const padding = Math.max(maxSpan * 0.15, 20);
+
+      const padded: number[] = [
+        merged[0] - padding,
+        merged[1] - padding,
+        merged[2] - padding,
+        merged[3] + padding,
+        merged[4] + padding,
+        merged[5] + padding,
+      ];
+
+      this.viewer.cameraFlight?.flyTo?.({ aabb: padded });
     });
   }
 
@@ -492,10 +525,116 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
     this.sceneModel = null;
   }
 
+  /**
+   * Search all loaded XKT scene models for an entity with the given objectId.
+   * XKT objects have isObject=true and id=objectId. We walk meshes → their parent entity.
+   */
+  private findEntityInXktModels(objectId: string): { entity: unknown; modelId: string } | null {
+    const scene = this.viewer.scene as {
+      models?: Record<string, { objects?: Record<string, unknown> }>;
+    } | undefined;
+    if (!scene?.models) return null;
+
+    for (const modelId of this.loadedXktModelIds) {
+      const model = scene.models?.[modelId];
+      const objects = model?.objects;
+      if (!objects) continue;
+      const entity = objects[objectId];
+      if (entity) return { entity, modelId };
+    }
+    return null;
+  }
+
+  /**
+   * Recolors XKT objects.
+   *
+   * Clash detail mode: colors objectA (blue) and objectB (red); resets all others to default.
+   * Overview mode: colors every visible object with the same scheme as the bbox overlay,
+   *   falling back to default for objects not in the sceneObjects map.
+   *
+   * Previously-colored objects not in the new scope are reset to default.
+   */
+  recolorXktObjects(
+    objectA: string | null,
+    objectB: string | null,
+    allClashObjectIds: string[],
+    visibleObjectIds?: string[],
+    sceneObjects?: XeoKitSceneObject[]
+  ): void {
+    const COL_CLA = [0.32, 0.73, 0.98] as [number, number, number];
+    const COL_CLS = [0.96, 0.20, 0.18] as [number, number, number];
+    const COL_SELECTED = [0.30, 0.90, 0.72] as [number, number, number];
+    const COL_TEST_SCOPE = [0.24, 0.80, 0.62] as [number, number, number];
+    const COL_DEFAULT = [0.68, 0.70, 0.76] as [number, number, number];
+
+    const scene = this.viewer.scene as {
+      objects?: Record<string, { color?: number[]; opacity?: number }>;
+      models?: Record<string, { objects?: Record<string, unknown> }>;
+    } | undefined;
+
+    const visibleSet = new Set(visibleObjectIds ?? []);
+
+    // Reset previously-highlighted XKT objects that are no longer in scope.
+    for (const [objId, modelId] of this.xktObjectModelMap) {
+      if (!allClashObjectIds.includes(objId)) {
+        const model = scene?.models?.[modelId];
+        const entity = model?.objects?.[objId] as { color?: number[]; opacity?: number } | undefined;
+        if (entity) {
+          entity.color = [...COL_DEFAULT];
+          entity.opacity = 1;
+        }
+        this.xktObjectModelMap.delete(objId);
+      }
+    }
+
+    // Build full color map for all visible objects (overview mode) or just clash pair (clash detail).
+    const colorMap: Record<string, [number, number, number]> = {};
+    if (visibleSet.size > 0 && sceneObjects) {
+      // Overview mode: color every visible object using the same scheme as the bbox overlay.
+      for (const obj of sceneObjects) {
+        if (!visibleSet.has(obj.id)) continue;
+        let color: [number, number, number];
+        if (obj.isSelected) {
+          color = COL_SELECTED;
+        } else if (obj.isClashObjectB) {
+          color = COL_CLS;
+        } else if (obj.isClashObject) {
+          color = COL_CLA;
+        } else if (obj.isDeEmphasized) {
+          color = COL_DEFAULT;
+        } else if (obj.isColliding) {
+          color = COL_CLS;
+        } else if (obj.isInTestScope) {
+          color = COL_TEST_SCOPE;
+        } else {
+          color = COL_DEFAULT;
+        }
+        colorMap[obj.id] = color;
+      }
+    } else {
+      // Clash detail mode: color only objectA and objectB.
+      if (objectA) colorMap[objectA] = COL_CLA;
+      if (objectB) colorMap[objectB] = COL_CLS;
+    }
+
+    // Apply colors to XKT entities.
+    for (const [objId, color] of Object.entries(colorMap)) {
+      const found = this.findEntityInXktModels(objId);
+      if (!found) continue;
+
+      this.xktObjectModelMap.set(objId, found.modelId);
+      const entity = found.entity as { color?: number[]; opacity?: number; highlighted?: boolean };
+      entity.color = [...color];
+      entity.opacity = 1;
+      entity.highlighted = false;
+    }
+  }
+
   private destroyXktModels(): void {
     const scene = this.viewer.scene as { models?: Record<string, { destroy?: () => void }> } | undefined;
     if (!scene?.models) {
       this.loadedXktModelIds = [];
+      this.xktObjectModelMap.clear();
       return;
     }
     for (const id of this.loadedXktModelIds) {
@@ -506,6 +645,7 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
       }
     }
     this.loadedXktModelIds = [];
+    this.xktObjectModelMap.clear();
   }
 }
 

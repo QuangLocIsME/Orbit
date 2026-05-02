@@ -467,6 +467,193 @@ class UploadApprovalController {
             return serverError(res, 'Failed to delete comment');
         }
     }
+
+    async deleteByDocumentId(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { documentId, projectId } = req.body || {};
+            const normalizedDocumentId = normalizeString(documentId);
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedDocumentId || !normalizedProjectId) {
+                return badRequest(res, 'documentId and projectId are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can delete upload approvals');
+            }
+            if (member.role !== 'owner' && member.role !== 'admin' && member.role !== 'manager') {
+                return forbidden(res, 'Only owner, admin, or manager can delete upload approvals');
+            }
+
+            const deleted = await UploadApprovalRepository.deleteByDocumentId(normalizedDocumentId);
+
+            return res.status(200).json({ success: true, message: 'Upload approval deleted', data: { deleted } });
+        } catch (error) {
+            console.error('[UploadApprovalController.deleteByDocumentId] error:', error);
+            return serverError(res, 'Failed to delete upload approval');
+        }
+    }
+
+    async approveByDocumentId(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { documentId, projectId } = req.body || {};
+            const normalizedDocumentId = normalizeString(documentId);
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedDocumentId || !normalizedProjectId) {
+                return badRequest(res, 'documentId and projectId are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can review uploads');
+            }
+            if (member.role !== 'owner' && member.role !== 'admin' && member.role !== 'manager') {
+                return forbidden(res, 'Only owner, admin, or manager can approve uploads');
+            }
+
+            const approval = await UploadApprovalRepository.findByDocumentId(normalizedDocumentId);
+            if (!approval) {
+                return notFound(res, 'Upload approval not found for this document');
+            }
+            if (approval.projectId !== normalizedProjectId) {
+                return notFound(res, 'Upload approval not found in this project');
+            }
+            if (approval.status !== 'pending') {
+                return badRequest(res, `Upload has already been ${approval.status}`);
+            }
+
+            const updated = await UploadApprovalRepository.approve(approval.publicId, userId);
+
+            await DocumentRepository.updateApprovalStatus(normalizedDocumentId, 'approved');
+
+            const doc = await DocumentRepository.findByPublicId(normalizedDocumentId);
+            if (doc) {
+                const ext = path.extname(doc.originalName || '').toLowerCase();
+                if (ext === '.ifc') {
+                    try {
+                        await publishIfcConversionJob({
+                            projectId: doc.projectId,
+                            documentId: doc.publicId,
+                            versionId: doc.publicId,
+                            ifcS3Bucket: doc.s3Bucket,
+                            ifcS3Key: doc.s3Key,
+                            requestedBy: userId,
+                        });
+                    } catch (convErr) {
+                        console.error('[UploadApprovalController.approveByDocumentId] IFC conversion job publish failed:', convErr.message);
+                    }
+                }
+            }
+
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId: doc?.packageId || null,
+                userId,
+                type: 'upload_approved',
+                targetId: normalizedDocumentId,
+                targetName: approval.originalName,
+                metadata: {
+                    versionLabel: approval.versionLabel,
+                    versionNumber: approval.versionNumber,
+                    uploaderId: approval.uploaderId,
+                },
+            });
+
+            broadcastProject(normalizedProjectId, 'approval:updated', {
+                projectId: normalizedProjectId,
+                approvalId: approval.publicId,
+                status: 'approved',
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Upload approved',
+                data: { approval: updated },
+            });
+        } catch (error) {
+            console.error('[UploadApprovalController.approveByDocumentId] error:', error);
+            return serverError(res, 'Failed to approve upload');
+        }
+    }
+
+    async rejectByDocumentId(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { documentId, projectId, reason } = req.body || {};
+            const normalizedDocumentId = normalizeString(documentId);
+            const normalizedProjectId = normalizeString(projectId);
+            const normalizedReason = normalizeString(reason) || '';
+
+            if (!normalizedDocumentId || !normalizedProjectId) {
+                return badRequest(res, 'documentId and projectId are required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can review uploads');
+            }
+            if (member.role !== 'owner' && member.role !== 'admin' && member.role !== 'manager') {
+                return forbidden(res, 'Only owner, admin, or manager can reject uploads');
+            }
+
+            const approval = await UploadApprovalRepository.findByDocumentId(normalizedDocumentId);
+            if (!approval) {
+                return notFound(res, 'Upload approval not found for this document');
+            }
+            if (approval.projectId !== normalizedProjectId) {
+                return notFound(res, 'Upload approval not found in this project');
+            }
+            if (approval.status !== 'pending') {
+                return badRequest(res, `Upload has already been ${approval.status}`);
+            }
+
+            const updated = await UploadApprovalRepository.reject(approval.publicId, userId, normalizedReason);
+
+            await DocumentRepository.updateApprovalStatus(normalizedDocumentId, 'rejected');
+
+            const doc = await DocumentRepository.findByPublicId(normalizedDocumentId);
+
+            await ActivityService.log({
+                projectId: normalizedProjectId,
+                packageId: doc?.packageId || null,
+                userId,
+                type: 'upload_rejected',
+                targetId: normalizedDocumentId,
+                targetName: approval.originalName,
+                metadata: {
+                    versionLabel: approval.versionLabel,
+                    versionNumber: approval.versionNumber,
+                    uploaderId: approval.uploaderId,
+                    rejectionReason: normalizedReason,
+                },
+            });
+
+            broadcastProject(normalizedProjectId, 'approval:updated', {
+                projectId: normalizedProjectId,
+                approvalId: approval.publicId,
+                status: 'rejected',
+            });
+
+            return res.status(200).json({
+                success: true,
+                message: 'Upload rejected',
+                data: { approval: updated },
+            });
+        } catch (error) {
+            console.error('[UploadApprovalController.rejectByDocumentId] error:', error);
+            return serverError(res, 'Failed to reject upload');
+        }
+    }
 }
 
 module.exports = new UploadApprovalController();

@@ -51,6 +51,7 @@ interface ProjectDocumentsManagerProps {
   packageId?: string | null;
   canManage?: boolean;
   initialFileId?: string | null;
+  projectRole?: 'owner' | 'admin' | 'member' | 'viewer';
 }
 
 interface TreeNode {
@@ -196,7 +197,7 @@ function deriveLocation(
   return { packageId: '', folderType: 'files', folderPath };
 }
 
-export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true, initialFileId = null }: ProjectDocumentsManagerProps) {
+export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true, initialFileId = null, projectRole = 'member' }: ProjectDocumentsManagerProps) {
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
@@ -1236,6 +1237,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
         <VersionHistoryModal
           projectId={projectId}
           file={versionHistoryFile}
+          projectRole={projectRole}
           onClose={() => setVersionHistoryFile(null)}
           onRestore={refresh}
         />
