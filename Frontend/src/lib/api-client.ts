@@ -249,3 +249,77 @@ export async function deleteProjectRole(roleId: string): Promise<void> {
     throw new Error(error.message || 'Failed to delete role');
   }
 }
+
+// ─── Project Reports ─────────────────────────────────────────────────────────
+
+export interface ReportSummary {
+  totalDocuments: number;
+  totalSizeMB: number;
+  totalTasks: number;
+  completedTasks: number;
+  pendingTasks: number;
+  progressPercent: number;
+  totalPackages: number;
+}
+
+export interface ReportProgressMonth {
+  month: string;
+  created: number;
+  completed: number;
+}
+
+export interface ReportActivity {
+  type: string;
+  user: string;
+  target: string;
+  description: string;
+  timestamp: string;
+}
+
+export interface ProjectReportData {
+  generatedAt: string;
+  project: { name: string; description: string; createdAt: string; ownerId: string } | null;
+  summary: ReportSummary;
+  taskCountByStatus: Record<string, number>;
+  progressOverTime: ReportProgressMonth[];
+  recentActivities: ReportActivity[];
+  reportType: string;
+}
+
+/**
+ * Fetch report data for a project (JSON preview).
+ */
+export async function fetchProjectReport(projectId: string): Promise<ProjectReportData> {
+  const response = await apiFetch(`/api/projects/${projectId}/reports`, {
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to fetch report' }));
+    throw new Error(error.message || 'Failed to fetch report');
+  }
+
+  return (await response.json()).data;
+}
+
+/**
+ * Export a project report as PDF, CSV, or XLSX.
+ * Returns the raw response for blob handling in the caller.
+ */
+export async function exportProjectReport(
+  projectId: string,
+  format: 'pdf' | 'csv' | 'xlsx'
+): Promise<Response> {
+  const response = await apiFetch(`/api/projects/${projectId}/reports/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to export report' }));
+    throw new Error(error.message || 'Failed to export report');
+  }
+
+  return response;
+}

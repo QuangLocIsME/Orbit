@@ -570,6 +570,7 @@ class PackageController {
                                   }
                                 : null,
                             conversionStatus: v.conversionStatus,
+                            approvalStatus: v.approvalStatus || 'approved',
                             createdAt: v.createdAt,
                             updatedAt: v.updatedAt,
                         };

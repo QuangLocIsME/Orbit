@@ -13,11 +13,14 @@ export type FederatedOverviewObject = {
 };
 
 export const WORLD_LIMIT = 220;
-/** Scale from meters (IFC world units) to viewer world units */
-export const WORLD_SCALE = 30;
+/** Scale from meters (IFC world units) to viewer world units.
+ *  Backend already normalises all units to metres; a scale of 1 keeps sizes correct. */
+export const WORLD_SCALE = 1;
 /** Alias for backward compat with useObjectInteraction */
 export const PIXELS_TO_WORLD = WORLD_SCALE;
 export const DEFAULT_SCENE_Y = 0;
+
+export const clampWorld = (value: number) => Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, value));
 
 export type ScenePosition = { x: number; y: number; z: number };
 export type SceneSize = { width: number; depth: number; height: number };
@@ -31,8 +34,6 @@ export type SceneObject = {
   worldPosition?: [number, number, number];
 };
 
-export const clampWorld = (value: number) => Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, value));
-
 // ---------------------------------------------------------------------------
 // BBox helpers
 // ---------------------------------------------------------------------------
@@ -43,10 +44,12 @@ const bboxCenter = (bbox: BBox): [number, number, number] => [
   (bbox.min[2] + bbox.max[2]) / 2,
 ];
 
+const MIN_SIZE = 0.5; // Guard against degenerate zero-size bbox
+
 const bboxSize = (bbox: BBox): SceneSize => ({
-  width:  Math.max((bbox.max[0] - bbox.min[0]) * WORLD_SCALE, 20),
-  depth:  Math.max((bbox.max[2] - bbox.min[2]) * WORLD_SCALE, 20),
-  height: Math.max((bbox.max[1] - bbox.min[1]) * WORLD_SCALE, 20),
+  width:  Math.max((bbox.max[0] - bbox.min[0]) * WORLD_SCALE, MIN_SIZE),
+  depth:  Math.max((bbox.max[2] - bbox.min[2]) * WORLD_SCALE, MIN_SIZE),
+  height: Math.max((bbox.max[1] - bbox.min[1]) * WORLD_SCALE, MIN_SIZE),
 });
 
 // ---------------------------------------------------------------------------
@@ -57,9 +60,9 @@ export const worldToViewer = (
   worldPos: [number, number, number],
   originWorld: [number, number, number]
 ): ScenePosition => ({
-  x: clampWorld((worldPos[0] - originWorld[0]) * WORLD_SCALE),
-  y: worldPos[1] * WORLD_SCALE,
-  z: clampWorld((worldPos[2] - originWorld[2]) * WORLD_SCALE),
+  x: (worldPos[0] - originWorld[0]) * WORLD_SCALE,
+  y: (worldPos[1] - originWorld[1]) * WORLD_SCALE,
+  z: (worldPos[2] - originWorld[2]) * WORLD_SCALE,
 });
 
 /**
@@ -71,12 +74,12 @@ export function transformMeshPositionsToViewerSpace(
   positions: number[],
   originWorld: [number, number, number]
 ): number[] {
-  const [ox, , oz] = originWorld;
+  const [ox, oy, oz] = originWorld;
   const out = new Array<number>(positions.length);
   for (let i = 0; i + 2 < positions.length; i += 3) {
-    out[i]     = clampWorld((positions[i]     - ox) * WORLD_SCALE);
-    out[i + 1] = positions[i + 1] * WORLD_SCALE;
-    out[i + 2] = clampWorld((positions[i + 2] - oz) * WORLD_SCALE);
+    out[i]     = (positions[i]     - ox) * WORLD_SCALE;
+    out[i + 1] = (positions[i + 1] - oy) * WORLD_SCALE;
+    out[i + 2] = (positions[i + 2] - oz) * WORLD_SCALE;
   }
   return out;
 }
@@ -218,7 +221,7 @@ export function computeViewerAabbIntersection(
   const w = maxX - minX;
   const h = maxY - minY;
   const d = maxZ - minZ;
-  const MIN_VIS = 8;
+  const MIN_VIS = 1;
   return {
     position: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: (minZ + maxZ) / 2 },
     size: {

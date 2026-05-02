@@ -504,6 +504,24 @@ export default function NavisworksClashWorkspace({
     [models]
   );
 
+  /** XKT models to load in clash detail mode — only the models that contain objectA/objectB. */
+  const xktModelsForClashDetail = useMemo(() => {
+    if (!viewerClash) return [];
+    const scope = new Set(activeTestScopeObjectIds);
+    const aInScope = scope.has(viewerClash.objectA);
+    const bInScope = scope.has(viewerClash.objectB);
+    if (!aInScope && !bInScope) return [];
+    const neededModelIds = new Set<string>();
+    for (const obj of allObjects) {
+      if (obj.id === viewerClash.objectA || obj.id === viewerClash.objectB) {
+        neededModelIds.add(obj.sourceModelId);
+      }
+    }
+    return models
+      .filter((m) => m.sourceFormat === 'xkt' && m.xktFile && neededModelIds.has(m.id))
+      .map((m) => ({ id: m.id }));
+  }, [allObjects, models, viewerClash, activeTestScopeObjectIds]);
+
   const hasXktOnlyOverview = Boolean(
     !viewerClash &&
       models.length > 0 &&
@@ -2399,7 +2417,7 @@ export default function NavisworksClashWorkspace({
                       showScopeBadge={shouldHighlightActiveScope}
                       hideUnrelatedActive={hideUnrelatedToActiveTest}
                       projectSlug={projectSlug}
-                      xktModels={xktModelsForViewer}
+                      xktModels={viewerClash ? xktModelsForClashDetail : xktModelsForViewer}
                       objectMeshPositions={objectMeshPositions}
                     />
                   </div>

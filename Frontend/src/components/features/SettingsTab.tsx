@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
-import { apiFetch, uploadProjectThumbnail, uploadProjectAvatar, deleteProjectAvatar, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole } from '@/lib/api-client';
+import { apiFetch, uploadProjectThumbnail, uploadProjectAvatar, deleteProjectAvatar, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole, fetchProjectReport, exportProjectReport, type ProjectReportData } from '@/lib/api-client';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
@@ -276,6 +276,7 @@ const settingsMenuItems = [
   { id: 'roles', label: 'Roles', icon: Users },
   { id: 'permissions', label: 'Permissions', icon: Shield },
   { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'integrations', label: 'Integrations', icon: Plug },
 ];
 
@@ -312,6 +313,12 @@ export default function SettingsTab({
   const [integrations, setIntegrations] = useState<Integration[]>(defaultIntegrations);
   const [discordWebhook, setDiscordWebhook] = useState('');
   const [discordEnabled, setDiscordEnabled] = useState(false);
+
+  // Reports state
+  const [reportData, setReportData] = useState<ProjectReportData | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'csv' | 'xlsx' | null>(null);
   const [permissionMatrix, setPermissionMatrix] = useState<Record<string, Record<string, string>>>({
     'Owner': { documents: 'manage', versions: 'manage', tasks: 'manage', packages: 'manage', clashes: 'manage', viewer: 'manage', settings: 'manage', members: 'manage' },
     'Admin': { documents: 'manage', versions: 'manage', tasks: 'manage', packages: 'manage', clashes: 'edit', viewer: 'manage', settings: 'edit', members: 'edit' },
@@ -957,6 +964,32 @@ export default function SettingsTab({
     };
   }, [projectPublicId]);
 
+  // Load report data when switching to Reports tab
+  useEffect(() => {
+    if (activeMenu !== 'reports') return;
+    if (!projectPublicId) return;
+    if (reportData !== null) return; // already loaded
+
+    let cancelled = false;
+    const loadReport = async () => {
+      setReportLoading(true);
+      setReportError(null);
+      try {
+        const data = await fetchProjectReport(projectPublicId);
+        if (!cancelled) setReportData(data);
+      } catch (err: any) {
+        if (!cancelled) setReportError(err?.message || 'Failed to load report data');
+      } finally {
+        if (!cancelled) setReportLoading(false);
+      }
+    };
+
+    void loadReport();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMenu, projectPublicId, reportData]);
+
   const handleDeleteTag = async (id: string) => {
     const previous = taskTags;
     const next = taskTags.filter((t) => t.id !== id);
@@ -971,6 +1004,29 @@ export default function SettingsTab({
     } catch {
       setTaskTags(previous);
       toast.error('Failed to delete tag');
+    }
+  };
+
+  const handleExportReport = async (format: 'pdf' | 'csv' | 'xlsx') => {
+    if (!projectPublicId) return;
+    setExportingFormat(format);
+    try {
+      const response = await exportProjectReport(projectPublicId, format);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ext = format === 'xlsx' ? 'xlsx' : format;
+      a.download = `project-report-${Date.now()}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`${format.toUpperCase()} report exported successfully`);
+    } catch (err: any) {
+      toast.error(err?.message || `Failed to export ${format.toUpperCase()} report`);
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -2461,6 +2517,215 @@ export default function SettingsTab({
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Reports Tab */}
+        {activeMenu === 'reports' && (
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-[24px] font-normal text-[#101828]">Project Reports</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (!projectPublicId) return;
+                    setReportLoading(true);
+                    setReportError(null);
+                    setReportData(null);
+                    void fetchProjectReport(projectPublicId).then(data => setReportData(data)).catch((e: any) => setReportError(e?.message || 'Failed')).finally(() => setReportLoading(false));
+                  }}
+                  className="inline-flex items-center gap-2 rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-2 text-[13px] font-medium text-[#374151] hover:bg-gray-50 transition-colors"
+                >
+                  <RefreshCcw className="h-3.5 w-3.5" />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* Export Formats */}
+            <div className="mb-8">
+              <h3 className="text-[16px] font-medium text-[#101828] mb-4">Export Report</h3>
+              <p className="text-[14px] text-[#6A7282] mb-4">
+                Export a comprehensive project report with documents, tasks, progress, and recent activities. Reports reflect data at the time of export.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {/* PDF Export */}
+                <button
+                  onClick={() => handleExportReport('pdf')}
+                  disabled={exportingFormat !== null || !projectPublicId}
+                  className="inline-flex items-center gap-2.5 rounded-[10px] border border-[#E5E7EB] bg-white px-5 py-3 text-[14px] font-medium text-[#101828] hover:bg-gray-50 hover:border-[#155DFC] hover:text-[#155DFC] transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                >
+                  {exportingFormat === 'pdf' ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-[#155DFC]" />
+                  ) : (
+                    <FileDoc className="h-5 w-5 text-red-500" />
+                  )}
+                  <div className="text-left">
+                    <div>PDF</div>
+                    <div className="text-[11px] font-normal text-[#9CA3AF]">Portable Document Format</div>
+                  </div>
+                </button>
+
+                {/* CSV Export */}
+                <button
+                  onClick={() => handleExportReport('csv')}
+                  disabled={exportingFormat !== null || !projectPublicId}
+                  className="inline-flex items-center gap-2.5 rounded-[10px] border border-[#E5E7EB] bg-white px-5 py-3 text-[14px] font-medium text-[#101828] hover:bg-gray-50 hover:border-[#10B981] hover:text-[#10B981] transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                >
+                  {exportingFormat === 'csv' ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-[#10B981]" />
+                  ) : (
+                    <FileText className="h-5 w-5 text-green-600" />
+                  )}
+                  <div className="text-left">
+                    <div>CSV</div>
+                    <div className="text-[11px] font-normal text-[#9CA3AF]">Comma-Separated Values</div>
+                  </div>
+                </button>
+
+                {/* XLSX Export */}
+                <button
+                  onClick={() => handleExportReport('xlsx')}
+                  disabled={exportingFormat !== null || !projectPublicId}
+                  className="inline-flex items-center gap-2.5 rounded-[10px] border border-[#E5E7EB] bg-white px-5 py-3 text-[14px] font-medium text-[#101828] hover:bg-gray-50 hover:border-[#10B981] hover:text-[#10B981] transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                >
+                  {exportingFormat === 'xlsx' ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-[#10B981]" />
+                  ) : (
+                    <BarChart3 className="h-5 w-5 text-emerald-600" />
+                  )}
+                  <div className="text-left">
+                    <div>XLSX</div>
+                    <div className="text-[11px] font-normal text-[#9CA3AF]">Excel Spreadsheet</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Report Preview */}
+            <div>
+              <h3 className="text-[16px] font-medium text-[#101828] mb-4">Report Preview</h3>
+
+              {reportLoading && (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#155DFC]" />
+                  <span className="ml-3 text-[14px] text-[#6A7282]">Loading report data...</span>
+                </div>
+              )}
+
+              {reportError && !reportLoading && (
+                <div className="rounded-[12px] border border-red-200 bg-red-50 p-6 text-center">
+                  <AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" />
+                  <p className="text-[14px] font-medium text-red-600">{reportError}</p>
+                  <p className="text-[12px] text-red-400 mt-1">
+                    You may not have permission to view reports. Only Admin, Manager, or Member roles can export.
+                  </p>
+                </div>
+              )}
+
+              {reportData && !reportLoading && (
+                <div className="space-y-6">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="h-10 w-10 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center">
+                          <FileDoc className="h-5 w-5 text-[#155DFC]" />
+                        </div>
+                        <span className="text-[13px] font-medium text-[#6A7282]">Documents</span>
+                      </div>
+                      <div className="text-[28px] font-semibold text-[#101828]">{reportData.summary.totalDocuments}</div>
+                      <div className="text-[12px] text-[#9CA3AF] mt-0.5">{reportData.summary.totalSizeMB} MB total</div>
+                    </div>
+
+                    <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="h-10 w-10 rounded-[8px] bg-[#F0FDF4] flex items-center justify-center">
+                          <ListTodo className="h-5 w-5 text-[#10B981]" />
+                        </div>
+                        <span className="text-[13px] font-medium text-[#6A7282]">Total Tasks</span>
+                      </div>
+                      <div className="text-[28px] font-semibold text-[#101828]">{reportData.summary.totalTasks}</div>
+                      <div className="text-[12px] text-[#9CA3AF] mt-0.5">
+                        {reportData.summary.completedTasks} completed · {reportData.summary.pendingTasks} pending
+                      </div>
+                    </div>
+
+                    <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="h-10 w-10 rounded-[8px] bg-[#FEF3C7] flex items-center justify-center">
+                          <BarChart3 className="h-5 w-5 text-[#F59E0B]" />
+                        </div>
+                        <span className="text-[13px] font-medium text-[#6A7282]">Progress</span>
+                      </div>
+                      <div className="text-[28px] font-semibold text-[#101828]">{reportData.summary.progressPercent}%</div>
+                      <div className="mt-2 h-2 rounded-full bg-[#E5E7EB] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[#10B981] transition-all duration-500"
+                          style={{ width: `${reportData.summary.progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Task Count by Status */}
+                  {Object.keys(reportData.taskCountByStatus).length > 0 && (
+                    <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-5">
+                      <h4 className="text-[14px] font-medium text-[#101828] mb-4">Task Count by Status</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                        {Object.entries(reportData.taskCountByStatus).map(([status, count]) => {
+                          const statusColors: Record<string, { bg: string; text: string; border: string }> = {
+                            backlog: { bg: 'bg-[#F3F4F6]', text: 'text-[#6A7282]', border: 'border-[#E5E7EB]' },
+                            'to-do': { bg: 'bg-[#EFF6FF]', text: 'text-[#155DFC]', border: 'border-blue-200' },
+                            'in-progress': { bg: 'bg-[#FFFBEB]', text: 'text-[#F59E0B]', border: 'border-amber-200' },
+                            review: { bg: 'bg-[#F5F3FF]', text: 'text-[#8B5CF6]', border: 'border-purple-200' },
+                            done: { bg: 'bg-[#F0FDF4]', text: 'text-[#10B981]', border: 'border-green-200' },
+                          };
+                          const colors = statusColors[status] || statusColors.backlog;
+                          const displayStatus = status.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                          return (
+                            <div key={status} className={cn('rounded-[8px] border p-3 text-center', colors.bg, colors.border)}>
+                              <div className={cn('text-[18px] font-semibold', colors.text)}>{count}</div>
+                              <div className={cn('text-[11px] font-medium mt-0.5', colors.text)}>{displayStatus}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent Activities */}
+                  <div className="rounded-[12px] border border-[#E5E7EB] bg-white p-5">
+                    <h4 className="text-[14px] font-medium text-[#101828] mb-4">Recent Activities</h4>
+                    {reportData.recentActivities.length === 0 ? (
+                      <p className="text-[13px] text-[#9CA3AF] py-4 text-center">No recent activities to display.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {reportData.recentActivities.slice(0, 10).map((activity, index) => (
+                          <div key={index} className="flex items-start gap-3 py-2 border-b border-[#F3F4F6] last:border-0">
+                            <div className="h-2 w-2 rounded-full bg-[#155DFC] mt-2 shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[13px] text-[#374151]">{activity.description}</p>
+                              <p className="text-[11px] text-[#9CA3AF] mt-0.5">
+                                {activity.timestamp ? new Date(activity.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Export Time Disclaimer */}
+                  <div className="flex items-start gap-2 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3">
+                    <Clock className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                    <p className="text-[12px] text-[#92400E]">
+                      Reports reflect data at the time of export. Only authorized users (Admin, Manager, Member roles) can export project reports.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

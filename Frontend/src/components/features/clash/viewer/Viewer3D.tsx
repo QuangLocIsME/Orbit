@@ -28,7 +28,7 @@ interface Viewer3DProps {
   deEmphasizeUnrelated?: boolean;
   showScopeBadge?: boolean;
   hideUnrelatedActive?: boolean;
-  /** When set, XKT federated models are loaded in xeokit (overview mode only). */
+  /** XKT federated models loaded in xeokit for hybrid render — both overview and clash detail. */
   projectSlug?: string | null;
   xktModels?: { id: string }[];
   /** Real mesh triangle positions per object id (flat array, every 9 floats = 1 triangle, world-space meters). */
@@ -193,6 +193,7 @@ export default function Viewer3D({
         size: object.size,
         isPrimary: Boolean(clash && object.id === clash.objectA),
         isClashObject: Boolean(clash && (object.id === clash.objectA || object.id === clash.objectB)),
+        isClashObjectB: Boolean(clash && object.id === clash.objectB),
         isColliding: object.isColliding,
         isSelected: object.isSelected,
         isInTestScope: testScopeObjectIds.includes(object.id),
@@ -203,15 +204,25 @@ export default function Viewer3D({
     );
   }, [clash, clashStore, deEmphasizeUnrelated, viewerSpaceMeshPositions, testScopeObjectIds, visibleObjects, xeokitAdapter, overviewScene]);
 
+  /** Load and recolor XKT models in clash detail mode (parallel to bbox overlay). */
   useEffect(() => {
-    if (!xeokitAdapter || !projectSlug) return;
-    if (clash || !modelOverview) {
-      void xeokitAdapter.syncXktModels(projectSlug, []);
-      return;
-    }
+    if (!xeokitAdapter || !projectSlug || !clash) return;
     const ids = (xktModels ?? []).map((m) => m.id);
-    void xeokitAdapter.syncXktModels(projectSlug, ids);
-  }, [clash, modelOverview, projectSlug, xeokitAdapter, xktModelIdsKey]);
+    if (ids.length === 0) return;
+    const objectA = clash.objectA;
+    const objectB = clash.objectB;
+    void xeokitAdapter.syncXktModels(projectSlug, ids, () => {
+      xeokitAdapter.recolorXktObjects(objectA, objectB, [objectA, objectB]);
+    });
+  }, [clash?.id, projectSlug, xeokitAdapter, xktModelIdsKey]);
+
+  useEffect(() => {
+    if (!xeokitAdapter || !projectSlug || !modelOverview) return;
+    const ids = (xktModels ?? []).map((m) => m.id);
+    void xeokitAdapter.syncXktModels(projectSlug, ids, () => {
+      xeokitAdapter.recolorXktObjects(null, null, [], visibleObjects.map((o) => o.id), visibleObjects);
+    });
+  }, [modelOverview, projectSlug, xeokitAdapter, xktModelIdsKey, visibleObjects]);
 
   useEffect(() => {
     if (!effectiveAdapter) return;
@@ -255,12 +266,21 @@ export default function Viewer3D({
             : meshCount
               ? `${meshCount}/${boxCount} real mesh · ${boxCount - meshCount} bbox`
               : `${boxCount} elements`;
+      const renderHint =
+        meshCount > 0
+          ? `real mesh (recolored)`
+          : xktCount > 0
+            ? `XKT (recolored)`
+            : `bbox overlay`;
       return (
         <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 text-white md:p-4">
           <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-3">
             <p className="text-sm font-semibold tracking-tight text-slate-200">3D Overview</p>
             <p className="text-[11px] text-slate-500" title="Left-click drag to orbit · Right-click to pan · Scroll to zoom · Click to select.">
               xeokit · {layerHint}
+              {renderHint !== 'bbox overlay' && (
+                <span className="ml-1.5 text-cyan-400/60">· {renderHint}</span>
+              )}
             </p>
           </div>
           <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]">

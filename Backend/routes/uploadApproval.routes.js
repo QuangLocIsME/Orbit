@@ -32,4 +32,16 @@ router.post('/approvals/comments/delete', authenticate, (req, res) =>
     UploadApprovalController.deleteComment(req, res)
 );
 
+router.post('/approvals/delete', authenticate, (req, res) =>
+    UploadApprovalController.deleteByDocumentId(req, res)
+);
+
+router.post('/approvals/by-document/approve', authenticate, (req, res) =>
+    UploadApprovalController.approveByDocumentId(req, res)
+);
+
+router.post('/approvals/by-document/reject', authenticate, (req, res) =>
+    UploadApprovalController.rejectByDocumentId(req, res)
+);
+
 module.exports = router;
