@@ -54,6 +54,9 @@ const UserSchema = new mongoose.Schema({
     // Link đặt lại mật khẩu dùng 1 lần (lưu hash token)
     resetPasswordToken: { type: String, default: null },
     resetPasswordTokenExpiresAt: { type: Date, default: null },
+    // Brute force protection: login attempts counter
+    loginAttempts: { type: Number, default: 0 },
+    lockUntil: { type: Date, default: null },
 });
 
 UserSchema.pre('save', async function () {

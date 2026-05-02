@@ -320,6 +320,7 @@ export default function NavisworksClashWorkspace({
     workspaceQuery,
     importModels,
     importFromDocuments,
+    clearModels,
     saveSelectionSet,
     deleteSelectionSet,
     saveClashTest,
@@ -375,8 +376,8 @@ export default function NavisworksClashWorkspace({
     selectionSetDraft.types.forEach((type) => next.add(type));
     return Array.from(next).sort();
   }, [objectsInSelectionModelScope, selectionSetDraft.categories, selectionSetDraft.types]);
-  const suggestedManualObjectIds = useMemo(() => allObjects.slice(0, 24).map((object) => object.id), [allObjects]);
-  const objectIdDatalistOptions = useMemo(() => allObjects.slice(0, 200).map((object) => object.id), [allObjects]);
+  const suggestedManualObjectIds = useMemo(() => [...new Set(allObjects.slice(0, 24).map((object) => object.id))], [allObjects]);
+  const objectIdDatalistOptions = useMemo(() => [...new Set(allObjects.slice(0, 200).map((object) => object.id))], [allObjects]);
   const objectMeshPositions = useMemo(
     () =>
       allObjects.reduce<Record<string, number[]>>((acc, object) => {
@@ -1639,6 +1640,18 @@ export default function NavisworksClashWorkspace({
                             {persistedHiddenObjects.length} hidden
                           </span>
                         )}
+                        <button
+                          type="button"
+                          disabled={models.length === 0 || clearModels.isPending}
+                          onClick={() => {
+                            setHiddenModelIds([]);
+                            setHiddenCategories([]);
+                            clearModels.mutate();
+                          }}
+                          className="shrink-0 rounded-full bg-[#FEE2E2] px-2 py-0.5 text-[10px] font-medium text-[#B91C1C] hover:bg-[#FECACA] disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
+                        >
+                          {clearModels.isPending ? 'Clearing…' : 'Clear'}
+                        </button>
                       </div>
                       <div className="mt-3 space-y-3">
                         {models.length === 0 && <p className="text-sm text-[#6A7282]">No models yet — import or drop files on the viewer.</p>}
@@ -2094,7 +2107,7 @@ export default function NavisworksClashWorkspace({
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-2">
-                                        <span className="inline-flex size-5 items-center justify-center rounded-md bg-blue-500 text-[10px] font-bold text-white">A</span>
+                                        <span className="inline-flex size-5 items-center justify-center rounded-md bg-emerald-500 text-[10px] font-bold text-white">A</span>
                                         <p className="text-xs font-medium uppercase tracking-wide text-[#6A7282]">Object A</p>
                                       </div>
                                       <p className="mt-1.5 text-sm font-medium text-[#101828]">{selectedResult.objectA}</p>
@@ -2122,7 +2135,7 @@ export default function NavisworksClashWorkspace({
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-2">
-                                        <span className="inline-flex size-5 items-center justify-center rounded-md bg-rose-500 text-[10px] font-bold text-white">B</span>
+                                        <span className="inline-flex size-5 items-center justify-center rounded-md bg-amber-500 text-[10px] font-bold text-white">B</span>
                                         <p className="text-xs font-medium uppercase tracking-wide text-[#6A7282]">Object B</p>
                                       </div>
                                       <p className="mt-1.5 text-sm font-medium text-[#101828]">{selectedResult.objectB}</p>

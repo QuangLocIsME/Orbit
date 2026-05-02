@@ -387,6 +387,7 @@ export default function Viewer3D({
     const unsubscribe = effectiveAdapter.onObjectPicked((objectId) => {
       selectObject(objectId);
       onSelectObject(objectId);
+      effectiveAdapter.focusObject(objectId);
     });
     return () => unsubscribe();
   }, [effectiveAdapter, onSelectObject, selectObject]);
@@ -707,11 +708,11 @@ export default function Viewer3D({
           <div className="shrink-0 rounded-lg border border-[#2a3245] bg-[#131a2b] px-3 py-2">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
               <span className="flex items-center gap-1.5 font-mono text-slate-400">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400/80" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/80" />
                 <span className="text-slate-300" title={clash.objectA}>{clash.objectA}</span>
               </span>
               <span className="flex items-center gap-1.5 font-mono text-slate-400">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/80" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400/80" />
                 <span className="text-slate-300" title={clash.objectB}>{clash.objectB}</span>
               </span>
               <span className="flex items-center gap-1.5 text-slate-400">

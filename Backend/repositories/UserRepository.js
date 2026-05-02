@@ -281,6 +281,39 @@ class UserRepository {
             '-_id -role -updatedAt -refreshTokens -isBlocked -password'
         );
     }
+
+    // --- Brute force protection: login attempts ---
+    async incrementLoginAttempts(userId) {
+        const normalizedUserId = validateObjectId(userId);
+        if (!normalizedUserId) return null;
+        return await User.findByIdAndUpdate(
+            normalizedUserId,
+            {
+                $inc: { loginAttempts: 1 },
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async resetLoginAttempts(userId) {
+        const normalizedUserId = validateObjectId(userId);
+        if (!normalizedUserId) return null;
+        return await User.findByIdAndUpdate(
+            normalizedUserId,
+            {
+                $set: { loginAttempts: 0, lockUntil: null },
+                updatedAt: new Date(),
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async getLockStatus(userId) {
+        const normalizedUserId = validateObjectId(userId);
+        if (!normalizedUserId) return null;
+        return await User.findById(normalizedUserId).select('loginAttempts lockUntil');
+    }
 }
 
 module.exports = new UserRepository();
