@@ -2,11 +2,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
-import { motion } from 'framer-motion';
-import { DndContext, DragOverlay, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
+import { motion, AnimatePresence } from 'framer-motion';
+import { DndContext, DragOverlay, PointerSensor, rectIntersection, useDroppable, useSensor, useSensors, type DragStartEvent, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, rectSortingStrategy, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { snapCenterToCursor } from '@dnd-kit/modifiers';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
@@ -50,6 +49,7 @@ interface Project {
     color: string;
   };
   isFavorite?: boolean;
+  sortOrder?: number;
   folderIds?: string[];
   role?: 'admin' | 'member' | 'viewer';
 }
@@ -66,6 +66,7 @@ interface ApiProject {
   status?: string;
   lastVisitedAt?: string | null;
   isFavorite?: boolean;
+  sortOrder?: number;
 }
 
 interface ProjectsManagerProps {
@@ -309,6 +310,7 @@ function mapApiProjectToUiProject(project: ApiProject): Project {
     projectType: project.industry ? toSlug(project.industry) : 'software',
     industryName: project.industry || '',
     isFavorite: project.isFavorite || false,
+    sortOrder: project.sortOrder || 0,
     folderIds: Array.isArray(project.folderIds) ? project.folderIds : [],
     role: project.role as Project['role'],
     customIndustry,
@@ -334,6 +336,7 @@ function mapCreatedProjectToUiProject(project: CreatedProjectPayload): Project {
     coverImageUrl: project.coverImageUrl,
     role: project.role,
     status: project.status,
+    sortOrder: project.sortOrder,
   });
   
   return {
@@ -616,6 +619,13 @@ function TrashDropZone() {
       </div>
       <a
         href="/trash"
+        draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          const img = new Image();
+          img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+          e.dataTransfer.setDragImage(img, 0, 0);
+        }}
         onClick={e => e.stopPropagation()}
         className="shrink-0 rounded-lg px-2 py-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
       >
@@ -673,7 +683,7 @@ function getCustomIconById(iconId: string): React.ReactNode {
 }
 
 // Project List Item Component (for list view)
-function ProjectListItem({ project, isDragging = false, memberCounts }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number> }) {
+function ProjectListItem({ project, isDragging = false, memberCounts, onToggleFavorite }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number>; onToggleFavorite?: (id: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -681,85 +691,198 @@ function ProjectListItem({ project, isDragging = false, memberCounts }: { projec
   const type = getProjectTypeConfig(project.projectType, project.industryName, project.customIndustry);
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const memberCount = memberCounts[project.id] ?? project.teamMembers ?? 0;
 
   return (
-    <motion.a
+    <motion.div
       ref={setNodeRef}
-      href={`/projects/${project.id}`}
-      {...attributes}
-      {...listeners}
       layout
       transition={{ type: 'spring', stiffness: 140, damping: 24, mass: 1.1 }}
+      className={cn(
+        'group relative flex items-stretch gap-0 overflow-hidden rounded-xl border border-gray-100 bg-white transition-all duration-200',
+        (isDragging || isSortableDragging) && 'scale-[0.98] opacity-80 pointer-events-none',
+        !isDragging && !isSortableDragging && 'hover:border-gray-200 hover:shadow-sm'
+      )}
       style={{
         transform: CSS.Transform.toString(transform),
         transition: transition ? transition.replace(/\d+(\.\d+)?ms/g, '260ms') : undefined,
       }}
-      className={cn(
-        'group flex items-center gap-4 rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200',
-        (isDragging || isSortableDragging) && 'scale-[0.98] opacity-80 pointer-events-none'
-      )}
     >
-      {/* Type Icon */}
-      <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-xl', type.bg)}>
-        <span className={type.color}>{type.icon}</span>
-      </div>
+      {/* Left accent bar */}
+      <div className={cn('w-1 shrink-0 rounded-l-xl', type.bgSolid || type.bg)} />
 
-      {/* Project Info */}
-      <div className="min-w-0 flex-1">
-        <h3 className="font-medium text-gray-900">{project.name}</h3>
-        <p className="text-sm text-gray-500 line-clamp-1">{project.description}</p>
-        
-        {/* Stats Row */}
-        <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-          {/* Progress */}
+      {/* Main content — clickable link */}
+      <a
+        href={`/projects/${project.id}`}
+        draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          const img = new Image();
+          img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+          e.dataTransfer.setDragImage(img, 0, 0);
+        }}
+        className="flex min-w-0 flex-1 items-center gap-4 px-4 py-3"
+        onClick={(e) => {
+          // Let dnd-kit handle drag, only navigate on simple click
+          if (e.defaultPrevented) return;
+        }}
+      >
+        {/* Type Icon */}
+        <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', type.bg)}>
+          <span className={type.color}>{type.icon}</span>
+        </div>
+
+        {/* Project Info */}
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-100">
-              <div className="h-full rounded-full bg-blue-500" style={{ width: `${progress}%` }} />
-            </div>
-            <span className="font-medium text-gray-700">{progress}%</span>
+            <h3 className="truncate font-semibold text-gray-900 text-sm">{project.name}</h3>
+            {project.isFavorite && (
+              <svg className="h-3.5 w-3.5 shrink-0 text-amber-400 fill-amber-400" viewBox="0 0 24 24">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            )}
           </div>
-          
-          {/* Team */}
-          <span className="flex items-center gap-1">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <p className="mt-0.5 truncate text-xs text-gray-500">{project.description || type.label}</p>
+        </div>
+
+        {/* Stats Row */}
+        <div className="hidden shrink-0 items-center gap-6 xl:flex">
+          {/* Progress */}
+          <div className="flex w-24 items-center gap-2">
+            <div className="h-1.5 w-12 overflow-hidden rounded-full bg-gray-100">
+              <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
+            </div>
+            <span className="text-xs font-medium text-gray-600 tabular-nums">{progress}%</span>
+          </div>
+
+          {/* Members */}
+          <div className="flex w-16 items-center gap-1.5 text-xs text-gray-500">
+            <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            {memberCounts[project.id] ?? project.teamMembers ?? 0}
-          </span>
-          
+            <span className="tabular-nums">{memberCount}</span>
+          </div>
+
           {/* Issues */}
-          <span className="flex items-center gap-1">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            {project.issues || 0}
-          </span>
-          
-          {/* Time */}
-          <span className="flex items-center gap-1">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {(project.issues ?? 0) > 0 && (
+            <div className="flex w-16 items-center gap-1.5 text-xs text-red-500">
+              <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="tabular-nums">{project.issues}</span>
+            </div>
+          )}
+
+          {/* Last visited */}
+          <div className="flex w-24 items-center gap-1.5 text-xs text-gray-400">
+            <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            {formatRelativeTime(project.lastVisited)}
-          </span>
-          
-          {/* Category Tag */}
-          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', type.bg, type.color)}>
+            <span className="truncate">{formatRelativeTime(project.lastVisited)}</span>
+          </div>
+        </div>
+
+        {/* Type + Status badges — mobile friendly */}
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium xl:hidden', type.bg, type.color)}>
             {type.label}
           </span>
+          <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium capitalize', status.bg, status.text)}>
+            {project.status}
+          </span>
+        </div>
+      </a>
+
+      {/* Hover Actions */}
+      <div className="flex shrink-0 items-center gap-1 pr-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+        {/* Star / Unstar */}
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onToggleFavorite?.(project.id);
+          }}
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+            project.isFavorite
+              ? "text-amber-400 hover:bg-amber-50"
+              : "text-gray-400 hover:bg-amber-50 hover:text-amber-500"
+          )}
+          title={project.isFavorite ? 'Unstar' : 'Star'}
+        >
+          {project.isFavorite ? (
+            <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          ) : (
+            <svg className="h-4 w-4" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+            </svg>
+          )}
+        </button>
+
+        {/* Menu */}
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setMenuOpen((v) => !v);
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+          >
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="5" r="1.5" />
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="12" cy="19" r="1.5" />
+            </svg>
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+              <a
+                href={`/projects/${project.id}`}
+                draggable={false}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                Open Project
+              </a>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Move to Trash
+              </button>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Status Badge */}
-      <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-medium', status.bg, status.text)}>
-        {project.status}
-      </span>
-    </motion.a>
+    </motion.div>
   );
 }
 
 // Project Grid Card Component (for grid view)
-function ProjectGridCard({ project, isDragging = false, memberCounts }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number> }) {
+function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFavorite }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number>; onToggleFavorite?: (id: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -768,10 +891,16 @@ function ProjectGridCard({ project, isDragging = false, memberCounts }: { projec
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Don't navigate if dnd-kit detected a drag (the distance threshold)
+    if ((e.target as HTMLElement).closest('button, [role="button"]')) return;
+    window.location.href = `/projects/${project.id}`;
+  };
+
   return (
-    <motion.a
+    <motion.div
       ref={setNodeRef}
-      href={`/projects/${project.id}`}
+      onClick={handleCardClick}
       {...attributes}
       {...listeners}
       layout
@@ -781,7 +910,7 @@ function ProjectGridCard({ project, isDragging = false, memberCounts }: { projec
         transition,
       }}
       className={cn(
-        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200',
+        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200 cursor-pointer',
         (isDragging || isSortableDragging) && 'scale-[0.98] opacity-40 pointer-events-none'
       )}
     >
@@ -813,15 +942,28 @@ function ProjectGridCard({ project, isDragging = false, memberCounts }: { projec
           </div>
         </div>
         {/* Favorite Star */}
-        {project.isFavorite && (
-          <div className="absolute left-3 top-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-400 shadow-lg">
+        <div
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onToggleFavorite?.(project.id);
+          }}
+          className="absolute left-3 top-3 cursor-pointer"
+        >
+          {project.isFavorite ? (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-400 shadow-lg transition-transform hover:scale-110">
               <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80 opacity-0 backdrop-blur-sm shadow-sm transition-all duration-150 group-hover:opacity-100 hover:scale-110">
+              <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+              </svg>
+            </div>
+          )}
+        </div>
         {/* Status Badge */}
         <div className="absolute right-3 top-3">
           <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', status.bg, status.text)}>
@@ -875,17 +1017,55 @@ function ProjectGridCard({ project, isDragging = false, memberCounts }: { projec
           </span>
         </div>
       </div>
-    </motion.a>
+    </motion.div>
   );
 }
 
 // Main Projects Manager Component
 // Props are optional — real data comes from the Zustand store/API, not from Astro SSR.
 export default function ProjectsManager(_props?: ProjectsManagerProps) {
+  // Read sessionStorage cache synchronously on mount — no async, no skeleton flicker.
+  const getCachedProjects = (): Project[] => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = sessionStorage.getItem('orbit:projects:me');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
+      if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) return parsed.data;
+    } catch { /* ignore */ }
+    return [];
+  };
+
+  const getCachedFolders = (): Folder[] => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = sessionStorage.getItem('orbit:folders:me');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { data: ApiFolder[]; expiresAt: number };
+      if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
+        const projects = getCachedProjects();
+        return parsed.data.map((f) => mapApiFolderToUiFolder(f, projects));
+      }
+    } catch { /* ignore */ }
+    return [];
+  };
+
+  // Track whether we have cache — determines if we can skip skeleton
+  const hasSessionCache = (() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = sessionStorage.getItem('orbit:projects:me');
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { expiresAt: number };
+      return parsed.expiresAt > Date.now();
+    } catch { return false; }
+  })();
+
   const [isHydrated, setIsHydrated] = useState(false);
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [isProjectsLoading, setIsProjectsLoading] = useState(true);
+  const [folders, setFolders] = useState<Folder[]>(() => getCachedFolders());
+  const [projects, setProjects] = useState<Project[]>(() => getCachedProjects());
+  // Only show skeleton if we have NO cache AND not hydrated yet
+  const [isProjectsLoading, setIsProjectsLoading] = useState(!hasSessionCache);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
     if (typeof window === 'undefined') return 'grid';
@@ -918,7 +1098,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 6,
+        distance: 0,
       },
     })
   );
@@ -938,22 +1118,24 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     ? getProjectsForFolder(currentFolder.id)
         .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
         .filter(p => !filterStatus || p.status === filterStatus)
+        .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999))
     : [];
 
   // Starred projects (favorites) — shown in dedicated section
   const starredProjects = projects
     .filter(p => p.isFavorite)
     .filter(p => !filterStatus || p.status === filterStatus)
-    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
 
-  // All projects sorted by starred first, then recency
+  // All projects sorted by starred first, then by sortOrder
   const allProjects = projects
     .filter(p => !filterStatus || p.status === filterStatus)
     .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
       if (a.isFavorite && !b.isFavorite) return -1;
       if (!a.isFavorite && b.isFavorite) return 1;
-      return new Date(b.lastVisited).getTime() - new Date(a.lastVisited).getTime();
+      return (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
     });
 
   // Get priority projects (when on main view) — non-favorited active/review projects
@@ -961,7 +1143,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     .filter(p => !p.isFavorite)
     .filter(p => p.status === 'active' || p.status === 'review')
     .filter(p => !filterStatus || p.status === filterStatus)
-    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
 
   // Handle create folder
   const handleCreateFolder = async (folderData: { name: string; description: string; color: string }) => {
@@ -1302,6 +1485,60 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     }
   };
 
+  const toggleFavorite = async (projectId: string) => {
+    try {
+      const response = await fetch('/api/projects/favorite/toggle', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId }),
+      });
+
+      if (!response.ok) {
+        toast.error('Failed to update favorite');
+        return;
+      }
+
+      const data = await response.json();
+      const newFavoriteState = data?.data?.isFavorite ?? false;
+
+      // Update local state
+      setProjects((prev) => prev.map((p) =>
+        p.id === projectId ? { ...p, isFavorite: newFavoriteState } : p
+      ));
+
+      // Update Zustand store
+      const store = useAppStore.getState();
+      const updated = store.projects.map((p) =>
+        p.publicId === projectId ? { ...p, isFavorite: newFavoriteState } : p
+      );
+      store.setProjects(updated);
+
+      // Dispatch event to refresh sidebar favorites
+      window.dispatchEvent(new CustomEvent('orbit:favorite-toggled', {
+        detail: { projectId, isFavorite: newFavoriteState }
+      }));
+
+      toast.success(newFavoriteState ? 'Added to favorites' : 'Removed from favorites');
+    } catch {
+      toast.error('Failed to update favorite');
+    }
+  };
+
+  const saveProjectOrder = async (projectIds: string[]) => {
+    try {
+      await fetch('/api/projects/order/save', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectIds }),
+      });
+    } catch {
+      toast.error('Failed to save project order');
+    }
+  };
+
+
   const handleDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
     if (!id.startsWith('project:')) return;
@@ -1332,7 +1569,11 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       const overProjectId = overId.replace('project:', '');
       const overIndex = projects.findIndex((p) => p.id === overProjectId);
       if (activeIndex >= 0 && overIndex >= 0) {
-        setProjects((prev) => arrayMove(prev, activeIndex, overIndex));
+        setProjects((prev) => {
+          const reordered = arrayMove(prev, activeIndex, overIndex);
+          saveProjectOrder(reordered.map((p) => p.id));
+          return reordered;
+        });
       }
     }
   };
@@ -1341,10 +1582,17 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   // Tracks store length so this re-fires if hydration populates the store later.
   const storeProjectsLen = useAppStore(s => s.projects.length);
   useEffect(() => {
+    // Read cache synchronously first — already baked into initial state above.
+    // Only fetch if session cache is empty AND store is empty.
     const storeProjects = useAppStore.getState().projects;
+    const hasSessionCache = (() => {
+      try {
+        return sessionStorage.getItem('orbit:projects:me') !== null;
+      } catch { return false; }
+    })();
 
     if (storeProjects.length > 0) {
-      // Store has data — sync to local state and dismiss skeleton immediately.
+      // Store has data — sync to local state (data already visible from cache).
       const mapped = storeProjects.map(mapApiProjectToUiProject);
       setProjects(mapped);
       setIsProjectsLoading(false);
@@ -1357,8 +1605,16 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       return;
     }
 
-    // Store is still empty (hydration missed or returned null).
-    // Fetch from network so the skeleton resolves instead of hanging forever.
+    if (hasSessionCache) {
+      // Session cache exists — data already visible. Revalidate in background silently.
+      loadProjects(false, { force: true }).then((fetched) => {
+        if (fetched.length > 0) loadFolders(fetched, { force: true });
+        loadMemberCounts(fetched);
+      });
+      return;
+    }
+
+    // No cache, no store — must fetch. Show skeleton only in this rare case.
     loadProjects(true, { force: true }).then((fetched) => {
       if (fetched.length > 0) loadFolders(fetched, { force: true });
       loadMemberCounts(fetched);
@@ -1449,7 +1705,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     };
   }, []); // intentionally empty — socket events handle their own lifecycle
 
-  if (!isHydrated || isProjectsLoading) return <ProjectsSkeleton />;
+  // Only show skeleton on initial load when there's no cache at all
+  if (!isHydrated && !hasSessionCache) return <ProjectsSkeleton />;
 
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId) || null
@@ -1458,7 +1715,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={rectIntersection}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
@@ -1600,80 +1857,104 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
           </section>
 
           {/* Starred / Favorited Projects Section */}
-          {starredProjects.length > 0 && (
-            <section>
-              <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-900">
-                <svg className="h-4 w-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                </svg>
-                Starred
-              </h2>
-              <SortableContext
-                items={starredProjects.map((project) => `project:${project.id}`)}
-                strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+          <AnimatePresence>
+            {starredProjects.length > 0 && (
+              <motion.section
+                key="favorites-section"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                className="overflow-hidden"
               >
-                <div className={cn(
-                  viewMode === 'grid'
-                    ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
-                    : 'space-y-3'
-                )}>
-                  {starredProjects.map((project) => (
+                <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-900">
+                  <svg className="h-4 w-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                  Favorites
+                </h2>
+                <SortableContext
+                  items={starredProjects.map((project) => `project:${project.id}`)}
+                  strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+                >
+                  <div className={cn(
                     viewMode === 'grid'
-                      ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                      : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                  ))}
-                </div>
-              </SortableContext>
-            </section>
-          )}
+                      ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
+                      : 'space-y-3'
+                  )}>
+                    {starredProjects.map((project) => (
+                      viewMode === 'grid'
+                        ? <motion.div key={project.id} layout>
+                            <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                          </motion.div>
+                        : <motion.div key={project.id} layout>
+                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                          </motion.div>
+                    ))}
+                  </div>
+                </SortableContext>
+              </motion.section>
+            )}
+          </AnimatePresence>
 
           {/* All Projects Section */}
           <section>
             <h2 className="mb-4 text-sm font-medium text-gray-900">
               {starredProjects.length > 0 ? 'All Projects' : 'Projects'}
             </h2>
-            {priorityProjects.length > 0 ? (
-              <SortableContext
-                items={priorityProjects.map((project) => `project:${project.id}`)}
-                strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
-              >
-              <div className={cn(
-                viewMode === 'grid'
-                  ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
-                  : 'space-y-3'
-              )}>
-                {priorityProjects.map((project) => (
-                  viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                ))}
-              </div>
-              </SortableContext>
-            ) : allProjects.filter(p => !p.isFavorite).length > 0 ? (
-              <SortableContext
-                items={allProjects.filter(p => !p.isFavorite).map((project) => `project:${project.id}`)}
-                strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
-              >
-              <div className={cn(
-                viewMode === 'grid'
-                  ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
-                  : 'space-y-3'
-              )}>
-                {allProjects.filter(p => !p.isFavorite).map((project) => (
-                  viewMode === 'grid'
-                    ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                    : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                ))}
-              </div>
-              </SortableContext>
-            ) : (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-8 text-center">
-                <svg className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-                <p className="mt-2 text-sm text-gray-500">No projects yet</p>
-              </div>
-            )}
+            <SortableContext
+              items={priorityProjects.length > 0 ? priorityProjects.map((project) => `project:${project.id}`) : allProjects.filter(p => !p.isFavorite).map((project) => `project:${project.id}`)}
+              strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
+            >
+              <AnimatePresence mode="popLayout">
+                {priorityProjects.length > 0 ? (
+                  <div className={cn(
+                    viewMode === 'grid'
+                      ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
+                      : 'space-y-3'
+                  )}>
+                    {priorityProjects.map((project) => (
+                      viewMode === 'grid'
+                        ? <motion.div key={project.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+                            <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                          </motion.div>
+                        : <motion.div key={project.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                          </motion.div>
+                    ))}
+                  </div>
+                ) : allProjects.filter(p => !p.isFavorite).length > 0 ? (
+                  <div className={cn(
+                    viewMode === 'grid'
+                      ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
+                      : 'space-y-3'
+                  )}>
+                    {allProjects.filter(p => !p.isFavorite).map((project) => (
+                      viewMode === 'grid'
+                        ? <motion.div key={project.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+                            <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                          </motion.div>
+                        : <motion.div key={project.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                          </motion.div>
+                    ))}
+                  </div>
+                ) : (
+                  <motion.div
+                    key="empty-state"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-8 text-center"
+                  >
+                    <svg className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <p className="mt-2 text-sm text-gray-500">No projects yet</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </SortableContext>
           </section>
         </>
       ) : (
@@ -1684,6 +1965,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
               items={currentFolderProjects.map((project) => `project:${project.id}`)}
               strategy={viewMode === 'grid' ? rectSortingStrategy : verticalListSortingStrategy}
             >
+            <AnimatePresence mode="popLayout">
             <div className={cn(
               viewMode === 'grid'
                 ? 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]'
@@ -1691,14 +1973,25 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
             )}>
               {currentFolderProjects.map((project) => (
                 viewMode === 'grid'
-                  ? <ProjectGridCard key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
-                  : <ProjectListItem key={project.id} project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} />
+                  ? <motion.div key={project.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+                      <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                    </motion.div>
+                  : <motion.div key={project.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+                      <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                    </motion.div>
               ))}
             </div>
+            </AnimatePresence>
             </SortableContext>
           ) : (
             /* Empty Folder State */
-            <div className="flex flex-col items-center justify-center py-16">
+            <motion.div
+              key="folder-empty"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center py-16"
+            >
               <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gray-100 mb-4">
                 <FolderIcon className="h-10 w-10 text-gray-400" />
               </div>
@@ -1707,7 +2000,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                 Start adding projects to organize your work. Projects in this folder will appear here.
               </p>
               <NewProjectButton />
-            </div>
+            </motion.div>
           )}
         </section>
       )}
@@ -1754,21 +2047,41 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         </div>
       )}
 
-      <DragOverlay
-        modifiers={[snapCenterToCursor]}
-        dropAnimation={{
-          duration: 320,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        }}
-      >
+      <DragOverlay>
         {activeProject ? (
           viewMode === 'grid' ? (
-            <div className="w-[280px] opacity-80">
-              <ProjectGridCard project={activeProject} memberCounts={memberCounts} />
+            <div className="w-[280px] rounded-xl border border-gray-200 bg-white shadow-2xl ring-2 ring-blue-400/30 overflow-hidden">
+              <div className="relative h-24 overflow-hidden bg-gradient-to-br from-blue-100 to-indigo-100">
+                {activeProject.thumbnail ? (
+                  <img
+                    src={activeProject.thumbnail}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                    }}
+                  />
+                ) : null}
+              </div>
+              <div className="p-3">
+                <h4 className="font-medium text-gray-900 text-sm truncate">{activeProject.name}</h4>
+                <p className="text-xs text-gray-500 mt-0.5 truncate">/projects/{activeProject.slug}</p>
+              </div>
             </div>
           ) : (
-            <div className="w-full max-w-[760px] opacity-80">
-              <ProjectListItem project={activeProject} memberCounts={memberCounts} />
+            <div className="w-full max-w-[760px] rounded-xl border border-gray-200 bg-white shadow-2xl ring-2 ring-blue-400/30 overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
+                  <svg className="h-5 w-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-medium text-gray-900 text-sm truncate">{activeProject.name}</h4>
+                  <p className="text-xs text-gray-500 truncate">/projects/{activeProject.slug}</p>
+                </div>
+              </div>
             </div>
           )
         ) : null}

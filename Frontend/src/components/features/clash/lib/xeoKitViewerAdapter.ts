@@ -253,9 +253,11 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
         });
       } else {
         // Fallback: bounding box — semi-transparent so overlap region remains visible.
-        const sx = Math.max(1, object.size.width / 2);
-        const sy = Math.max(1, object.size.height / 2);
-        const sz = Math.max(1, object.size.depth / 2);
+        // Use real size for detail; use minimum 1 only for truly point-like objects (all dims near 0).
+        const hasAnyDimension = object.size.width > 0.01 || object.size.height > 0.01 || object.size.depth > 0.01;
+        const sx = hasAnyDimension ? object.size.width / 2 : 1;
+        const sy = hasAnyDimension ? object.size.height / 2 : 1;
+        const sz = hasAnyDimension ? object.size.depth / 2 : 1;
         model.createMesh({
           id: meshId,
           geometryId: BOX_GEOMETRY_ID,
@@ -372,6 +374,17 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
 
       this.loadedXktModelIds.push(id);
       loadedIds.push(id);
+
+      // Debug: log all entity IDs from this model via viewer scene
+      const viewerScene = this.viewer.scene as { models?: Record<string, { objects?: Record<string, unknown> }> } | undefined;
+      const objects = viewerScene?.models?.[id]?.objects ?? {};
+      const allKeys = Object.keys(objects);
+      console.log(`[XeoKitAdapter] Model "${id}" loaded, ${allKeys.length} entities. First 20:`, allKeys.slice(0, 20));
+      // Debug: inspect first entity to find any ID-like properties
+      const firstEntity = objects[allKeys[0]];
+      if (firstEntity) {
+        console.log(`[XeoKitAdapter] First entity props:`, Object.keys(firstEntity));
+      }
     }
 
     if (loadedIds.length === 0) return;
@@ -447,13 +460,20 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   }
 
   onObjectPicked(callback: ObjectPickedCallback): UnsubscribeFn {
-    const input = this.viewer.scene?.input;
-    const pick = this.viewer.scene?.pick;
-    if (!input?.on || !input?.off || !pick) return () => {};
+    const scene = this.viewer.scene;
+    const input = scene?.input;
+    const pick = scene?.pick;
+    if (!scene || !input?.on || !input?.off || !pick) return () => {};
 
-    const handle = input.on('mouseclicked', (coords: [number, number]) => {
-      const hit = pick({ canvasPos: coords });
-      const objectId = hit?.entity?.id;
+    const handle = input.on('mouseclicked', (coords: [number, number] | undefined) => {
+      if (!scene || !coords || !pick) return;
+      let objectId: string | undefined;
+      try {
+        const hit = pick({ canvasPos: coords });
+        objectId = hit?.entity?.id;
+      } catch {
+        return;
+      }
       if (!objectId || objectId.startsWith(CLASH_ZONE_ENTITY_ID)) return;
       callback(objectId);
     });
@@ -542,13 +562,18 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
       const entity = objects[objectId];
       if (entity) return { entity, modelId };
     }
+    // Log sample entity keys from first model for debugging
+    const firstModelId = this.loadedXktModelIds[0];
+    const firstModel = scene.models?.[firstModelId];
+    const keys = firstModel?.objects ? Object.keys(firstModel.objects).slice(0, 10) : [];
+    console.warn(`[XeoKitAdapter] "${objectId}" not found. Sample entities in model "${firstModelId}":`, keys);
     return null;
   }
 
   /**
    * Recolors XKT objects.
    *
-   * Clash detail mode: colors objectA (blue) and objectB (red); resets all others to default.
+   * Clash detail mode: colors objectA (green) and objectB (yellow); resets all others to default.
    * Overview mode: colors every visible object with the same scheme as the bbox overlay,
    *   falling back to default for objects not in the sceneObjects map.
    *
@@ -561,8 +586,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
     visibleObjectIds?: string[],
     sceneObjects?: XeoKitSceneObject[]
   ): void {
-    const COL_CLA = [0.32, 0.73, 0.98] as [number, number, number];
-    const COL_CLS = [0.96, 0.20, 0.18] as [number, number, number];
+    const COL_CLA = [0.12, 0.80, 0.40] as [number, number, number]; // Object A - green
+    const COL_CLS = [1.0, 0.85, 0.0] as [number, number, number]; // Object B - yellow
     const COL_SELECTED = [0.30, 0.90, 0.72] as [number, number, number];
     const COL_TEST_SCOPE = [0.24, 0.80, 0.62] as [number, number, number];
     const COL_DEFAULT = [0.68, 0.70, 0.76] as [number, number, number];
@@ -620,7 +645,10 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
     // Apply colors to XKT entities.
     for (const [objId, color] of Object.entries(colorMap)) {
       const found = this.findEntityInXktModels(objId);
-      if (!found) continue;
+      if (!found) {
+        console.warn(`[XeoKitAdapter] Object not found in XKT models: "${objId}"`);
+        continue;
+      }
 
       this.xktObjectModelMap.set(objId, found.modelId);
       const entity = found.entity as { color?: number[]; opacity?: number; highlighted?: boolean };

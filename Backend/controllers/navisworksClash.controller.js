@@ -348,6 +348,18 @@ class NavisworksClashController {
             return errorResponse(res, 400, error.message || 'Failed to import from documents');
         }
     }
+
+    /** DELETE /projects/:projectSlug/navisworks/models */
+    async clearModels(req, res) {
+        try {
+            const projectSlug = getProjectSlug(req);
+            if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            await modelService.clearModels(projectSlug);
+            return res.status(200).json({ success: true });
+        } catch (error) {
+            return errorResponse(res, 500, error.message || 'Failed to clear models');
+        }
+    }
 }
 
 module.exports = new NavisworksClashController();

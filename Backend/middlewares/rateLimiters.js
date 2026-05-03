@@ -14,7 +14,7 @@ const createLimiter = ({ windowMs, limit, message }) =>
 
 const loginLimiter = createLimiter({
     windowMs: 60 * 1000,
-    limit: 20,
+    limit: 10,
     message: 'Too many login attempts. Please try again later.',
 });
 

@@ -9,6 +9,7 @@ if (process.env.NODE_ENV !== 'production') {
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 require('./config/passport');
@@ -73,6 +74,28 @@ const clashLimiter = rateLimit({
 });
 
 app.use(express.json());
+app.use(helmet());
+app.use(helmet.contentSecurityPolicy({
+    directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+    },
+}));
+app.use(helmet.hsts({
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+}));
+app.use(helmet.frameguard({ action: 'deny' }));
+app.use(helmet.noSniff());
+app.use(helmet.xssFilter());
+app.use(helmet.referrerPolicy({ policy: 'strict-origin-when-cross-origin' }));
 app.use(
     cors({
         origin: process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',

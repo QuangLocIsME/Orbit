@@ -518,8 +518,8 @@ export default function Viewer2D({
                   <svg className="h-full w-full drop-shadow-[0_2px_5px_rgba(0,0,0,0.2)]" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
                     <polygon
                       points={polyPoints}
-                      fill={isDeEmphasized ? 'rgba(148,163,184,0.20)' : object.isColliding ? 'rgba(239,68,68,0.25)' : isPrimary ? 'rgba(244,63,94,0.18)' : 'rgba(16,185,129,0.20)'}
-                      stroke={isDeEmphasized ? 'rgba(148,163,184,0.92)' : object.isColliding ? 'rgba(248,113,113,0.95)' : isPrimary ? 'rgba(251,113,133,0.92)' : 'rgba(52,211,153,0.92)'}
+                      fill={isDeEmphasized ? 'rgba(148,163,184,0.20)' : object.isColliding ? 'rgba(239,68,68,0.25)' : isPrimary ? 'rgba(16,185,129,0.20)' : 'rgba(250,204,21,0.25)'}
+                      stroke={isDeEmphasized ? 'rgba(148,163,184,0.92)' : object.isColliding ? 'rgba(248,113,113,0.95)' : isPrimary ? 'rgba(52,211,153,0.92)' : 'rgba(250,204,21,0.95)'}
                       strokeWidth={1.6}
                     />
                   </svg>
@@ -527,7 +527,7 @@ export default function Viewer2D({
                     className={cn(
                       'absolute left-2 top-2 rounded px-2 py-1 text-[10px] font-medium transition-opacity',
                       shouldShowLabel(isPrimary, object.isSelected, object.isColliding) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-                      object.isColliding ? 'bg-slate-950/90 text-red-200' : isPrimary ? 'bg-slate-950/80 text-rose-200' : 'bg-slate-950/80 text-emerald-200'
+                      object.isColliding ? 'bg-slate-950/90 text-red-200' : isPrimary ? 'bg-emerald-950/90 text-emerald-200' : 'bg-amber-950/90 text-amber-200'
                     )}
                   >
                     {object.label}
@@ -571,13 +571,13 @@ export default function Viewer2D({
                 className={cn(
                   'group absolute rounded-sm border text-left shadow-lg transition-all duration-150',
                   object.isSelected ? 'ring-2 ring-sky-200/70' : '',
-                  isDeEmphasized
+                    isDeEmphasized
                     ? 'border-slate-300 bg-slate-400/16 shadow-slate-900/10 opacity-70'
                     : object.isColliding
                       ? 'border-red-400 bg-red-500/20 shadow-red-900/50'
                       : isPrimary
-                        ? 'border-rose-400/60 bg-rose-500/10 shadow-rose-900/30'
-                        : 'border-emerald-400/50 bg-emerald-500/10 shadow-emerald-900/30',
+                        ? 'border-emerald-400/60 bg-emerald-500/10 shadow-emerald-900/30'
+                        : 'border-amber-400/50 bg-amber-500/10 shadow-amber-900/30',
                   allowObjectMove ? (draggingObjectId === object.id ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
                 )}
                 style={{
@@ -591,7 +591,7 @@ export default function Viewer2D({
                   className={cn(
                     'absolute left-2 top-2 rounded px-2 py-1 text-[10px] font-medium transition-opacity',
                     shouldShowLabel(isPrimary, object.isSelected, object.isColliding) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-                    object.isColliding ? 'bg-slate-950/90 text-red-200' : isPrimary ? 'bg-slate-950/80 text-rose-200' : 'bg-slate-950/80 text-emerald-200'
+                    object.isColliding ? 'bg-slate-950/90 text-red-200' : isPrimary ? 'bg-emerald-950/90 text-emerald-200' : 'bg-amber-950/90 text-amber-200'
                   )}
                 >
                   {object.label}

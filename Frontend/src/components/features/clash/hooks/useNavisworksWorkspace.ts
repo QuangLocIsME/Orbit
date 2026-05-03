@@ -493,10 +493,23 @@ export function useNavisworksWorkspace(projectSlug: string) {
     },
   });
 
+  const clearModels = useMutation({
+    mutationFn: async () =>
+      fetchJson<{ success: true }>(
+        apiUrl(`/projects/${encodeURIComponent(projectSlug)}/navisworks/models`),
+        { method: 'DELETE' }
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
+      await queryClient.invalidateQueries({ queryKey: clashesOverviewKey(projectSlug) });
+    },
+  });
+
   return {
     workspaceQuery,
     importModels,
     importFromDocuments,
+    clearModels,
     saveSelectionSet,
     deleteSelectionSet,
     saveClashTest,

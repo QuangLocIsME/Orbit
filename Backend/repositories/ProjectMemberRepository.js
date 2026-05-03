@@ -27,8 +27,8 @@ class ProjectMemberRepository {
             query = { userId, status: 'accepted' };
         }
         return await ProjectMember.find(query).select(
-            'projectId role status lastVisitedAt isFavorite'
-        );
+            'projectId role status lastVisitedAt isFavorite sortOrder'
+        ).sort({ sortOrder: 1, createdAt: 1 });
     }
 
     async updateLastVisited(projectId, userId) {
@@ -117,7 +117,7 @@ class ProjectMemberRepository {
             query = { userId, isFavorite: true };
         }
         return await ProjectMember.find(query).select(
-            'projectId role status lastVisitedAt isFavorite'
+            'projectId role status lastVisitedAt isFavorite sortOrder'
         );
     }
 

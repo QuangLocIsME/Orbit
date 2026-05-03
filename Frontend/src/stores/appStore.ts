@@ -72,6 +72,8 @@ export interface ApiProject {
   folderIds?: string[];
   role?: string;
   status?: string;
+  sortOrder?: number;
+  isFavorite?: boolean;
 }
 
 export interface ApiMember {

@@ -221,4 +221,41 @@ async function sendInviteEmail({ toEmail, inviterName, projectName, role, accept
     return sendEmail(toEmail, subject, { text, html });
 }
 
-module.exports = { sendEmail, sendResetCodeEmail, sendWelcomeEmail, sendInviteEmail, getTransporter };
+async function sendAccountLockedEmail(toEmail, userName, lockUntil) {
+    const subject = '⚠️ Security Alert: Your ORBIT Account Has Been Temporarily Locked';
+    const lockTime = lockUntil instanceof Date ? lockUntil.toLocaleString() : '15 minutes from now';
+    const text = [
+        `Hello ${userName || 'User'},`,
+        '',
+        'Your ORBIT account has been temporarily locked due to multiple failed login attempts.',
+        '',
+        `Your account will be unlocked at: ${lockTime}`,
+        '',
+        'If this was you:',
+        '- Please wait until the lockout period expires',
+        '- Then try logging in with the correct credentials',
+        '',
+        'If this was NOT you:',
+        '- Someone may be trying to access your account',
+        '- Consider enabling Two-Factor Authentication for extra security',
+        '- Contact support if you need further assistance',
+        '',
+        'Best regards,',
+        'ORBIT Security Team',
+    ].join('\n');
+    const html = `<div style="font-family: sans-serif; max-width: 560px;">
+  <h2 style="color:#DC2626;">🔒 Account Temporarily Locked</h2>
+  <p>Hello <strong>${userName || 'User'}</strong>,</p>
+  <p>Your ORBIT account has been temporarily locked due to multiple failed login attempts.</p>
+  <div style="background:#FEF3C7;border-left:4px solid #F59E0B;padding:12px 16px;margin:16px 0;border-radius:4px;">
+    <strong>🔓 Account will be unlocked:</strong> ${lockTime}
+  </div>
+  <p><strong>If this was you:</strong> Please wait until the lockout period expires, then try logging in with the correct credentials.</p>
+  <p><strong>If this was NOT you:</strong> Someone may be attempting to access your account. We recommend enabling Two-Factor Authentication and contacting support if needed.</p>
+  <p style="color:#6B7280;font-size:13px;margin-top:16px;">If you did not attempt to log in, please secure your account immediately.</p>
+  <p>Best regards,<br><strong>ORBIT Security Team</strong></p>
+</div>`;
+    return sendEmail(toEmail, subject, { text, html });
+}
+
+module.exports = { sendEmail, sendResetCodeEmail, sendWelcomeEmail, sendInviteEmail, sendAccountLockedEmail, getTransporter };

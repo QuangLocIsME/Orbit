@@ -87,6 +87,22 @@ export async function forgotPassword(email) {
 }
 
 /**
+ * POST /api/auth/verify-2fa — verify TOTP code after password login for 2FA-enabled accounts
+ */
+export async function verify2FA(email, token) {
+  const res = await fetch(apiUrl("/auth/verify-2fa"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ email, token }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || "2FA verification failed");
+  return data;
+}
+
+/**
  * POST /api/auth/reset-password — dat lai mat khau bang token
  */
 export async function resetPassword(token, newPassword, confirmPassword, email) {

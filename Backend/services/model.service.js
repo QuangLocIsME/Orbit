@@ -841,6 +841,37 @@ class ModelService {
         const federatedModel = await this.getFederatedModel(projectSlug);
         return Array.from(new Set(federatedModel.objects.map((object) => object.category))).sort();
     }
+
+    async clearModels(projectSlug) {
+        const safeSlug = projectSlug || 'default-project';
+
+        // Clean up XKT files directory
+        const xktDir = path.join(LEGACY_PROJECTS_DIR, safeSlug, 'xkt');
+        try {
+            if (fs.existsSync(xktDir)) {
+                const files = fs.readdirSync(xktDir);
+                for (const file of files) {
+                    fs.unlinkSync(path.join(xktDir, file));
+                }
+            }
+        } catch (err) {
+            console.warn(`[clearModels] Failed to clean xkt dir: ${err.message}`);
+        }
+
+        // Reset federated model in workspace
+        await updateWorkspace(safeSlug, (ws) => ({
+            ...ws,
+            federatedModel: {
+                coordinateSystem: 'RAW',
+                unit: 'm',
+                models: [],
+                objects: [],
+                categories: [],
+            },
+        }));
+
+        return { success: true };
+    }
 }
 
 module.exports = new ModelService();

@@ -1,6 +1,18 @@
 const bcrypt = require('bcrypt');
 
-jest.mock('../services/UserService');
+jest.mock('../services/UserService', () => ({
+  UserService: {
+    checkAccountLock: jest.fn(),
+    LOCKOUT_DURATION_MS: 900000,
+    MAX_LOGIN_ATTEMPTS: 5,
+  },
+  userService: {
+    createUser: jest.fn(),
+    loginUser: jest.fn(),
+    requestResetCode: jest.fn(),
+    resetPassword: jest.fn(),
+  },
+}));
 jest.mock('../repositories/UserRepository');
 jest.mock('../services/emailService');
 jest.mock('../utils/securityLog', () => ({
@@ -12,7 +24,7 @@ jest.mock('bcrypt', () => ({
   hashSync: jest.fn(),
 }));
 
-const UserService = require('../services/UserService');
+const { UserService, userService } = require('../services/UserService');
 const authController = require('../controllers/AuthController');
 
 describe('Auth Controller - Login', () => {
@@ -40,7 +52,7 @@ describe('Auth Controller - Login', () => {
     };
 
     it('TC001: Login with non-existent email should return "Email or password is incorrect."', async () => {
-      UserService.loginUser.mockRejectedValue(
+      userService.loginUser.mockRejectedValue(
         new Error('Email or password is incorrect.')
       );
 
@@ -63,7 +75,7 @@ describe('Auth Controller - Login', () => {
     });
 
     it('TC002: Login with incorrect password should return "Email or password is incorrect."', async () => {
-      UserService.loginUser.mockRejectedValue(
+      userService.loginUser.mockRejectedValue(
         new Error('Email or password is incorrect.')
       );
 
@@ -86,7 +98,7 @@ describe('Auth Controller - Login', () => {
     });
 
     it('TC003: Login with correct credentials should return success', async () => {
-      UserService.loginUser.mockResolvedValue(validUser);
+      userService.loginUser.mockResolvedValue(validUser);
 
       mockReq = {
         body: {
@@ -112,7 +124,7 @@ describe('Auth Controller - Login', () => {
     });
 
     it('TC004: Login with missing email should return error', async () => {
-      UserService.loginUser.mockRejectedValue(
+      userService.loginUser.mockRejectedValue(
         new Error('Email or password is incorrect.')
       );
 
@@ -135,7 +147,7 @@ describe('Auth Controller - Login', () => {
     });
 
     it('TC005: Login with blocked account should return error', async () => {
-      UserService.loginUser.mockRejectedValue(
+      userService.loginUser.mockRejectedValue(
         new Error('Email or password is incorrect.')
       );
 
@@ -171,7 +183,7 @@ describe('Auth Controller - Register', () => {
   });
 
   it('TC006: Register with existing email should return error', async () => {
-    UserService.createUser.mockRejectedValue(
+    userService.createUser.mockRejectedValue(
       new Error('Email already exists.')
     );
 
@@ -191,7 +203,7 @@ describe('Auth Controller - Register', () => {
   });
 
   it('TC007: Register with missing agreement should return error', async () => {
-    UserService.createUser.mockRejectedValue(
+    userService.createUser.mockRejectedValue(
       new Error('You must accept the terms.')
     );
 
@@ -226,41 +238,41 @@ describe('UserService - Unit Tests', () => {
         isBlocked: false,
       };
 
-      UserService.loginUser.mockResolvedValue(mockUser);
+      userService.loginUser.mockResolvedValue(mockUser);
 
       const bcrypt = require('bcrypt');
       bcrypt.compare.mockResolvedValue(true);
     });
 
     it('TC009: Should throw error for invalid email format', async () => {
-      UserService.loginUser.mockRejectedValue(
+      userService.loginUser.mockRejectedValue(
         new Error('Email or password is incorrect.')
       );
 
       await expect(
-        UserService.loginUser('invalid-email', 'password123')
+        userService.loginUser('invalid-email', 'password123')
       ).rejects.toThrow('Email or password is incorrect.');
     });
 
     it('TC010: Should throw error for blocked user', async () => {
-      UserService.loginUser.mockRejectedValue(
+      userService.loginUser.mockRejectedValue(
         new Error('Email or password is incorrect.')
       );
 
       await expect(
-        UserService.loginUser('blocked@example.com', 'password')
+        userService.loginUser('blocked@example.com', 'password')
       ).rejects.toThrow('Email or password is incorrect.');
     });
   });
 
   describe('createUser', () => {
     it('TC011: Should throw error when passwords do not match', async () => {
-      UserService.createUser.mockRejectedValue(
+      userService.createUser.mockRejectedValue(
         new Error('Password confirmation does not match.')
       );
 
       await expect(
-        UserService.createUser({
+        userService.createUser({
           fullName: 'Test User',
           email: 'test@example.com',
           password: 'Password123',
@@ -271,12 +283,12 @@ describe('UserService - Unit Tests', () => {
     });
 
     it('TC012: Should throw error when terms not accepted', async () => {
-      UserService.createUser.mockRejectedValue(
+      userService.createUser.mockRejectedValue(
         new Error('You must accept the terms.')
       );
 
       await expect(
-        UserService.createUser({
+        userService.createUser({
           fullName: 'Test User',
           email: 'test@example.com',
           password: 'Password123',
@@ -289,12 +301,12 @@ describe('UserService - Unit Tests', () => {
 
   describe('createUser - Backend Validation', () => {
     it('TC013: Should throw error "Full name is required" when full name is empty', async () => {
-      UserService.createUser.mockRejectedValue(
+      userService.createUser.mockRejectedValue(
         new Error('Full name is required.')
       );
 
       await expect(
-        UserService.createUser({
+        userService.createUser({
           fullName: '',
           email: 'test@example.com',
           password: 'Password123',
@@ -305,12 +317,12 @@ describe('UserService - Unit Tests', () => {
     });
 
     it('TC014: Should throw error "Email is required" when email is empty', async () => {
-      UserService.createUser.mockRejectedValue(
+      userService.createUser.mockRejectedValue(
         new Error('Email is required.')
       );
 
       await expect(
-        UserService.createUser({
+        userService.createUser({
           fullName: 'Test User',
           email: '',
           password: 'Password123',
@@ -321,12 +333,12 @@ describe('UserService - Unit Tests', () => {
     });
 
     it('TC015: Should throw error "Password is required" when password is empty', async () => {
-      UserService.createUser.mockRejectedValue(
+      userService.createUser.mockRejectedValue(
         new Error('Password is required.')
       );
 
       await expect(
-        UserService.createUser({
+        userService.createUser({
           fullName: 'Test User',
           email: 'test@example.com',
           password: '',

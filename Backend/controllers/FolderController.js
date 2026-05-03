@@ -167,7 +167,7 @@ class FolderController {
             const userId = requireUserId(req, res);
             if (!userId) return;
 
-            const folderId = normalizeString(req.body?.folderId);
+            const folderId = normalizeString(req.params?.id || req.body?.folderId);
             if (!folderId) {
                 return badRequest(res, 'Missing folderId');
             }

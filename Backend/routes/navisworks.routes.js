@@ -58,4 +58,7 @@ router.patch('/projects/:projectSlug/navisworks/clashes/:clashId', ...access, (r
 router.post('/projects/:projectSlug/navisworks/clashes/actions', ...access, (req, res) =>
     NavisworksClashController.applyObjectActions(req, res));
 
+router.delete('/projects/:projectSlug/navisworks/models', ...access, (req, res) =>
+    NavisworksClashController.clearModels(req, res));
+
 module.exports = router;

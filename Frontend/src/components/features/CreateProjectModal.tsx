@@ -271,6 +271,7 @@ export interface CreatedProjectPayload {
   coverImageUrl?: string;
   role?: string;
   status?: string;
+  sortOrder?: number;
   customIndustry?: {
     icon: string;
     color: string;
