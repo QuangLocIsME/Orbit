@@ -463,7 +463,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, p
               { id: 'clashes', label: 'Clashes' },
               { id: 'teams', label: 'Teams' },
             ]),
-            { id: 'activity', label: 'Activity' },
+            ...(projectRole === 'admin' || projectRole === 'owner' ? [{ id: 'activity', label: 'Activity' }] : []),
             ...(projectRole === 'admin' || projectRole === 'owner' ? [{ id: 'settings', label: 'Settings' }] : []),
           ]).filter(tab => {
             if (!guestAccess?.isGuest) return true;

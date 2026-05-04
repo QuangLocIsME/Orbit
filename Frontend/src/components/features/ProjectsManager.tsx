@@ -901,9 +901,9 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
   return (
     <motion.div
       ref={setNodeRef}
-      onClick={handleCardClick}
       {...attributes}
       {...listeners}
+      onClick={handleCardClick}
       layout
       transition={{ type: 'spring', stiffness: 150, damping: 26, mass: 1.05 }}
       style={{
@@ -911,113 +911,126 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
         transition,
       }}
       className={cn(
-        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200 cursor-pointer',
+        'group flex h-full min-h-[340px] flex-col overflow-hidden rounded-xl border border-gray-100 bg-white transition-[transform,opacity] duration-200',
         (isDragging || isSortableDragging) && 'scale-[0.98] opacity-40 pointer-events-none'
       )}
     >
       {/* Image - show real image if available, fallback to gradient */}
-      <div className="relative h-36 overflow-hidden">
-        {project.thumbnail ? (
-          <img
-            src={project.thumbnail}
-            alt=""
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.style.display = 'none';
-              target.nextElementSibling?.classList.remove('hidden');
-            }}
-          />
-        ) : null}
-        {/* Fallback gradient with icon - use type config */}
-        <div className={cn(
-          "absolute inset-0 flex items-center justify-center",
-          project.thumbnail ? "hidden" : ""
-        )}>
+      <a
+        href={`/projects/${project.id}`}
+        draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          const img = new Image();
+          img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+          e.dataTransfer.setDragImage(img, 0, 0);
+        }}
+        className="flex h-full flex-col"
+      >
+        <div className="relative h-36 overflow-hidden">
+          {project.thumbnail ? (
+            <img
+              src={project.thumbnail}
+              alt=""
+              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                target.nextElementSibling?.classList.remove('hidden');
+              }}
+            />
+          ) : null}
+          {/* Fallback gradient with icon - use type config */}
           <div className={cn(
-            "flex h-14 w-14 items-center justify-center rounded-xl",
-            type.bg,
-            type.color
+            "absolute inset-0 flex items-center justify-center",
+            project.thumbnail ? "hidden" : ""
           )}>
-            {type.icon}
-          </div>
-        </div>
-        {/* Favorite Star */}
-        <div
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onToggleFavorite?.(project.id);
-          }}
-          className="absolute left-3 top-3 cursor-pointer"
-        >
-          {project.isFavorite ? (
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-400 shadow-lg transition-transform hover:scale-110">
-              <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-              </svg>
+            <div className={cn(
+              "flex h-14 w-14 items-center justify-center rounded-xl",
+              type.bg,
+              type.color
+            )}>
+              {type.icon}
             </div>
-          ) : (
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80 opacity-0 backdrop-blur-sm shadow-sm transition-all duration-150 group-hover:opacity-100 hover:scale-110">
-              <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-              </svg>
+          </div>
+          {/* Favorite Star */}
+          <div
+            data-card-action
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleFavorite?.(project.id);
+            }}
+            className="absolute left-3 top-3 cursor-pointer"
+          >
+            {project.isFavorite ? (
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-400 shadow-lg transition-transform hover:scale-110">
+                <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+              </div>
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80 opacity-0 backdrop-blur-sm shadow-sm transition-all duration-150 group-hover:opacity-100 hover:scale-110">
+                <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                </svg>
+              </div>
+            )}
+          </div>
+          {/* Status Badge */}
+          <div className="absolute right-3 top-3">
+            <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', status.bg, status.text)}>
+              {project.status}
+            </span>
+          </div>
+          {/* Type Badge */}
+          <div className="absolute bottom-3 left-3">
+            <span className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium', type.bg, type.color)}>
+              {type.icon}
+              {type.label}
+            </span>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex flex-1 flex-col p-4">
+          <h3 className="mb-1 font-medium text-gray-900 line-clamp-1">{project.name}</h3>
+          <p className="mb-3 text-xs text-gray-500 line-clamp-1">{project.description}</p>
+
+          {/* Progress */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500">Progress</span>
+              <span className="font-medium text-gray-900">{progress}%</span>
             </div>
-          )}
-        </div>
-        {/* Status Badge */}
-        <div className="absolute right-3 top-3">
-          <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', status.bg, status.text)}>
-            {project.status}
-          </span>
-        </div>
-        {/* Type Badge */}
-        <div className="absolute bottom-3 left-3">
-          <span className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium', type.bg, type.color)}>
-            {type.icon}
-            {type.label}
-          </span>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex flex-1 flex-col p-4">
-        <h3 className="mb-1 font-medium text-gray-900 line-clamp-1">{project.name}</h3>
-        <p className="mb-3 text-xs text-gray-500 line-clamp-1">{project.description}</p>
-
-        {/* Progress */}
-        <div className="mb-3">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-gray-500">Progress</span>
-            <span className="font-medium text-gray-900">{progress}%</span>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100">
+              <div className="h-full rounded-full bg-blue-500" style={{ width: `${progress}%` }} />
+            </div>
           </div>
-          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100">
-            <div className="h-full rounded-full bg-blue-500" style={{ width: `${progress}%` }} />
+
+          {/* Stats */}
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+            <span className="flex items-center gap-1">
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              {memberCounts[project.id] ?? project.teamMembers ?? 0}
+            </span>
+            <span className="flex items-center gap-1">
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              {project.issues || 0}
+            </span>
+            <span className="flex items-center gap-1">
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {formatRelativeTime(project.lastVisited)}
+            </span>
           </div>
         </div>
-
-        {/* Stats */}
-        <div className="flex items-center gap-4 text-xs text-gray-500">
-          <span className="flex items-center gap-1">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            {memberCounts[project.id] ?? project.teamMembers ?? 0}
-          </span>
-          <span className="flex items-center gap-1">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            {project.issues || 0}
-          </span>
-          <span className="flex items-center gap-1">
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {formatRelativeTime(project.lastVisited)}
-          </span>
-        </div>
-      </div>
+      </a>
     </motion.div>
   );
 }
@@ -1099,7 +1112,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 0,
+        distance: 8,
       },
     })
   );
