@@ -5,7 +5,9 @@
     "worker:uploads": "node workers/packageUploadWorker.js",
     "worker:ifc": "node workers/ifcConversionWorker.js",
     "test": "jest --runInBand",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "seed:bim": "node seed-bim-data.js",
+    "seed:clean": "node seed-bim-data.js --clean"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1017.0",

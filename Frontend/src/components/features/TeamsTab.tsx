@@ -218,14 +218,13 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   const fetchTeamsRef = useRef<() => Promise<void>>(async () => {});
   const socket = useAppStore((s) => s.socket);
 
-  // Sync with store (fallback if prop wasn't provided — e.g. navigation without full hydration)
+  // Always sync role from Zustand store (most up-to-date source of truth for the user's project role)
   const projects = useAppStore((s) => s.projects);
   const currentProjectName = projects.find((p) => String(p.publicId) === projectPublicId)?.name;
   useEffect(() => {
-    if (initialRole) return; // prop takes priority
     const project = projects.find((p) => String(p.publicId) === projectPublicId);
     if (project?.role) setCurrentUserRole(project.role as MemberRole);
-  }, [projects, projectPublicId, initialRole]);
+  }, [projects, projectPublicId]);
 
   const canManage = currentUserRole === 'admin' || currentUserRole === 'owner';
   const canEditRole = (memberRole: MemberRole) => {
@@ -980,7 +979,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                         Invited as <span className="capitalize font-medium">{invite.role}</span> · Expires {formatDate(invite.expiresAt)}
                       </p>
                     </div>
-                    {invite.status === 'pending' && (
+                    {canManage && invite.status === 'pending' && (
                       <button
                         onClick={() => setRevokeTarget(invite)}
                         className="rounded-[8px] border border-[#E5E7EB] px-3 py-1.5 text-[13px] text-[#6A7282] hover:border-red-300 hover:text-red-500 transition-colors"
@@ -1015,7 +1014,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
                       {statusStyle.label}
                     </span>
                     <div>
-                      {invite.status === 'pending' && (
+                      {canManage && invite.status === 'pending' && (
                         <button
                           onClick={() => setRevokeTarget(invite)}
                           className="rounded-[8px] border border-[#E5E7EB] px-2.5 py-1.5 text-[12px] text-[#6A7282] hover:border-red-300 hover:text-red-500 transition-colors"

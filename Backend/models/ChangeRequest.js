@@ -150,8 +150,6 @@ const ChangeRequestSchema = new mongoose.Schema({
 
 ChangeRequestSchema.index({ projectId: 1, createdAt: -1 });
 ChangeRequestSchema.index({ projectId: 1, status: 1 });
-ChangeRequestSchema.index({ linkedTaskIds: 1 });
-ChangeRequestSchema.index({ primaryTaskId: 1 });
 
 // Set crId before validation runs (Mongoose 9: pre validate runs before validation)
 ChangeRequestSchema.pre('validate', async function () {
