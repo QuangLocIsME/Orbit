@@ -189,7 +189,10 @@ const parseXktModel = (buffer, meta, projectSlug) => {
     fs.writeFileSync(path.join(xktDir, xktFile), buffer);
 
     // Extract object metadata from XKT binary JSON section.
-    const objects = parseXktObjects(buffer, sourceModelId, sourceModel, transform);
+    let objects = parseXktObjects(buffer, sourceModelId, sourceModel, transform);
+    if (!Array.isArray(objects) || objects.length === 0) {
+        objects = [buildXktPlaceholderFederatedObject(sourceModelId, sourceModel, transform, 'empty_metadata')];
+    }
     const categories = [...new Set(objects.map((o) => o.category))].sort();
 
     return {
@@ -209,6 +212,149 @@ const parseXktModel = (buffer, meta, projectSlug) => {
     };
 };
 
+/** Single federated object when XKT loads in xeokit but embedded JSON metadata cannot be parsed (still need clash/UI counts). */
+const buildXktPlaceholderFederatedObject = (sourceModelId, sourceModel, modelTransform, tag) => ({
+    id: `${sourceModelId}__${tag}`,
+    type: 'IfcBuildingElementProxy',
+    category: normalizeCategory('BuildingElementProxy'),
+    boundingBox: transformBoundingBox(
+        { min: [-80, -80, -80], max: [80, 80, 80] },
+        modelTransform
+    ),
+    transform: modelTransform,
+    sourceModel,
+    sourceModelId,
+    sourceFile: sourceModel,
+});
+
+/**
+ * Every model in the federated workspace must have ≥1 object for selection sets, clash, and UI counts.
+ * Covers: XKT metadata parse miss, empty IFC stream, empty JSON registry, and legacy workspace rows on disk.
+ */
+const repairFederatedObjectsForModels = (models, objects) => {
+    if (!Array.isArray(models) || !Array.isArray(objects)) {
+        return { models: models || [], objects: objects || [] };
+    }
+    const countByModelId = new Map();
+    for (const o of objects) {
+        if (!o?.sourceModelId) continue;
+        countByModelId.set(o.sourceModelId, (countByModelId.get(o.sourceModelId) || 0) + 1);
+    }
+    const fillers = [];
+    for (const m of models) {
+        if (!m?.id) continue;
+        if ((countByModelId.get(m.id) || 0) > 0) continue;
+        fillers.push(
+            buildXktPlaceholderFederatedObject(
+                m.id,
+                m.name || m.id,
+                matrixFromInput(m.transform),
+                'no_federated_elements'
+            )
+        );
+        countByModelId.set(m.id, 1);
+    }
+    const nextObjects = fillers.length ? [...objects, ...fillers] : objects;
+    const nextModels = models.map((m) => {
+        const forModel = nextObjects.filter((o) => o.sourceModelId === m.id);
+        const cats = Array.from(new Set(forModel.map((o) => o.category))).sort();
+        return {
+            ...m,
+            objectCount: forModel.length,
+            ...(cats.length ? { categories: cats } : {}),
+        };
+    });
+    return { models: nextModels, objects: nextObjects };
+};
+
+const pickSixFloatAabb = (meta) => {
+    const candidates = [
+        meta.aabb,
+        meta.worldAABB,
+        meta.worldaabb,
+        meta.bounds,
+        meta.modelAABB,
+        meta.modelaabb,
+    ];
+    for (const c of candidates) {
+        if (Array.isArray(c) && c.length >= 6) return c;
+    }
+    return null;
+};
+
+/**
+ * Try common XKT layouts to locate embedded JSON metadata (v8+ convention + fallbacks).
+ */
+const readXktEmbeddedMetaJson = (buffer) => {
+    const attempts = [];
+    if (buffer.length >= 44) {
+        const o36 = buffer.readUInt32LE(36);
+        const s40 = buffer.readUInt32LE(40);
+        attempts.push({ jsonOffset: o36, jsonSize: s40 });
+    }
+    if (buffer.length >= 48) {
+        const o40 = buffer.readUInt32LE(40);
+        const s44 = buffer.readUInt32LE(44);
+        attempts.push({ jsonOffset: o40, jsonSize: s44 });
+    }
+
+    for (const { jsonOffset, jsonSize } of attempts) {
+        if (!jsonOffset || jsonOffset >= buffer.length || !jsonSize || jsonOffset + jsonSize > buffer.length) {
+            continue;
+        }
+        try {
+            const jsonSlice = buffer.slice(jsonOffset, jsonOffset + jsonSize);
+            const jsonString = jsonSlice.toString('utf8').replace(/\0+$/, '');
+            return JSON.parse(jsonString);
+        } catch {
+            /* try next */
+        }
+    }
+
+    /** Last resort: scan for a UTF-8 `{`…`}` block in the first ~512 KiB (some converters omit predictable sizes). */
+    const scanLen = Math.min(buffer.length, 524288);
+    const head = buffer.slice(0, scanLen).toString('utf8');
+    const brace = head.indexOf('{');
+    if (brace === -1) return null;
+    let depth = 0;
+    let end = -1;
+    for (let i = brace; i < head.length; i += 1) {
+        const ch = head[i];
+        if (ch === '{') depth += 1;
+        else if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                end = i + 1;
+                break;
+            }
+        }
+    }
+    if (end === -1) return null;
+    try {
+        return JSON.parse(head.slice(brace, end));
+    } catch {
+        return null;
+    }
+};
+
+const flattenXktMetaObjectArrays = (meta) => {
+    const parts = [];
+    const pushList = (list) => {
+        if (Array.isArray(list)) parts.push(...list);
+    };
+    pushList(meta.metadata?.objects);
+    pushList(meta.objects);
+    pushList(meta.entities);
+    pushList(meta.elements);
+    if (Array.isArray(meta.models)) {
+        for (const m of meta.models) {
+            pushList(m?.objects);
+            pushList(m?.entities);
+        }
+    }
+    return parts;
+};
+
 /**
  * Parse object metadata (id, type, category, boundingBox, transform) from XKT binary.
  * XKT v8+ stores metadata as a JSON block at a fixed offset before geometry data.
@@ -218,29 +364,29 @@ const parseXktObjects = (buffer, sourceModelId, sourceModel, modelTransform) => 
     if (!Buffer.isBuffer(buffer)) buffer = Buffer.from(buffer);
 
     try {
-        // XKT v8+: JSON metadata starts at offset 64 (after 32-byte header + 32-byte schema pointer).
-        const jsonOffset = buffer.readUInt32LE(36);
-        if (!jsonOffset || jsonOffset >= buffer.length) {
-            throw new Error('Invalid JSON offset in XKT header');
+        const meta = readXktEmbeddedMetaJson(buffer);
+        if (!meta || typeof meta !== 'object') {
+            throw new Error('Could not read embedded JSON metadata');
         }
-
-        // Read JSON size (next 4 bytes after offset).
-        const jsonSize = buffer.readUInt32LE(40);
-        if (!jsonSize || jsonOffset + jsonSize > buffer.length) {
-            throw new Error('Invalid JSON size in XKT header');
-        }
-
-        const jsonSlice = buffer.slice(jsonOffset, jsonOffset + jsonSize);
-        const jsonString = jsonSlice.toString('utf8').replace(/\0+$/, '');
-        const meta = JSON.parse(jsonString);
 
         const objects = [];
-        const objectsData = meta.metadata?.objects || meta.objects || [];
+        const objectsData = flattenXktMetaObjectArrays(meta);
+        const seenIds = new Set();
 
-        for (const obj of objectsData) {
-            if (!obj || typeof obj !== 'object') continue;
-            const rawId = obj.id || obj.ifcType || obj.name || obj.objectId;
-            if (!rawId) continue;
+        objectsData.forEach((obj, idx) => {
+            if (!obj || typeof obj !== 'object') return;
+            const rawId =
+                obj.id
+                ?? obj.objectId
+                ?? obj.entityId
+                ?? obj.globalId
+                ?? obj.guid
+                ?? obj.name
+                ?? obj.originalSystemId
+                ?? `${sourceModelId}-entity-${idx}`;
+            const idStr = String(rawId);
+            if (seenIds.has(idStr)) return;
+            seenIds.add(idStr);
 
             const rawType = String(obj.type || obj.ifcType || 'IfcBuildingElementProxy');
             const category = obj.category || rawType.replace(/^Ifc/, '') || rawType;
@@ -281,13 +427,13 @@ const parseXktObjects = (buffer, sourceModelId, sourceModel, modelTransform) => 
                 sourceModelId,
                 sourceFile: sourceModel,
             });
-        }
+        });
 
-        // If no objects extracted from metadata, fall back to model-level AABB.
-        if (objects.length === 0 && meta.aabb && meta.aabb.length === 6) {
+        const six = pickSixFloatAabb(meta);
+        if (objects.length === 0 && six) {
             const modelBbox = {
-                min: [meta.aabb[0], meta.aabb[1], meta.aabb[2]],
-                max: [meta.aabb[3], meta.aabb[4], meta.aabb[5]],
+                min: [six[0], six[1], six[2]],
+                max: [six[3], six[4], six[5]],
             };
             const transformed = transformBoundingBox(modelBbox, modelTransform);
             objects.push({
@@ -305,7 +451,7 @@ const parseXktObjects = (buffer, sourceModelId, sourceModel, modelTransform) => 
         return objects;
     } catch (err) {
         console.warn(`[parseXktObjects] Failed to extract metadata from XKT (${sourceModel}): ${err.message}`);
-        return [];
+        return [buildXktPlaceholderFederatedObject(sourceModelId, sourceModel, modelTransform, 'parse_error')];
     }
 };
 
@@ -749,14 +895,15 @@ const mergeImportedModels = (workspace, importedModels) => {
 
     const nextModels = [...existingModels, ...importedModels.map((entry) => entry.model)];
     const nextObjects = [...existingObjects, ...importedModels.flatMap((entry) => entry.objects)];
+    const repaired = repairFederatedObjectsForModels(nextModels, nextObjects);
 
     return {
         ...workspace,
         federatedModel: {
             coordinateSystem: 'project-global',
             unit: 'm',
-            models: nextModels,
-            objects: nextObjects,
+            models: repaired.models,
+            objects: repaired.objects,
         },
     };
 };
@@ -819,11 +966,16 @@ class ModelService {
 
     async getFederatedModel(projectSlug, workspaceOverride = null) {
         const workspace = workspaceOverride ?? (await readWorkspace(projectSlug));
-        const objects = workspace.federatedModel.objects.map((object) =>
+        const repaired = repairFederatedObjectsForModels(
+            workspace.federatedModel.models,
+            workspace.federatedModel.objects
+        );
+        const objects = repaired.objects.map((object) =>
             applyOverridesToObject(object, workspace.objectOverrides[object.id]));
 
         return {
             ...workspace.federatedModel,
+            models: repaired.models,
             objects,
         };
     }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { BBox, Clash } from '../types/clashes';
 import { useObjectInteraction } from '../hooks/useObjectInteraction';
@@ -359,6 +359,9 @@ export default function Viewer3D({
   const [xktIsolation, setXktIsolation] = useState<'off' | 'dim' | 'hide'>('dim');
   const isolationRef = useRef(xktIsolation);
   isolationRef.current = xktIsolation;
+  /** Tracks last applied isolation pass so we can full-reset xeokit when clash or All/Dim/Hide changes (avoids stale entity state). */
+  const prevClashIdForIsoRef = useRef<string | undefined>(undefined);
+  const prevXktIsolationAppliedRef = useRef<'off' | 'dim' | 'hide'>(xktIsolation);
   /** True after XKT models for this workspace are in the viewer (reload when `xktModelIdsKey` changes). */
   const [clashDetailXktSynced, setClashDetailXktSynced] = useState(false);
   const missingPairToastForClashRef = useRef<string | null>(null);
@@ -444,10 +447,16 @@ export default function Viewer3D({
     [xktModels]
   );
 
-  useEffect(() => {
-    setXktIsolation('dim');
+  /**
+   * After Hide, every non-pair XKT entity has `visible: false`. Switching clashes without a hard reset leaves the
+   * new pair still hidden (never “un-hidden” because `applyClashPairIsolation` only skips kept ids — it does not
+   * set `visible: true` on them). Clear xeokit overrides synchronously before paint; user’s All/Dim/Hide choice is preserved.
+   */
+  useLayoutEffect(() => {
     missingPairToastForClashRef.current = null;
-  }, [clash?.id]);
+    if (!clash?.id || !xeokitAdapter) return;
+    xeokitAdapter.forceClearLoadedXktVisualState();
+  }, [clash?.id, xeokitAdapter]);
 
   /** Reset XKT loaded flag when federated model set changes (must reload binary). */
   useEffect(() => {
@@ -663,6 +672,8 @@ export default function Viewer3D({
         if (!c) return;
         const objectA = c.objectA;
         const objectB = c.objectB;
+        /** Must run before Dim/Hide so prior clash’s `visible: false` (Hide) does not hide the new pair. */
+        xeokitAdapter.forceClearLoadedXktVisualState();
         /** Dim/Hide: recolor clash pair then isolation. All: neutral materials only (no green/yellow tint). */
         if (isolationRef.current === 'off') {
           xeokitAdapter.applyClashPairIsolation('off', objectA, objectB);
@@ -696,22 +707,46 @@ export default function Viewer3D({
      * would re-run sync → destroyXktModels() → full XKT reload (~1s flash / white slab). Suppression is applied
      * in the effect below and via `suppressedClashRef` inside the async onLoaded callback.
      */
-  }, [projectSlug, xeokitAdapter, xktModelIdsKey, clash?.id]);
+  }, [projectSlug, xeokitAdapter, xktModelIdsKey, clash?.id, clash?.objectA, clash?.objectB]);
 
-  /** Re-apply isolation + highlight when the user changes dim/hide or suppression/mesh state — no XKT reload. */
+  /**
+   * Re-apply isolation + highlight when the user changes dim/hide or suppression/mesh state — no XKT reload.
+   * Full xeokit visual reset when switching clashes or toggling Dim/Hide/All avoids leftover opacity/visibility on
+   * entities from the prior clash pair (`applyClashPairIsolation` skips pair ids — stale mesh state would otherwise persist).
+   */
   useEffect(() => {
-    if (!xeokitAdapter || !clash) return;
+    if (!xeokitAdapter) return;
+    if (!clash) {
+      prevClashIdForIsoRef.current = undefined;
+      return;
+    }
     const ids = (xktModels ?? []).map((m) => m.id);
     if (ids.length === 0) return;
     if (!clashDetailXktSynced) return;
-    if (xktIsolation === 'off') {
-      xeokitAdapter.applyClashPairIsolation('off', clash.objectA, clash.objectB);
-      applyClashSuppressedEntityVisibility(xeokitAdapter, clash, suppressedClashObjectIds);
-      return;
+
+    const c = clashRef.current;
+    if (!c) return;
+
+    const clashChanged = prevClashIdForIsoRef.current !== c.id;
+    const isoChanged = prevXktIsolationAppliedRef.current !== xktIsolation;
+    const shouldHardResetVisual =
+      clashChanged || (xktIsolation !== 'off' && isoChanged);
+
+    if (shouldHardResetVisual) {
+      xeokitAdapter.forceClearLoadedXktVisualState();
     }
-    xeokitAdapter.recolorXktObjects(clash.objectA, clash.objectB, [clash.objectA, clash.objectB]);
-    xeokitAdapter.applyClashPairIsolation(xktIsolation, clash.objectA, clash.objectB);
-    applyClashSuppressedEntityVisibility(xeokitAdapter, clash, suppressedClashObjectIds);
+
+    if (xktIsolation === 'off') {
+      xeokitAdapter.applyClashPairIsolation('off', c.objectA, c.objectB);
+      applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashObjectIds);
+    } else {
+      xeokitAdapter.recolorXktObjects(c.objectA, c.objectB, [c.objectA, c.objectB]);
+      xeokitAdapter.applyClashPairIsolation(xktIsolation, c.objectA, c.objectB);
+      applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashObjectIds);
+    }
+
+    prevClashIdForIsoRef.current = c.id;
+    prevXktIsolationAppliedRef.current = xktIsolation;
   }, [
     xktIsolation,
     xeokitAdapter,
@@ -748,6 +783,18 @@ export default function Viewer3D({
     return () => unsubscribe();
   }, [effectiveAdapter, onSelectObject, selectObject]);
 
+  /**
+   * Parent sets `selectedObjectId` in an effect that runs **after** child effects — one frame can still hold the
+   * previous clash’s id. Snap highlight to the current clash pair so Dim/selection emphasis tracks the active row.
+   */
+  const xeokitHighlightIds = useMemo(() => {
+    if (!clash) return [] as string[];
+    const sel = selectedObjectId;
+    if (sel && (sel === clash.objectA || sel === clash.objectB)) return [sel];
+    if (clash.objectA) return [clash.objectA];
+    return [];
+  }, [clash, selectedObjectId]);
+
   useEffect(() => {
     if (!effectiveAdapter) return;
     /** Overview should never keep per-object emphasis from previous clash selection. */
@@ -761,8 +808,8 @@ export default function Viewer3D({
       effectiveAdapter.highlightObjects([]);
       return;
     }
-    effectiveAdapter.highlightObjects(selectedObjectId ? [selectedObjectId] : []);
-  }, [effectiveAdapter, selectedObjectId, clash, xktModels, xktIsolation]);
+    effectiveAdapter.highlightObjects(xeokitHighlightIds);
+  }, [effectiveAdapter, xeokitHighlightIds, clash, xktModels, xktIsolation]);
 
   if (!clash) {
     if (modelOverview && !overviewHasCanvas) {

@@ -11,7 +11,7 @@ import { clashesOverviewKey } from './hooks/useNavisworksWorkspace';
 interface ClashesTabProps {
   projectPublicId: string;
   projectDisplayName?: string;
-  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
+  currentUserRole?: 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 }
 
 // ─── API types ────────────────────────────────────────────────────────────────
