@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 import {
   FileText, Folder, Image as ImageIcon, FolderPlus, Upload, ChevronRight,
   Eye, Download, Trash2, Pencil, Clock, X,
@@ -217,6 +218,9 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   const [previewTextContent, setPreviewTextContent] = useState<string>('');
   const [previewTextFileName, setPreviewTextFileName] = useState<string>('');
   const [isLoadingText, setIsLoadingText] = useState(false);
+  const [previewXlsxData, setPreviewXlsxData] = useState<{ sheets: Record<string, any[][]>; sheetNames: string[]; fileName: string } | null>(null);
+  const [isLoadingXlsx, setIsLoadingXlsx] = useState(false);
+  const [previewXlsxTab, setPreviewXlsxTab] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null);
   const [versionHistoryFile, setVersionHistoryFile] = useState<TreeNode | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -469,7 +473,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
     }));
 
     try {
-      await uploadFile(current, queueVersionLabel || 'v1.0.2', queueVersionDescription);
+      await uploadFile(current, queueVersionLabel || 'v1.0.0', queueVersionDescription);
       await loadDocuments();
     } catch (error) {
       toast.error(`Upload failed: ${current.name} - ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -711,7 +715,7 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
 
               // Check if this file matches an existing file to suggest next version
               const existingFile = findFileNodeByName(rootTree, first.name);
-              let suggestedVersion = 'v1.0.2';
+              let suggestedVersion = 'v1.0.0';
 
               if (existingFile) {
                 try {
@@ -933,6 +937,39 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
                             </button>
                           )}
 
+                          {/\.(xlsx|xls)$/i.test(child.name) && (
+                            <button
+                              onClick={async () => {
+                                const url = child.s3Url;
+                                if (!url) return;
+                                setIsLoadingXlsx(true);
+                                setPreviewXlsxData(null);
+                                setPreviewXlsxTab('');
+                                try {
+                                  const res = await fetch(url);
+                                  if (!res.ok) throw new Error('Failed to load file');
+                                  const buffer = await res.arrayBuffer();
+                                  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+                                  const sheets: Record<string, any[][]> = {};
+                                  for (const name of workbook.SheetNames) {
+                                    sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+                                  }
+                                  const first = workbook.SheetNames[0];
+                                  setPreviewXlsxData({ sheets, sheetNames: workbook.SheetNames, fileName: child.name });
+                                  setPreviewXlsxTab(first || '');
+                                } catch {
+                                  toast.error('Failed to preview XLSX file');
+                                } finally {
+                                  setIsLoadingXlsx(false);
+                                }
+                              }}
+                              className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                              title="Preview XLSX file"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          )}
+
                           {child.isIfc && (
                             <button
                               onClick={() => {
@@ -1030,6 +1067,38 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
                         >
                           <Download className="h-4 w-4" />
                         </button>
+                        {/\.(xlsx|xls)$/i.test(child.name) && (
+                          <button
+                            onClick={async () => {
+                              const url = child.s3Url;
+                              if (!url) return;
+                              setIsLoadingXlsx(true);
+                              setPreviewXlsxData(null);
+                              setPreviewXlsxTab('');
+                              try {
+                                const res = await fetch(url);
+                                if (!res.ok) throw new Error('Failed to load file');
+                                const buffer = await res.arrayBuffer();
+                                const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+                                const sheets: Record<string, any[][]> = {};
+                                for (const name of workbook.SheetNames) {
+                                  sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+                                }
+                                const first = workbook.SheetNames[0];
+                                setPreviewXlsxData({ sheets, sheetNames: workbook.SheetNames, fileName: child.name });
+                                setPreviewXlsxTab(first || '');
+                              } catch {
+                                toast.error('Failed to preview XLSX file');
+                              } finally {
+                                setIsLoadingXlsx(false);
+                              }
+                            }}
+                            className="rounded p-1 text-gray-600 hover:bg-gray-100"
+                            title="Preview XLSX file"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                        )}
                         {child.isIfc && (
                           <button
                             onClick={() => {
@@ -1132,6 +1201,101 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             <div className="flex justify-end px-6 py-3 border-t border-[#E5E7EB] shrink-0 bg-white">
               <button
                 onClick={() => { setPreviewTextContent(''); setPreviewTextFileName(''); }}
+                className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewXlsxData && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setPreviewXlsxData(null)}
+        >
+          <div
+            className="relative z-10 flex flex-col w-full max-w-[95vw] h-[85vh] bg-white rounded-[10px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5E7EB] shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#ECFDF5]">
+                  <svg className="h-4 w-4 text-[#059669]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5"/>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-[16px] font-semibold text-[#101828]">Excel Preview</h2>
+                  <p className="text-[12px] text-[#6A7282] truncate max-w-[300px]" title={previewXlsxData.fileName}>{previewXlsxData.fileName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPreviewXlsxData(null)}
+                className="p-2 text-[#6A7282] hover:text-gray-700 rounded-[10px] hover:bg-gray-100 transition-colors"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex border-b border-[#E5E7EB] shrink-0 overflow-x-auto">
+              {previewXlsxData.sheetNames.map((name) => (
+                <button
+                  key={name}
+                  onClick={() => setPreviewXlsxTab(name)}
+                  className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors ${
+                    previewXlsxTab === name
+                      ? 'border-[#155DFC] text-[#155DFC] font-medium'
+                      : 'border-transparent text-[#6A7282] hover:text-[#374151]'
+                  }`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-x-auto overflow-y-auto bg-white">
+              {isLoadingXlsx ? (
+                <div className="flex items-center justify-center h-full">
+                  <svg className="h-8 w-8 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                </div>
+              ) : previewXlsxData.sheets[previewXlsxTab] ? (
+                <>
+                <table className="border-collapse text-sm min-w-max">
+                  <tbody>
+                    {previewXlsxData.sheets[previewXlsxTab].slice(0, 100).map((row: any[], ri: number) => (
+                        <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-[#F9FAFB]'}>
+                          {row.map((cell: any, ci: number) => (
+                            <td
+                              key={ci}
+                              className="border border-[#E5E7EB] px-3 py-2 text-[13px] text-[#374151] whitespace-nowrap"
+                              style={{ minWidth: '80px' }}
+                            >
+                              {cell == null ? '' : String(cell)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {previewXlsxData.sheets[previewXlsxTab].length > 100 && (
+                    <p className="px-4 py-3 text-xs text-[#6A7282] text-center border-t border-[#E5E7EB]">
+                      Showing first 100 rows of {previewXlsxData.sheets[previewXlsxTab].length} rows
+                    </p>
+                  )}
+                </>
+              ) : null}
+            </div>
+
+            <div className="flex justify-end px-6 py-3 border-t border-[#E5E7EB] shrink-0 bg-white">
+              <button
+                onClick={() => setPreviewXlsxData(null)}
                 className="px-4 py-2 text-[14px] text-[#364153] hover:text-[#101828] transition-colors"
               >
                 Close
@@ -1274,11 +1438,11 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
                 type="text"
                 value={pendingUploadVersion}
                 onChange={(e) => setPendingUploadVersion(e.target.value)}
-                placeholder="e.g. v1.0.2"
+                placeholder="e.g. v1.0.0"
                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 autoFocus
               />
-              <p className="mt-1 text-xs text-gray-500">Example: v1.0.2, v1.1.2, v1.2, v2.0.2</p>
+                  <p className="mt-1 text-xs text-gray-500">Example: v1.0.0, v1.1.0, v1.2, v2.0.0</p>
             </div>
 
             <div>

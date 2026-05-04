@@ -139,12 +139,12 @@ async function findDuplicateDocument({ projectId, packageId, folderPath, fileNam
 
 /**
  * Formats a version number (float) into a display label.
- * e.g. 1.0 → "v1.0.2", 1.1 → "v1.0.2", 1.02 → "v1.0.2", 1.2 → "v1.0.2"
+ * e.g. 1.0 → "v1.0.0", 1.1 → "v1.1.0", 1.02 → "v1.0.0", 1.2 → "v1.2.0"
  * Uses versionLabel from DB if available, otherwise derives from versionNumber.
  */
 function formatVersionLabel(versionNumber, dbVersionLabel) {
     if (dbVersionLabel && dbVersionLabel.trim()) return dbVersionLabel.trim();
-    if (!versionNumber) return 'v1.0.2';
+    if (!versionNumber) return 'v1.0.0';
     const major = Math.floor(versionNumber);
     const minor = Math.round((versionNumber - major) * 100);
     const safeMinor = Math.min(99, Math.max(0, minor));
@@ -722,7 +722,7 @@ class PackageController {
             const Document = require('../models/Document');
 
             let versionNumber = 1;
-            let versionLabel = 'v1.0.2';
+            let versionLabel = 'v1.0.0';
             let versionGroupId = null;
 
             if (normalizedFileId) {
