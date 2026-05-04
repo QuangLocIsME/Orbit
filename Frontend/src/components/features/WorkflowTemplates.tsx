@@ -943,12 +943,12 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
       );
       // Thông báo cho các trang khác (Settings, Dropdown) cập nhật danh sách
       window.dispatchEvent(new CustomEvent('workflow-created', { detail: { ...copiedTemplate, isDownloadedCopy: true } }));
-      toast.success('Template đã được thêm vào My Templates!');
+      toast.success('Template added to My Templates!');
     } catch (error: any) {
       if (error.message?.includes('already exists')) {
-        toast.warning('Template này đã có trong My Templates');
+        toast.warning('This template is already in My Templates');
       } else {
-        toast.error('Không thể tải template');
+        toast.error('Failed to download template');
       }
     }
   };

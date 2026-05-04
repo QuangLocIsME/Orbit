@@ -12,6 +12,10 @@ router.post('/approvals/pending/count', authenticate, (req, res) =>
     UploadApprovalController.getPendingCount(req, res)
 );
 
+router.post('/approvals/approved/count', authenticate, (req, res) =>
+    UploadApprovalController.getApprovedCount(req, res)
+);
+
 router.post('/approvals/approve', authenticate, (req, res) =>
     UploadApprovalController.approve(req, res)
 );

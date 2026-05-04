@@ -9,6 +9,7 @@ const navisworksImportService = require('../services/navisworksImport.service');
 const DocumentRepository = require('../repositories/DocumentRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const { downloadXktBuffer } = require('../services/supabaseStorageService');
+const { broadcastProject } = require('../services/socketService');
 
 const getProjectSlug = (req) => req.params?.projectSlug || req.body?.projectSlug || req.query?.projectSlug;
 
@@ -129,6 +130,7 @@ class NavisworksClashController {
             const projectSlug = getProjectSlug(req);
             if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
             const clashTests = await navisworksClashService.removeTest(projectSlug, req.params?.testId);
+            broadcastProject(projectSlug, 'clash:updated', { projectId: projectSlug });
             return res.status(200).json({ success: true, clashTests });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to delete clash test');
@@ -144,6 +146,7 @@ class NavisworksClashController {
                 req.params?.testId,
                 req.body || {}
             );
+            broadcastProject(projectSlug, 'clash:updated', { projectId: projectSlug });
             return res.status(200).json({ success: true, ...payload });
         } catch (error) {
             return errorResponse(res, 400, error.message || 'Failed to run clash test');
@@ -176,6 +179,7 @@ class NavisworksClashController {
                 req.body || {},
                 { actorUserId }
             );
+            broadcastProject(projectSlug, 'clash:updated', { projectId: projectSlug });
             return res.status(200).json({ success: true, ...payload });
         } catch (error) {
             if (error && error.code === 'CLASH_RESOLVE_FORBIDDEN') {

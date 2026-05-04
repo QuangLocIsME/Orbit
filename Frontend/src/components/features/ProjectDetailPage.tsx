@@ -408,6 +408,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [teamMembers, setTeamMembers] = useState<TeamMemberView[]>([]);
   const [documentsCount, setDocumentsCount] = useState(0);
   const [clashCount, setClashCount] = useState(0);
+  const [approvedVersionsCount, setApprovedVersionsCount] = useState(0);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [lastActivity, setLastActivity] = useState<string | null>(null);
   const [loadingActivities, setLoadingActivities] = useState(true);
@@ -570,9 +571,112 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     return () => { cancelled = true; };
   }, [project.publicId, settingsUpdated, activitiesVersion]);
 
-  // WebSocket realtime — update team member online status
+  // Fetch approved versions count
+  useEffect(() => {
+    const fetchApprovedCount = async () => {
+      try {
+        const res = await apiFetch('/api/approvals/approved/count', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: project.publicId }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setApprovedVersionsCount(data.data?.count || 0);
+        }
+      } catch { /* silent */ }
+    };
+    fetchApprovedCount();
+  }, [project.publicId]);
+
+  // WebSocket realtime — update all stat cards and team members in real-time
   useEffect(() => {
     const socket = getSocket();
+    socket.emit('project:join', { projectId: project.publicId });
+
+    const handleApprovalUpdated = ({ projectId, status }: { projectId: string; status?: string }) => {
+      if (projectId === project.publicId && status === 'approved') {
+        setApprovedVersionsCount(prev => prev + 1);
+      }
+    };
+
+    const handleDocumentsRefresh = ({ projectId }: { projectId: string }) => {
+      if (projectId === project.publicId) {
+        apiFetch('/api/projects/packages/documents/list', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: project.publicId }),
+        }).then(res => res.json()).then(data => {
+          const total = Number(data?.data?.total || 0);
+          setDocumentsCount(Number.isFinite(total) ? total : 0);
+        }).catch(() => {});
+      }
+    };
+
+    const handleClashUpdated = ({ projectId }: { projectId: string }) => {
+      if (projectId === project.publicId) {
+        apiFetch(`/api/projects/${project.publicId}/navisworks/clashes/count`)
+          .then(res => res.json())
+          .then(data => setClashCount(data?.total || 0))
+          .catch(() => {});
+      }
+    };
+
+    const handleMemberJoined = ({ projectId }: { projectId: string }) => {
+      if (projectId === project.publicId) {
+        fetch('/api/projects/member-list', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: project.publicId }),
+        }).then(res => res.json()).then(payload => {
+          const members = Array.isArray(payload?.data) ? payload.data : [];
+          setTeamMembers(members.map((m: any, index: number) => {
+            const name = m?.user?.fullName || m?.user?.name || m?.user?.email || 'Unknown';
+            return {
+              id: m?.userId || String(index),
+              name,
+              role: m?.role || 'member',
+              avatar: getInitials(name),
+              avatarUrl: m?.user?.avatar || null,
+              color: avatarColors[index % avatarColors.length],
+              isOnline: m?.status === 'accepted',
+            };
+          }));
+        }).catch(() => {});
+      }
+    };
+
+    const handleMemberLeft = ({ projectId, userId }: { projectId: string; userId: string }) => {
+      if (projectId === project.publicId) {
+        setTeamMembers(prev => prev.filter(m => m.id !== userId));
+      }
+    };
+
+    const handleMemberRoleUpdated = ({ projectId }: { projectId: string }) => {
+      if (projectId === project.publicId) {
+        fetch('/api/projects/member-list', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ projectId: project.publicId }),
+        }).then(res => res.json()).then(payload => {
+          const members = Array.isArray(payload?.data) ? payload.data : [];
+          setTeamMembers(members.map((m: any, index: number) => {
+            const name = m?.user?.fullName || m?.user?.name || m?.user?.email || 'Unknown';
+            return {
+              id: m?.userId || String(index),
+              name,
+              role: m?.role || 'member',
+              avatar: getInitials(name),
+              avatarUrl: m?.user?.avatar || null,
+              color: avatarColors[index % avatarColors.length],
+              isOnline: m?.status === 'accepted',
+            };
+          }));
+        }).catch(() => {});
+      }
+    };
 
     const handleUserOnline = ({ userId }: { userId: string }) => {
       setTeamMembers(prev => prev.map(m => m.id === userId ? { ...m, isOnline: true } : m));
@@ -582,14 +686,27 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       setTeamMembers(prev => prev.map(m => m.id === userId ? { ...m, isOnline: false } : m));
     };
 
+    socket.on('approval:updated', handleApprovalUpdated);
+    socket.on('documents:refresh', handleDocumentsRefresh);
+    socket.on('clash:updated', handleClashUpdated);
+    socket.on('project:member:joined', handleMemberJoined);
+    socket.on('project:member:left', handleMemberLeft);
+    socket.on('project:member:role-updated', handleMemberRoleUpdated);
     socket.on('user:online', handleUserOnline);
     socket.on('user:offline', handleUserOffline);
 
     return () => {
+      socket.emit('project:leave', { projectId: project.publicId });
+      socket.off('approval:updated', handleApprovalUpdated);
+      socket.off('documents:refresh', handleDocumentsRefresh);
+      socket.off('clash:updated', handleClashUpdated);
+      socket.off('project:member:joined', handleMemberJoined);
+      socket.off('project:member:left', handleMemberLeft);
+      socket.off('project:member:role-updated', handleMemberRoleUpdated);
       socket.off('user:online', handleUserOnline);
       socket.off('user:offline', handleUserOffline);
     };
-  }, []);
+  }, [project.publicId]);
 
   // Handle settings updated - refresh last activity timestamp
   const handleSettingsUpdated = () => {
@@ -1222,7 +1339,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   // Mock extended data
   const projectStats = {
     documents: documentsCount,
-    versions: 124,
+    versions: approvedVersionsCount,
     teamMembers: teamMembers.length,
     openClashes: clashCount,
     startDate: formatDate(overviewEditable.startDate),

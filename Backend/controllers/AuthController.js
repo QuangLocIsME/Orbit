@@ -74,7 +74,7 @@ class AuthController {
                 });
             }
 
-            const payload = { id: user._id, email: user.email, role: user.role };
+            const payload = { id: user._id, email: user.email, role: user.role, fullName: user.fullName };
             const accessToken = signAccessToken(payload);
             const refreshToken = signRefreshToken(payload);
 
@@ -134,7 +134,7 @@ class AuthController {
                 return errorResponse(res, 400, 'Invalid verification code');
             }
 
-            const payload = { id: user._id, email: user.email, role: user.role };
+            const payload = { id: user._id, email: user.email, role: user.role, fullName: user.fullName };
             const accessToken = signAccessToken(payload);
             const refreshToken = signRefreshToken(payload);
 
@@ -205,11 +205,13 @@ class AuthController {
                 id: payload.id,
                 email: payload.email,
                 role: payload.role,
+                fullName: payload.fullName,
             });
             const newRefreshToken = signRefreshToken({
                 id: payload.id,
                 email: payload.email,
                 role: payload.role,
+                fullName: payload.fullName,
             });
 
             await UserRepository.revokeRefreshToken(user._id, refreshToken, newRefreshToken);

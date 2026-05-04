@@ -37,12 +37,14 @@ class WorkflowTemplateController {
                 // Thêm field isDownloaded vào mỗi template
                 result.templates = result.templates.map(template => ({
                     ...template,
+                    author: template.authorName,
                     isDownloaded: downloadedIds.includes(template.publicId),
                 }));
             } else {
                 // Guest user - tất cả đều chưa tải
                 result.templates = result.templates.map(template => ({
                     ...template,
+                    author: template.authorName,
                     isDownloaded: false,
                 }));
             }
@@ -69,6 +71,11 @@ class WorkflowTemplateController {
                 limit: parseInt(limit),
             });
 
+            result.templates = result.templates.map(template => ({
+                ...template,
+                author: template.authorName,
+            }));
+
             return success(res, result, 'My templates retrieved successfully');
         } catch (err) {
             console.error('Error getting my templates:', err);
@@ -90,6 +97,11 @@ class WorkflowTemplateController {
                 page: parseInt(page),
                 limit: parseInt(limit),
             });
+
+            result.templates = result.templates.map(template => ({
+                ...template,
+                author: template.authorName,
+            }));
 
             return success(res, result, 'Downloaded templates retrieved successfully');
         } catch (err) {
@@ -114,7 +126,7 @@ class WorkflowTemplateController {
                 return error(res, 'Template not found', 404);
             }
 
-            return success(res, template, 'Template retrieved successfully');
+            return success(res, { ...template.toObject ? template.toObject() : template, author: template.authorName }, 'Template retrieved successfully');
         } catch (err) {
             console.error('Error getting template:', err);
             return error(res, 'Failed to retrieve template', 500);
@@ -158,7 +170,7 @@ class WorkflowTemplateController {
                     color: s.color || 'gray',
                 })),
                 authorId,
-                authorName: req.user?.email || 'Anonymous',
+                authorName: req.user?.fullName || 'Anonymous',
                 isPrivate: isPrivate || false,
             });
 
@@ -235,7 +247,7 @@ class WorkflowTemplateController {
             // Mark as downloaded
             await repository.markAsDownloaded(userId, publicId, updatedSource._id);
 
-            return success(res, copiedTemplate, 'Template copied successfully', 201);
+            return success(res, { ...copiedTemplate.toObject ? copiedTemplate.toObject() : copiedTemplate, author: copiedTemplate.authorName }, 'Template copied successfully', 201);
         } catch (err) {
             console.error('Error copying template:', err);
             return error(res, 'Failed to copy template', 500);

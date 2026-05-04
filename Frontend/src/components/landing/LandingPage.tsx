@@ -265,7 +265,7 @@ export default function LandingPage() {
           </div>
 
           {/* App Preview Placeholder */}
-          <div className="relative mx-auto mt-16 max-w-4xl">
+          <div className="relative mx-auto mt-16 max-w-4xl" style={{ display: 'none' }}>
             <div className="aspect-[16/10] overflow-hidden rounded-2xl bg-[#e8f0fe] shadow-xl">
               {/* Placeholder for app screenshot */}
               <div className="flex h-full items-center justify-center">

@@ -159,6 +159,32 @@ class UploadApprovalController {
         }
     }
 
+    async getApprovedCount(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) return unauthorized(res);
+
+            const { projectId } = req.body || {};
+            const normalizedProjectId = normalizeString(projectId);
+
+            if (!normalizedProjectId) {
+                return badRequest(res, 'projectId is required');
+            }
+
+            const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
+            if (!member || member.status !== 'accepted') {
+                return forbidden(res, 'Only project members can view upload approvals');
+            }
+
+            const count = await UploadApprovalRepository.countApprovedByProject(normalizedProjectId);
+
+            return res.status(200).json({ success: true, data: { count } });
+        } catch (error) {
+            console.error('[UploadApprovalController.getApprovedCount] error:', error);
+            return serverError(res, error.message || 'Failed to get approved count');
+        }
+    }
+
     async approve(req, res) {
         try {
             const userId = req.user?.id;

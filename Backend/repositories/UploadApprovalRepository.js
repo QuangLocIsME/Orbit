@@ -28,6 +28,10 @@ class UploadApprovalRepository {
         return await UploadApproval.countDocuments({ projectId, status: 'pending' });
     }
 
+    async countApprovedByProject(projectId) {
+        return await UploadApproval.countDocuments({ projectId, status: 'approved' });
+    }
+
     async approve(publicId, reviewedBy) {
         return await UploadApproval.findOneAndUpdate(
             { publicId },
