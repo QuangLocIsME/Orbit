@@ -38,8 +38,6 @@ interface Viewer2DProps {
   objectMeshPositions?: Record<string, number[]>;
   testScopeObjectIds?: string[];
   deEmphasizeUnrelated?: boolean;
-  showScopeBadge?: boolean;
-  hideUnrelatedActive?: boolean;
   /** True when federated overview has XKT in 3D but no bbox elements (2D plan stays empty). */
   hasXktOnlyOverview?: boolean;
 }
@@ -137,8 +135,6 @@ export default function Viewer2D({
   objectMeshPositions = {},
   testScopeObjectIds = [],
   deEmphasizeUnrelated = false,
-  showScopeBadge = false,
-  hideUnrelatedActive = false,
   hasXktOnlyOverview = false,
 }: Viewer2DProps) {
   const [interaction, setInteraction] = useState<ViewerInteractionState>({
@@ -398,21 +394,6 @@ export default function Viewer2D({
         onDoubleClick={() => onFocusClash?.(clash)}
         className="relative min-h-[220px] flex-1 overflow-hidden rounded-lg border border-[#D1D5DC] bg-white"
       >
-        {showScopeBadge && (
-          <div className="pointer-events-none absolute right-2 top-2 z-10 flex flex-col items-end gap-1">
-            <span className="rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-800">
-              Highlighted: Set A/B
-            </span>
-            <span className={cn(
-              'rounded border px-2 py-0.5 text-[10px] font-medium',
-              hideUnrelatedActive
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : 'border-slate-300 bg-slate-100 text-slate-600'
-            )}>
-              Hidden unrelated: {hideUnrelatedActive ? 'ON' : 'OFF'}
-            </span>
-          </div>
-        )}
         <div
           className="absolute inset-0 transition-transform duration-75"
           style={{

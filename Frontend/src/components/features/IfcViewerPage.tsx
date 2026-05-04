@@ -1,6 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react';
 import { apiFetch } from '@/lib/api-client';
 import { useMeasureDistance } from '@/hooks/useMeasureDistance';
 
@@ -50,7 +59,49 @@ async function loadXeokitSdk(): Promise<XKTExports> {
   });
 }
 
-export default function IfcViewerPage({ projectId, fileId, versionId }: IfcViewerPageProps) {
+class IfcViewerErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[IfcViewerPage]', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-[#0B1220] text-white p-6">
+          <h1 className="text-lg font-semibold">Viewer failed to load</h1>
+          <p className="mt-2 text-sm text-red-200">{this.state.error.message}</p>
+          <p className="mt-4 text-xs text-slate-400">
+            Try a hard refresh (Ctrl+Shift+R). If this persists, unregister the site Service Worker in browser
+            DevTools → Application.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function IfcViewerPage(props: IfcViewerPageProps) {
+  return (
+    <IfcViewerErrorBoundary>
+      <IfcViewerPageInner {...props} />
+    </IfcViewerErrorBoundary>
+  );
+}
+
+function IfcViewerPageInner({ projectId, fileId, versionId }: IfcViewerPageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewerRef = useRef<unknown>(null);
   const [status, setStatus] = useState<LoadStatus>('loading');

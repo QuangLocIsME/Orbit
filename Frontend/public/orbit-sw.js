@@ -56,6 +56,14 @@ self.addEventListener('fetch', (event) => {
   // Only handle same-origin requests
   if (url.origin !== location.origin) return;
 
+  /**
+   * Dev / localhost: do not intercept fetches.
+   * Cache-first scripts + Vite HMR/changing hashes cause stale bundles → blank white React islands.
+   */
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+    return;
+  }
+
   // API routes → cache-first with background update
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(handleApiRequest(request));

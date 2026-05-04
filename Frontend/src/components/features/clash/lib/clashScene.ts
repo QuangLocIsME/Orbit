@@ -10,6 +10,8 @@ export type FederatedOverviewObject = {
   boundingBox: BBox;
   sourceModel: string;
   hidden?: boolean;
+  /** When present, mesh vertex mean gives a truer world position than bbox (avoids stacked 2D cards if bbox metadata is generic). */
+  clashMesh?: { positions: number[] } | null;
 };
 
 export const WORLD_LIMIT = 220;
@@ -102,6 +104,68 @@ export function computeWorldOriginFromScene(
     if (wz < minZ) minZ = wz;  if (wz > maxZ) maxZ = wz;
   }
   return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+}
+
+/**
+ * World-space origin (meters) for shifting clash-detail IFC meshes into viewer space.
+ * Does not depend solely on Zustand `getScene` — that can be empty on the first render or lack
+ * `worldPosition` when bboxes were missing at scene build time.
+ */
+export function computeClashDetailMeshOriginWorld(
+  clash: Clash,
+  objectMeshPositions: Record<string, number[]>,
+  scene: SceneObject[] | null | undefined
+): [number, number, number] | null {
+  const sa = scene?.find((o) => o.id === clash.objectA);
+  const sb = scene?.find((o) => o.id === clash.objectB);
+  if (sa?.worldPosition && sb?.worldPosition) {
+    return [
+      (sa.worldPosition[0] + sb.worldPosition[0]) / 2,
+      (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
+      (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
+    ];
+  }
+
+  const bboxA = clash.objectABBox;
+  const bboxB = clash.objectBBBox;
+  if (bboxA && bboxB) {
+    const ca = bboxCenter(bboxA);
+    const cb = bboxCenter(bboxB);
+    return [(ca[0] + cb[0]) / 2, (ca[1] + cb[1]) / 2, (ca[2] + cb[2]) / 2];
+  }
+  if (bboxA) return bboxCenter(bboxA);
+  if (bboxB) return bboxCenter(bboxB);
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  let any = false;
+  for (const id of [clash.objectA, clash.objectB]) {
+    const pos = objectMeshPositions[id];
+    if (!pos?.length) continue;
+    for (let i = 0; i + 2 < pos.length; i += 3) {
+      any = true;
+      const x = pos[i];
+      const y = pos[i + 1];
+      const z = pos[i + 2];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+  }
+  if (any) return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+
+  if (Array.isArray(clash.position) && clash.position.length >= 3) {
+    return [Number(clash.position[0]), Number(clash.position[1]), Number(clash.position[2])];
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +285,8 @@ export function computeViewerAabbIntersection(
   const w = maxX - minX;
   const h = maxY - minY;
   const d = maxZ - minZ;
-  const MIN_VIS = 1;
+  /** Keep tiny overlaps visible without inflating the red volume to a huge block. */
+  const MIN_VIS = 0.25;
   return {
     position: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: (minZ + maxZ) / 2 },
     size: {
@@ -263,7 +328,8 @@ export function resolveClashZoneForViewer(
   if (inter) return inter;
 
   const originWorld = viewerOriginFromScenePair(scene ?? [], clash.objectA, clash.objectB);
-  const MARKER = 22;
+  /** Fallback marker at clash point — keep small so it does not dominate the view. */
+  const MARKER = 5;
   if (originWorld) {
     const pt = worldToViewer(clash.position, originWorld);
     return {
@@ -315,6 +381,161 @@ const typeShortLabel = (type: string, category: string) => {
 };
 
 /**
+ * Mean vertex position in IFC world space (m). Subsamples long buffers for performance.
+ */
+function meshMeanCenterWorld(positions: number[] | undefined | null): [number, number, number] | null {
+  if (!positions || positions.length < 9) return null;
+  let sx = 0;
+  let sy = 0;
+  let sz = 0;
+  let n = 0;
+  const step = positions.length > 30_000 ? 24 : 3;
+  for (let i = 0; i + 2 < positions.length; i += step) {
+    const x = Number(positions[i]);
+    const y = Number(positions[i + 1]);
+    const z = Number(positions[i + 2]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    sx += x;
+    sy += y;
+    sz += z;
+    n += 1;
+  }
+  if (n === 0) return null;
+  return [sx / n, sy / n, sz / n];
+}
+
+/**
+ * World-space center for an overview object: prefer mesh mean, else bbox center.
+ */
+function overviewObjectWorldCenter(o: FederatedOverviewObject): [number, number, number] {
+  const fromMesh = meshMeanCenterWorld(o.clashMesh?.positions ?? null);
+  if (fromMesh) return fromMesh;
+  return bboxCenter(o.boundingBox);
+}
+
+/** Golden-angle sunflower (Phyllotaxis) — even density on a disk, monotonic radius. */
+function sunflowerPositions2d(count: number, spacing: number): Array<{ x: number; z: number }> {
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const out: Array<{ x: number; z: number }> = [];
+  for (let i = 0; i < count; i++) {
+    const r = spacing * Math.sqrt(i + 1);
+    const t = i * golden;
+    out.push({ x: r * Math.cos(t), z: r * Math.sin(t) });
+  }
+  return out;
+}
+
+/**
+ * After normalisation, merge markers that still fall in the same screen cell (float noise / tiny offsets).
+ */
+function spreadBinnedPlanOverlaps(
+  scene: SceneObject[],
+  cellPx: number,
+  sunflowerSpacing: number
+): SceneObject[] {
+  if (scene.length <= 1) return scene;
+  const cell = Math.max(cellPx, 24);
+  const keyOf = (x: number, z: number) =>
+    `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
+
+  const groups = new Map<string, SceneObject[]>();
+  for (const o of scene) {
+    const k = keyOf(o.position.x, o.position.z);
+    const list = groups.get(k);
+    if (list) list.push(o);
+    else groups.set(k, [o]);
+  }
+
+  const nextById = new Map<string, ScenePosition>();
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    let ax = 0;
+    let az = 0;
+    for (const g of group) {
+      ax += g.position.x;
+      az += g.position.z;
+    }
+    ax /= group.length;
+    az /= group.length;
+    const sun = sunflowerPositions2d(group.length, sunflowerSpacing * 0.55);
+    group.forEach((g, i) => {
+      nextById.set(g.id, {
+        ...g.position,
+        x: ax + sun[i].x,
+        z: az + sun[i].z,
+      });
+    });
+  }
+
+  return scene.map((o) => {
+    const np = nextById.get(o.id);
+    if (!np) return o;
+    return { ...o, position: np };
+  });
+}
+
+const PLAN_LAYOUT_TARGET_EXTENT = 680;
+const PLAN_DEGENERATE_SPAN_M = 1e-5;
+const PLAN_BIN_CELL_PX = 46;
+const PLAN_SUNFLOWER_SPACING = 38;
+
+/**
+ * Viewer2D places `position.x` / `position.z` as **CSS px** from centre (`calc(50% + xpx)`).
+ * Raw metre offsets are therefore far too small vs `MIN_RENDER_BOX_SIZE` (42px) — elements look stacked.
+ * This pass scales real-world layout into plan “pixels”, sunflowers truly coincident sets, and separates bins.
+ * Does not alter `worldPosition` (IFC truth). Use only for the 2D overview pipeline.
+ */
+export function layoutOverviewMarkersFor2DPlan(scene: SceneObject[]): SceneObject[] {
+  if (scene.length === 0) return scene;
+
+  const xs = scene.map((o) => o.position.x);
+  const zs = scene.map((o) => o.position.z);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minZ = Math.min(...zs);
+  const maxZ = Math.max(...zs);
+  const spanX = maxX - minX;
+  const spanZ = maxZ - minZ;
+  const degenerate = spanX < PLAN_DEGENERATE_SPAN_M && spanZ < PLAN_DEGENERATE_SPAN_M;
+
+  if (degenerate) {
+    const sun = sunflowerPositions2d(scene.length, PLAN_SUNFLOWER_SPACING);
+    return scene.map((o, i) => ({
+      ...o,
+      position: { ...o.position, x: sun[i].x, z: sun[i].z },
+      size: {
+        width: Math.max(o.size.width, 10),
+        depth: Math.max(o.size.depth, 10),
+        height: o.size.height,
+      },
+    }));
+  }
+
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+  const span = Math.max(spanX, spanZ, PLAN_DEGENERATE_SPAN_M);
+  let normFactor = PLAN_LAYOUT_TARGET_EXTENT / span;
+  normFactor = Math.min(Math.max(normFactor, 0.002), 800);
+
+  let scaled: SceneObject[] = scene.map((o) => ({
+    ...o,
+    position: {
+      ...o.position,
+      x: (o.position.x - cx) * normFactor,
+      z: (o.position.z - cz) * normFactor,
+    },
+    size: {
+      width: Math.max(o.size.width * normFactor, 8),
+      depth: Math.max(o.size.depth * normFactor, 8),
+      height: Math.max(o.size.height * normFactor, 4),
+    },
+  }));
+
+  scaled = spreadBinnedPlanOverlaps(scaled, PLAN_BIN_CELL_PX, PLAN_SUNFLOWER_SPACING);
+  return scaled;
+}
+
+/**
  * Scene centered on the union bounding box — used when there is no clash to still show the model (no clash highlighting).
  */
 export function buildOverviewSceneFromFederated(
@@ -356,6 +577,13 @@ export function buildOverviewSceneFromFederated(
     maxX = Math.max(maxX, b.max[0]);
     maxY = Math.max(maxY, b.max[1]);
     maxZ = Math.max(maxZ, b.max[2]);
+    const wc = overviewObjectWorldCenter(o);
+    minX = Math.min(minX, wc[0]);
+    minY = Math.min(minY, wc[1]);
+    minZ = Math.min(minZ, wc[2]);
+    maxX = Math.max(maxX, wc[0]);
+    maxY = Math.max(maxY, wc[1]);
+    maxZ = Math.max(maxZ, wc[2]);
   }
   const originWorld: [number, number, number] = [
     (minX + maxX) / 2,
@@ -363,9 +591,9 @@ export function buildOverviewSceneFromFederated(
     (minZ + maxZ) / 2,
   ];
 
-  return capped.map((o) => {
+  const mapped = capped.map((o) => {
     const bbox = o.boundingBox;
-    const center = bboxCenter(bbox);
+    const center = overviewObjectWorldCenter(o);
     return {
       id: o.id,
       label: typeShortLabel(o.type, o.category),
@@ -374,4 +602,6 @@ export function buildOverviewSceneFromFederated(
       worldPosition: center,
     };
   });
+
+  return mapped;
 }

@@ -19,7 +19,7 @@ import { apiFetch } from '@/lib/api-client';
 import Viewer2D from '../clash/viewer/Viewer2D';
 import Viewer3D from '../clash/viewer/Viewer3D';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { buildOverviewSceneFromFederated } from './lib/clashScene';
+import { buildOverviewSceneFromFederated, layoutOverviewMarkersFor2DPlan } from './lib/clashScene';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -459,15 +459,25 @@ export default function NavisworksClashWorkspace({
     showClashInMainViewer && selectedResult ? resultToViewerClash(selectedResult) : null;
 
   /** Models served as XKT use xeokit mesh; skip per-element box/mesh overlay in 3D to avoid double geometry. */
-  const modelIdsWithXkt = useMemo(
-    () =>
-      new Set(models.filter((m) => m.sourceFormat === 'xkt' && m.xktFile).map((m) => m.id)),
-    [models]
-  );
+  const modelKeysWithXkt = useMemo(() => {
+    const keys = new Set<string>();
+    models
+      .filter((m) => m.sourceFormat === 'xkt' && m.xktFile)
+      .forEach((m) => {
+        if (m.id) keys.add(String(m.id));
+        if (m.name) keys.add(String(m.name));
+      });
+    return keys;
+  }, [models]);
 
   const objectsForOverviewScene3d = useMemo(
-    () => allObjects.filter((o) => !modelIdsWithXkt.has(o.sourceModelId)),
-    [allObjects, modelIdsWithXkt]
+    () =>
+      allObjects.filter((o) => {
+        const byId = o.sourceModelId ? modelKeysWithXkt.has(String(o.sourceModelId)) : false;
+        const byName = o.sourceModel ? modelKeysWithXkt.has(String(o.sourceModel)) : false;
+        return !(byId || byName);
+      }),
+    [allObjects, modelKeysWithXkt]
   );
 
   const federatedOverviewScene3d = useMemo(
@@ -480,14 +490,16 @@ export default function NavisworksClashWorkspace({
     [objectsForOverviewScene3d, hiddenCategories, hiddenModelIds]
   );
 
-  /** 2D plan view uses bbox from federated metadata (still stored for IFC→XKT imports); not filtered by XKT. */
+  /** 2D plan: metres → plan layout px so cards do not all stack at the centre of the div. */
   const federatedOverviewScene2d = useMemo(
     () =>
-      buildOverviewSceneFromFederated(allObjects, {
-        hiddenModelIds,
-        hiddenCategories,
-        maxObjects: allObjects.length,
-      }),
+      layoutOverviewMarkersFor2DPlan(
+        buildOverviewSceneFromFederated(allObjects, {
+          hiddenModelIds,
+          hiddenCategories,
+          maxObjects: allObjects.length,
+        })
+      ),
     [allObjects, hiddenCategories, hiddenModelIds]
   );
 
@@ -522,6 +534,29 @@ export default function NavisworksClashWorkspace({
       .filter((m) => m.sourceFormat === 'xkt' && m.xktFile && neededModelIds.has(m.id))
       .map((m) => ({ id: m.id }));
   }, [allObjects, models, viewerClash, activeTestScopeObjectIds]);
+
+  /**
+   * Clash 3D: prefer loading only models that contain A/B. If that list is empty (scope mismatch,
+   * object not in `allObjects`, etc.) but the project still has XKT, fall back to all XKT models
+   * so xeokit has real geometry and Viewer3D can keep bbox overlay off.
+   */
+  const xktModelsForClashViewer = useMemo(() => {
+    if (!viewerClash) return xktModelsForViewer;
+    if (xktModelsForClashDetail.length > 0) return xktModelsForClashDetail;
+    return xktModelsForViewer;
+  }, [viewerClash, xktModelsForClashDetail, xktModelsForViewer]);
+
+  const projectUsesXktGeometry = useMemo(
+    () => models.some((m) => m.sourceFormat === 'xkt' && Boolean(m.xktFile)),
+    [models]
+  );
+
+  /** While workspace is unresolved or refetching without cached data, omit bbox until model list is known (avoids red overlay before XKT path applies). */
+  const deferClashBboxOverlay = Boolean(
+    viewerClash &&
+      (workspaceQuery.isPending ||
+        (workspaceQuery.fetchStatus === 'fetching' && workspaceQuery.data === undefined))
+  );
 
   const hasXktOnlyOverview = Boolean(
     !viewerClash &&
@@ -2409,8 +2444,6 @@ export default function NavisworksClashWorkspace({
                       objectMeshPositions={objectMeshPositions}
                       testScopeObjectIds={activeTestScopeObjectIds}
                       deEmphasizeUnrelated={shouldHighlightActiveScope}
-                      showScopeBadge={shouldHighlightActiveScope}
-                      hideUnrelatedActive={hideUnrelatedToActiveTest}
                       hasXktOnlyOverview={hasXktOnlyOverview}
                     />
                   </div>
@@ -2419,6 +2452,7 @@ export default function NavisworksClashWorkspace({
                 <div className="flex min-h-0 flex-1 flex-col bg-[#111827] p-1.5 md:p-2">
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#111827]">
                     <Viewer3D
+                      key={viewerClash ? 'xeokit-clash-detail' : 'xeokit-overview'}
                       clash={viewerClash}
                       selectedObjectId={selectedObjectId}
                       onSelectObject={setSelectedObjectId}
@@ -2427,10 +2461,10 @@ export default function NavisworksClashWorkspace({
                       allowObjectMove={false}
                       testScopeObjectIds={activeTestScopeObjectIds}
                       deEmphasizeUnrelated={shouldHighlightActiveScope}
-                      showScopeBadge={shouldHighlightActiveScope}
-                      hideUnrelatedActive={hideUnrelatedToActiveTest}
                       projectSlug={projectSlug}
-                      xktModels={viewerClash ? xktModelsForClashDetail : xktModelsForViewer}
+                      xktModels={viewerClash ? xktModelsForClashViewer : xktModelsForViewer}
+                      projectUsesXktGeometry={projectUsesXktGeometry}
+                      deferClashBboxOverlay={deferClashBboxOverlay}
                       objectMeshPositions={objectMeshPositions}
                     />
                   </div>

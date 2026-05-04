@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
 import type { CreatedProjectPayload } from './CreateProjectModal';
 import { loadCustomIndustriesRaw } from './CreateProjectModal';
-import { ProjectsSkeleton } from '@/components/ui/skeletons';
+import { ProjectsSkeleton } from '../ui/skeletons';
 import { useAppStore } from '@/stores/appStore';
 
 // Types
@@ -892,8 +892,9 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
   const progress = project.progress || 0;
 
   const handleCardClick = (e: React.MouseEvent) => {
-    // Don't navigate if dnd-kit detected a drag (the distance threshold)
-    if ((e.target as HTMLElement).closest('button, [role="button"]')) return;
+    // Only skip real control elements — sortable `{...attributes}` sets role="button" on this card,
+    // so `[role="button"]` would match the whole card and block navigation entirely.
+    if ((e.target as HTMLElement).closest('button, a[href]')) return;
     window.location.href = `/projects/${project.id}`;
   };
 
