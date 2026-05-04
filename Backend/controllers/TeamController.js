@@ -1,6 +1,7 @@
 const TeamRepository = require('../repositories/TeamRepository');
 const TeamMemberRepository = require('../repositories/TeamMemberRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const socketService = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -85,19 +86,27 @@ class TeamController {
             if (!(await requireAdmin(res, projectId, userId))) return;
 
             const team = await TeamRepository.create({ projectId, name, description, color, createdBy: userId });
+            const data = {
+                id: team.publicId,
+                name: team.name,
+                description: team.description,
+                color: team.color,
+                createdBy: team.createdBy,
+                createdAt: team.createdAt,
+                memberIds: [],
+            };
+
+            socketService.broadcastProject(projectId, 'teams:changed', {
+                projectId,
+                action: 'created',
+                teamId: team.publicId,
+                team: data,
+            });
 
             return res.status(201).json({
                 success: true,
                 message: 'Team created',
-                data: {
-                    id: team.publicId,
-                    name: team.name,
-                    description: team.description,
-                    color: team.color,
-                    createdBy: team.createdBy,
-                    createdAt: team.createdAt,
-                    memberIds: [],
-                },
+                data,
             });
         } catch (err) {
             console.error('[TeamController.createTeam]', err);
@@ -121,6 +130,11 @@ class TeamController {
 
             await TeamMemberRepository.removeByTeam(teamId);
             await TeamRepository.deleteByPublicId(teamId);
+            socketService.broadcastProject(team.projectId, 'teams:changed', {
+                projectId: team.projectId,
+                action: 'deleted',
+                teamId,
+            });
 
             return res.json({ success: true, message: 'Team deleted' });
         } catch (err) {
@@ -155,6 +169,12 @@ class TeamController {
             if (already) return badRequest(res, 'User is already in this team');
 
             await TeamMemberRepository.add({ teamId, projectId: team.projectId, userId: targetUserId, addedBy: userId });
+            socketService.broadcastProject(team.projectId, 'teams:changed', {
+                projectId: team.projectId,
+                action: 'member_added',
+                teamId,
+                userId: targetUserId,
+            });
 
             return res.status(201).json({ success: true, message: 'Member added to team' });
         } catch (err) {
@@ -181,6 +201,12 @@ class TeamController {
             if (!(await requireAdmin(res, team.projectId, userId))) return;
 
             await TeamMemberRepository.remove(teamId, targetUserId);
+            socketService.broadcastProject(team.projectId, 'teams:changed', {
+                projectId: team.projectId,
+                action: 'member_removed',
+                teamId,
+                userId: targetUserId,
+            });
 
             return res.json({ success: true, message: 'Member removed from team' });
         } catch (err) {

@@ -136,6 +136,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, p
   useEffect(() => {
     if (!projectSlug) return;
     const socket = getSocket();
+    socket.emit('project:join', { projectId: projectSlug });
 
     const handleApprovalNew = ({ projectId }: { projectId: string }) => {
       if (projectId === projectSlug) {
@@ -158,9 +159,22 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, p
         }
       }
     };
-    const handleApprovalDeleted = ({ projectId }: { projectId: string }) => {
+    const refreshPendingCount = () => {
+      apiFetch('/api/approvals/pending/count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: projectSlug }),
+      }).then(res => res.json()).then(data => {
+        if (data.success) setPendingApprovalCount(data.data?.count || 0);
+      }).catch(() => {});
+    };
+    const handleApprovalDeleted = ({ projectId, status }: { projectId: string; status?: string | null }) => {
       if (projectId === projectSlug) {
-        setPendingApprovalCount(prev => Math.max(0, prev - 1));
+        if (status === 'pending') {
+          setPendingApprovalCount(prev => Math.max(0, prev - 1));
+        } else {
+          refreshPendingCount();
+        }
       }
     };
 
@@ -172,6 +186,7 @@ export default function ProjectTopBar({ projectName, projectSlug, packageName, p
       socket.off('approval:new', handleApprovalNew);
       socket.off('approval:updated', handleApprovalUpdated);
       socket.off('approval:deleted', handleApprovalDeleted);
+      socket.emit('project:leave', { projectId: projectSlug });
     };
   }, [projectSlug]);
 

@@ -6,6 +6,7 @@ import { apiFetch } from '@/lib/api-client';
 import { useAppStore } from '@/stores/appStore';
 import { toast } from '@/components/ui/sonner';
 import AddMemberModal, { type TeamOption } from './AddMemberModal';
+import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
 
 type MemberRole = 'admin' | 'owner' | 'member' | 'viewer';
 type MemberStatus = 'invited' | 'accepted' | 'blocked';
@@ -312,7 +313,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
     setLoading(true);
     await Promise.all([fetchMembers(), fetchInvites(), fetchTeams(), fetchRoles()]);
     setLoading(false);
-  }, [fetchMembers, fetchInvites, fetchTeams, fetchRoles]);
+  }, [fetchMembers, fetchInvites, fetchRoles, fetchTeams]);
 
   // Helper: get role info by roleKey
   const getRoleInfo = (roleKey: string): { name: string; color: string } => {
@@ -321,27 +322,75 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   };
 
   useEffect(() => {
+    const cached = getProjectTabCache<{
+      members?: MemberWithUser[];
+      pendingInvites?: PendingInvite[];
+      roles?: Role[];
+      teams?: Team[];
+      currentUserRole?: MemberRole;
+    }>(projectPublicId, 'teams');
+
+    if (cached?.data) {
+      if (cached.data.members) setMembers(cached.data.members);
+      if (cached.data.pendingInvites) setPendingInvites(cached.data.pendingInvites);
+      if (cached.data.roles) setRoles(cached.data.roles);
+      if (cached.data.teams) setTeams(cached.data.teams);
+      if (cached.data.currentUserRole) setCurrentUserRole(cached.data.currentUserRole);
+      setLoading(false);
+      fetchAll().catch(() => {});
+      return;
+    }
+
     fetchAll();
-  }, [fetchAll]);
+  }, [fetchAll, projectPublicId]);
+
+  useEffect(() => {
+    setProjectTabCache(projectPublicId, 'teams', {
+      members,
+      pendingInvites,
+      roles,
+      teams,
+      currentUserRole,
+    });
+  }, [currentUserRole, members, pendingInvites, projectPublicId, roles, teams]);
 
   // Socket listeners
   useEffect(() => {
     if (!socket) return;
 
-    const handleInviteNew = () => { fetchInvites(); };
-    const handleInviteAccepted = () => { fetchMembers(); fetchInvites(); };
-    const handleInviteRevoked = () => { fetchInvites(); };
+    socket.emit('project:join', { projectId: projectPublicId });
+
+    const isThisProject = (payload?: { projectId?: string }) => payload?.projectId === projectPublicId;
+    const handleInviteNew = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchInvites(); };
+    const handleInviteAccepted = (payload?: { projectId?: string }) => { if (isThisProject(payload)) { fetchMembers(); fetchInvites(); fetchTeams(); fetchRoles(); } };
+    const handleInviteRevoked = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchInvites(); };
+    const handleMemberChanged = (payload?: { projectId?: string }) => { if (isThisProject(payload)) { fetchMembers(); fetchTeams(); fetchRoles(); } };
+    const handleTeamsChanged = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchTeams(); };
+    const handleRolesChanged = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchRoles(); };
 
     socket.on('invite:new', handleInviteNew);
     socket.on('invite:accepted', handleInviteAccepted);
     socket.on('invite:revoked', handleInviteRevoked);
+    socket.on('project:member:joined', handleMemberChanged);
+    socket.on('project:member:left', handleMemberChanged);
+    socket.on('project:member:role-updated', handleMemberChanged);
+    socket.on('member:removed', handleMemberChanged);
+    socket.on('teams:changed', handleTeamsChanged);
+    socket.on('roles:changed', handleRolesChanged);
 
     return () => {
       socket.off('invite:new', handleInviteNew);
       socket.off('invite:accepted', handleInviteAccepted);
       socket.off('invite:revoked', handleInviteRevoked);
+      socket.off('project:member:joined', handleMemberChanged);
+      socket.off('project:member:left', handleMemberChanged);
+      socket.off('project:member:role-updated', handleMemberChanged);
+      socket.off('member:removed', handleMemberChanged);
+      socket.off('teams:changed', handleTeamsChanged);
+      socket.off('roles:changed', handleRolesChanged);
+      socket.emit('project:leave', { projectId: projectPublicId });
     };
-  }, [socket, fetchMembers, fetchInvites]);
+  }, [socket, projectPublicId, fetchMembers, fetchInvites, fetchTeams, fetchRoles]);
 
   const handleRoleChange = async (userId: string, newRole: MemberRole) => {
     setActionLoading(true);

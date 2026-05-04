@@ -6,6 +6,9 @@ const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../config/s3');
 const CRVersionRepository = require('../repositories/CRVersionRepository');
 const Task = require('../models/Task');
+const socketService = require('../services/socketService');
+const NotificationRepository = require('../repositories/NotificationRepository');
+const User = require('../models/User');
 
 const MAX_ATTACH_SIZE_MB = Number(process.env.CR_ATTACHMENT_MAX_SIZE_MB) || 50;
 const MAX_ATTACH_SIZE_BYTES = MAX_ATTACH_SIZE_MB * 1024 * 1024;
@@ -307,6 +310,55 @@ class ChangeRequestController {
                 status: 'pending',
             });
 
+            // Broadcast to all project members
+            socketService.broadcastProject(projectId, 'cr:created', {
+                projectId,
+                publicId: changeRequest.publicId,
+                crId: changeRequest.crId,
+                title: changeRequest.title,
+                status: changeRequest.status,
+                priority: changeRequest.priority,
+                assignedTo: changeRequest.assignedTo,
+                reviewers: changeRequest.reviewers,
+                createdBy: changeRequest.createdBy,
+                createdAt: changeRequest.createdAt,
+            });
+
+            // Notify assignees and reviewers (excluding the creator)
+            const crLink = `/projects/${projectId}/change-requests/${changeRequest.publicId}`;
+            const creator = await User.findById(userId).select('fullName').lean();
+            const creatorName = creator?.fullName || 'Unknown';
+            const notifyTargets = [...new Set([...normalizedAssignedTo, ...normalizedReviewers])].filter(id => id !== userId);
+
+            // Resolve publicIds to MongoDB _ids for notifications
+            const userDocs = await User.find({ publicId: { $in: notifyTargets } }).select('_id publicId').lean();
+            const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
+
+            for (const targetPublicId of notifyTargets) {
+                const mongoId = mongoIdMap.get(targetPublicId);
+                if (!mongoId) continue;
+                const isAssignee = normalizedAssignedTo.includes(targetPublicId);
+                const notification = await NotificationRepository.create({
+                    userId: mongoId,
+                    type: 'info',
+                    title: isAssignee ? 'New CR assigned to you' : 'You are a reviewer',
+                    message: `${creatorName} created CR "${changeRequest.title}" (${changeRequest.crId})`,
+                    link: crLink,
+                    read: false,
+                    refType: 'cr',
+                    refId: changeRequest.publicId,
+                });
+                socketService.notifyUser(mongoId, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: isAssignee ? 'New CR assigned to you' : 'You are a reviewer',
+                    message: `${creatorName} created CR "${changeRequest.title}" (${changeRequest.crId})`,
+                    link: crLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
+
             return res.status(201).json({
                 success: true,
                 message: 'Change request created',
@@ -382,6 +434,54 @@ class ChangeRequestController {
             if (clashCheckRequired !== undefined) updates.$set['structuredSections.impact.clashCheckRequired'] = !!clashCheckRequired;
 
             const updated = await ChangeRequestRepository.update(normalizedCrId, updates);
+
+            // Broadcast to all project members
+            socketService.broadcastProject(changeRequest.projectId, 'cr:updated', {
+                projectId: changeRequest.projectId,
+                publicId: updated.publicId,
+                crId: updated.crId,
+                title: updated.title,
+                description: updated.description,
+                status: updated.status,
+                priority: updated.priority,
+                assignedTo: updated.assignedTo,
+                reviewers: updated.reviewers,
+                updatedAt: updated.updatedAt,
+            });
+
+            // Notify assignees and reviewers (excluding the editor)
+            const crLink = `/projects/${changeRequest.projectId}/change-requests/${updated.publicId}`;
+            const editor = await User.findById(userId).select('fullName').lean();
+            const editorName = editor?.fullName || 'Unknown';
+            const allTargets = [...new Set([...(updated.assignedTo || []), ...(updated.reviewers || [])])].filter(id => id !== userId);
+
+            const userDocs = await User.find({ publicId: { $in: allTargets } }).select('_id publicId').lean();
+            const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
+
+            for (const targetPublicId of allTargets) {
+                const mongoId = mongoIdMap.get(targetPublicId);
+                if (!mongoId) continue;
+                const isAssignee = (updated.assignedTo || []).includes(targetPublicId);
+                const notification = await NotificationRepository.create({
+                    userId: mongoId,
+                    type: 'info',
+                    title: 'CR updated',
+                    message: `${editorName} updated CR "${updated.title}" (${updated.crId})`,
+                    link: crLink,
+                    read: false,
+                    refType: 'cr',
+                    refId: updated.publicId,
+                });
+                socketService.notifyUser(mongoId, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'CR updated',
+                    message: `${editorName} updated CR "${updated.title}" (${updated.crId})`,
+                    link: crLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
+            }
 
             return res.status(200).json({
                 success: true,
@@ -491,6 +591,14 @@ class ChangeRequestController {
                 }
             }
 
+            // Broadcast status change to all project members
+            socketService.broadcastProject(changeRequest.projectId, 'cr:status-changed', {
+                projectId: changeRequest.projectId,
+                crId: updated.crId,
+                publicId: updated.publicId,
+                status: updated.status,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Change request status updated',
@@ -526,7 +634,6 @@ class ChangeRequestController {
             if (authorIds.length > 0) {
                 const validIds = authorIds.filter(id => { try { return mongoose.Types.ObjectId.isValid(id); } catch { return false; } });
                 if (validIds.length > 0) {
-                    const User = require('../models/User');
                     const users = await User.find({ _id: { $in: validIds } }, { _id: 1, fullName: 1, avatar: 1 }).lean();
                     authorMap = Object.fromEntries(users.map(u => [u._id.toString(), { fullName: u.fullName, avatar: u.avatar || '' }]));
                 }
@@ -562,6 +669,11 @@ class ChangeRequestController {
             const CRComment = require('../models/CRComment');
             const mongoose = require('mongoose');
 
+            // Fetch CR to get assignees/reviewers for notifications
+            const changeRequest = await ChangeRequestRepository.findByPublicId(crId);
+            const crAssignedTo = Array.isArray(changeRequest?.assignedTo) ? changeRequest.assignedTo : [];
+            const crReviewers = Array.isArray(changeRequest?.reviewers) ? changeRequest.reviewers : [];
+
             const comment = await CRComment.create({
                 crId,
                 projectId,
@@ -572,10 +684,54 @@ class ChangeRequestController {
             let authorName = 'Unknown';
             let authorAvatar = '';
             if (mongoose.Types.ObjectId.isValid(userId)) {
-                const User = require('../models/User');
                 const user = await User.findById(userId).select('fullName avatar').lean();
                 authorName = user?.fullName || 'Unknown';
                 authorAvatar = user?.avatar || '';
+            }
+
+            // Broadcast comment to project room
+            socketService.broadcastProject(projectId, 'cr:comment_added', {
+                projectId,
+                crId,
+                comment: {
+                    publicId: comment.publicId,
+                    authorId: comment.authorId,
+                    authorName,
+                    avatar: authorAvatar,
+                    content: comment.content,
+                    createdAt: comment.createdAt,
+                },
+            });
+
+            // Notify CR assignees and reviewers (excluding the comment author)
+            const crLink = `/projects/${projectId}/change-requests/${crId}`;
+            const notifyTargets = [...new Set([...crAssignedTo, ...crReviewers])].filter(id => id !== userId);
+
+            const userDocs = await User.find({ publicId: { $in: notifyTargets } }).select('_id publicId').lean();
+            const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
+
+            for (const targetPublicId of notifyTargets) {
+                const mongoId = mongoIdMap.get(targetPublicId);
+                if (!mongoId) continue;
+                const notification = await NotificationRepository.create({
+                    userId: mongoId,
+                    type: 'info',
+                    title: 'New comment on CR',
+                    message: `${authorName} commented on CR`,
+                    link: crLink,
+                    read: false,
+                    refType: 'cr',
+                    refId: crId,
+                });
+                socketService.notifyUser(mongoId, 'notification:new', {
+                    id: String(notification._id),
+                    type: 'info',
+                    title: 'New comment on CR',
+                    message: `${authorName} commented on CR`,
+                    link: crLink,
+                    read: false,
+                    createdAt: notification.createdAt.toISOString(),
+                });
             }
 
             return res.status(201).json({
@@ -623,6 +779,12 @@ class ChangeRequestController {
                 authorName = user?.fullName || 'Unknown';
             }
 
+            socketService.broadcastProject(comment.projectId, 'cr:comment_updated', {
+                projectId: comment.projectId,
+                crId: comment.crId,
+                commentId,
+            });
+
             return res.status(200).json({
                 success: true,
                 data: {
@@ -661,6 +823,12 @@ class ChangeRequestController {
 
             await CRComment.deleteOne({ publicId: commentId });
 
+            socketService.broadcastProject(comment.projectId, 'cr:comment_deleted', {
+                projectId: comment.projectId,
+                crId: comment.crId,
+                commentId,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Comment deleted',
@@ -695,6 +863,12 @@ class ChangeRequestController {
             }
 
             await ChangeRequestRepository.delete(normalizedCrId);
+
+            // Broadcast deletion to all project members
+            socketService.broadcastProject(changeRequest.projectId, 'cr:deleted', {
+                projectId: changeRequest.projectId,
+                crId: normalizedCrId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -765,6 +939,19 @@ class ChangeRequestController {
                 primaryTaskId: changeRequest.primaryTaskId || task.publicId,
             });
 
+            socketService.broadcastProject(changeRequest.projectId, 'task:created', {
+                projectId: changeRequest.projectId,
+                packageId: null,
+                taskId: task.publicId,
+            });
+            socketService.broadcastProject(changeRequest.projectId, 'cr:updated', {
+                projectId: changeRequest.projectId,
+                publicId: normalizedCrId,
+                crId: changeRequest.crId,
+                linkedTaskIds,
+                primaryTaskId: changeRequest.primaryTaskId || task.publicId,
+            });
+
             return res.status(201).json({
                 success: true,
                 message: 'Task created and linked to CR',
@@ -825,6 +1012,20 @@ class ChangeRequestController {
                 { linkedUrl: `cr:${normalizedCrId}` }
             );
 
+            socketService.broadcastProject(changeRequest.projectId, 'cr:updated', {
+                projectId: changeRequest.projectId,
+                publicId: normalizedCrId,
+                crId: changeRequest.crId,
+                linkedTaskIds: updated.linkedTaskIds,
+                primaryTaskId: updated.primaryTaskId,
+            });
+            socketService.broadcastProject(changeRequest.projectId, 'task:updated', {
+                projectId: changeRequest.projectId,
+                packageId: task.packageId || null,
+                taskId: normalizedTaskId,
+                changes: { linkedUrl: `cr:${normalizedCrId}` },
+            });
+
             return res.status(200).json({
                 success: true,
                 message: 'Task linked to CR',
@@ -865,6 +1066,21 @@ class ChangeRequestController {
                 { publicId: normalizedTaskId },
                 { linkedUrl: '' }
             );
+
+            const task = await Task.findOne({ publicId: normalizedTaskId }).select('packageId').lean();
+            socketService.broadcastProject(changeRequest.projectId, 'cr:updated', {
+                projectId: changeRequest.projectId,
+                publicId: normalizedCrId,
+                crId: changeRequest.crId,
+                linkedTaskIds: updated.linkedTaskIds,
+                primaryTaskId: updated.primaryTaskId,
+            });
+            socketService.broadcastProject(changeRequest.projectId, 'task:updated', {
+                projectId: changeRequest.projectId,
+                packageId: task?.packageId || null,
+                taskId: normalizedTaskId,
+                changes: { linkedUrl: '' },
+            });
 
             return res.status(200).json({
                 success: true,

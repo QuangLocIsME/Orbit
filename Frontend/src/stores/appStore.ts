@@ -5,6 +5,15 @@
  * that page transitions are instantaneous — data is already in memory when the
  * user navigates.
  *
+ * SW Refresh strategy (v2):
+ *   - appStore listens for 'sw:data' events dispatched by DashboardLayout.
+ *   - When SW delivers fresh data via postMessage, DashboardLayout parses the
+ *     route and dispatches 'sw:data' with { route, data, isStale }.
+ *   - appStore.patchFromSW(route, data) patches the relevant state slice directly
+ *     — no re-fetch, no loading state, no UI jank.
+ *   - Socket events still trigger full refreshes for mutations (CRUD operations),
+ *     but the SW pipeline handles passive background refreshes.
+ *
  * Real-time strategy:
  *   - appStore manages a global socket and dispatches project-scoped events
  *     to registered callbacks.
@@ -114,31 +123,55 @@ export type PrefetchStatus = 'idle' | 'loading' | 'done' | 'error';
 
 type ProjectEvent =
   | 'documents:refresh'
+  | 'package:created'
   | 'package:updated'
   | 'package:archived'
   | 'package:unarchived'
+  | 'package:deleted'
   | 'project:updated'
+  | 'project:workflow-updated'
+  | 'project:trashed'
+  | 'project:restored'
+  | 'project:deleted'
   | 'project:member:joined'
   | 'project:member:left'
   | 'project:member:role-updated'
   | 'member:removed'
+  | 'teams:changed'
+  | 'roles:changed'
+  | 'disciplines:changed'
+  | 'share-links:changed'
   | 'invite:accepted'
   | 'invite:revoked'
-  | 'invite:declined';
+  | 'invite:declined'
+  | 'workflow-template:changed'
+  | 'document:conversion-updated';
 
 type ProjectEventData = {
-  'documents:refresh': { projectId: string; packageId: string };
+  'documents:refresh': { projectId: string; packageId: string | null; action?: string; documentId?: string; versionGroupId?: string };
+  'package:created': { publicId: string; projectId: string; name: string; description: string; packageType: string; status: string; dueDate: string | null; creatorId: string; teamMemberIds: string[]; archivedAt: string | null; createdAt: string; updatedAt: string; actorId: string };
   'package:updated': { packageId: string; projectId: string; changes: Record<string, unknown> };
   'package:archived': { projectId: string; packageId: string };
   'package:unarchived': { projectId: string; packageId: string };
+  'package:deleted': { projectId: string; packageId: string };
   'project:updated': { projectId: string; changes: Record<string, unknown> };
+  'project:workflow-updated': { projectId: string; workflowTemplateId?: string; workflow?: Record<string, unknown> };
+  'project:trashed': { projectId: string };
+  'project:restored': { projectId: string };
+  'project:deleted': { projectId: string };
   'project:member:joined': { projectId: string; userId: string; fullName: string };
   'project:member:left': { projectId: string; userId: string };
   'project:member:role-updated': { projectId: string; userId: string; role: string };
   'member:removed': { projectId: string };
+  'teams:changed': { projectId: string; action: string; teamId?: string; userId?: string; team?: Record<string, unknown> };
+  'roles:changed': { projectId: string; action: string; roleId?: string };
+  'disciplines:changed': { projectId: string; action: string; disciplineId?: string };
+  'share-links:changed': { projectId: string; action: string; shareId?: string; packageId?: string };
   'invite:accepted': { projectId: string; inviteId: string; acceptedBy: string };
   'invite:revoked': { projectId: string; inviteId: string };
   'invite:declined': { projectId: string; inviteId: string; declinedBy: string };
+  'workflow-template:changed': { action: string; templateId?: string; sourceTemplateId?: string; authorId?: string; userId?: string; isPrivate?: boolean };
+  'document:conversion-updated': { projectId: string; packageId: string | null; documentId: string; versionId: string; status: string; conversionStatus: string; conversionError?: string; xktUrl?: string };
 };
 
 // ── Store ────────────────────────────────────────────────────────────────────────
@@ -166,6 +199,8 @@ interface AppState {
   hydrate: () => Promise<void>;
   initSocket: () => void;
   destroySocket: () => void;
+  /** Patch state from SW-delivered data — no re-fetch, no jank */
+  patchFromSW: (route: string, data: unknown) => void;
 
   // Real-time callbacks
   registerProjectCallback: <E extends ProjectEvent>(
@@ -201,6 +236,9 @@ function _dispatchEvent(projectId: string, event: ProjectEvent, data: unknown) {
     if (entry.event === event) entry.callback(data);
   });
 }
+
+// Module-level SW handler ref so destroySocket can remove the correct listener
+let _swDataHandler: ((e: Event) => void) | null = null;
 
 export const useAppStore = create<AppState>((set, get) => ({
   auth: null,
@@ -258,8 +296,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ folders: [] });
   },
 
-  clearAll: () =>
-    set({ auth: null, projects: [], folders: [], teamMembers: {}, isHydrated: false, prefetchStatus: 'idle' }),
+  clearAll: () => {
+    if (_swDataHandler) {
+      window.removeEventListener('sw:data', _swDataHandler);
+      _swDataHandler = null;
+    }
+    set({ auth: null, projects: [], folders: [], teamMembers: {}, isHydrated: false, prefetchStatus: 'idle' });
+  },
 
   hydrate: async () => {
     if (typeof window === 'undefined') return;
@@ -319,6 +362,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const socket = getSocket();
 
+    // ── SW Data Patching ──────────────────────────────────────────────────────
+    // Listen for SW-delivered data dispatched by DashboardLayout.
+    // SW fetches in background, delivers via postMessage, we patch state directly.
+    // This avoids the full fetch → loading → setState cycle that causes UI jank.
+    _swDataHandler = (e: Event) => {
+      const { route, data } = (e as CustomEvent<{ route: string; data: unknown; isStale: boolean }>).detail;
+      get().patchFromSW(route, data);
+    };
+    window.addEventListener('sw:data', _swDataHandler);
+
     // ── Global events ──────────────────────────────────────────────────────────
     socket.on('cache:invalidate', (payload: { data: { cacheTypes: string[]; userId: string } }) => {
       const { cacheTypes } = payload.data ?? {};
@@ -342,17 +395,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     // ── Project-scoped events — dispatch to registered callbacks ───────────────
     const projectEvents: ProjectEvent[] = [
       'documents:refresh',
+      'package:created',
       'package:updated',
       'package:archived',
       'package:unarchived',
+      'package:deleted',
       'project:updated',
+      'project:workflow-updated',
+      'project:trashed',
+      'project:restored',
+      'project:deleted',
       'project:member:joined',
       'project:member:left',
       'project:member:role-updated',
       'member:removed',
+      'teams:changed',
+      'roles:changed',
+      'disciplines:changed',
+      'share-links:changed',
       'invite:accepted',
       'invite:revoked',
       'invite:declined',
+      'workflow-template:changed',
+      'document:conversion-updated',
     ];
 
     for (const event of projectEvents) {
@@ -376,7 +441,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { socket } = get();
     if (socket) {
       socket.disconnect();
-      set({ socket: null });
+    }
+    if (_swDataHandler) {
+      window.removeEventListener('sw:data', _swDataHandler);
+      _swDataHandler = null;
+    }
+    set({ socket: null });
+  },
+
+  // ── SW Data Patching ────────────────────────────────────────────────────────
+  // Patches state directly from SW-delivered data. This is the key to "no jank" —
+  // instead of calling loadProjects() which triggers a full fetch + setState cycle,
+  // we receive fresh data from SW via postMessage and patch state in-place.
+  // The route is the API path, e.g. '/api/projects/me'
+  patchFromSW: (route: string, data: unknown) => {
+    if (route === '/api/projects/me' && Array.isArray(data)) {
+      writeCache(PROJECTS_CACHE_KEY, data);
+      set((state) => {
+        // Merge: update existing, add new, remove stale
+        const incomingMap = new Map((data as ApiProject[]).map((p) => [p.publicId, p]));
+        const merged = state.projects
+          .map((p) => incomingMap.get(p.publicId) ?? p)
+          .filter((p) => incomingMap.has(p.publicId));
+
+        const existingIds = new Set(state.projects.map((p) => p.publicId));
+        for (const p of data as ApiProject[]) {
+          if (!existingIds.has(p.publicId)) merged.push(p);
+        }
+
+        return { projects: merged };
+      });
+      return;
+    }
+
+    if (route === '/api/folders/me' && Array.isArray(data)) {
+      writeCache(FOLDERS_CACHE_KEY, data);
+      set((state) => {
+        const incomingMap = new Map((data as ApiFolder[]).map((f) => [f.publicId, f]));
+        const merged = state.folders
+          .map((f) => incomingMap.get(f.publicId) ?? f)
+          .filter((f) => incomingMap.has(f.publicId));
+
+        const existingIds = new Set(state.folders.map((f) => f.publicId));
+        for (const f of data as ApiFolder[]) {
+          if (!existingIds.has(f.publicId)) merged.push(f);
+        }
+
+        return { folders: merged };
+      });
+      return;
     }
   },
 
@@ -422,4 +535,5 @@ export const hydrateApp = () => useAppStore.getState().hydrate();
 export const initAppSocket = () => useAppStore.getState().initSocket();
 export const destroyAppSocket = () => useAppStore.getState().destroySocket();
 export const clearAll = () => useAppStore.getState().clearAll();
+export const patchFromSW = (route: string, data: unknown) => useAppStore.getState().patchFromSW(route, data);
 export const updateAuthAvatar = (avatar: string) => useAppStore.getState().updateAuthAvatar(avatar);

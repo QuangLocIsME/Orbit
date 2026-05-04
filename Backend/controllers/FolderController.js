@@ -1,5 +1,6 @@
 const Folder = require('../models/Folder');
 const { getJson, setJson, delKeys } = require('../services/cacheService');
+const { invalidateUserCache } = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -21,6 +22,7 @@ const getFoldersCacheKey = (userId) => `folders:me:${userId}`;
 const getProjectsCacheKey = (userId) => `projects:me:${userId}`;
 const invalidateUserCaches = async (userId) => {
     await delKeys([getFoldersCacheKey(userId), getProjectsCacheKey(userId)]);
+    invalidateUserCache(userId, ['folders', 'projects']);
 };
 
 class FolderController {

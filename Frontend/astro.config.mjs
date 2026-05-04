@@ -8,9 +8,8 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  // Astro 6: output:'static' (default) already supports per-page SSR via `export const prerender = false`
-  // Node adapter handles SSR pages in production
-  output: 'static',
+  // This app is primarily authenticated and dynamic, so server output is the stable default.
+  output: 'server',
   adapter: node({ mode: 'middleware' }),
   integrations: [react()],
   vite: {

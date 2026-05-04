@@ -96,9 +96,13 @@ app.use(helmet.frameguard({ action: 'deny' }));
 app.use(helmet.noSniff());
 app.use(helmet.xssFilter());
 app.use(helmet.referrerPolicy({ policy: 'strict-origin-when-cross-origin' }));
+const LAN_ORIGIN = process.env.FRONTEND_URI_LAN || process.env.FRONTEND_URI;
 app.use(
     cors({
-        origin: process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
+        origin: [
+            process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
+            LAN_ORIGIN,
+        ],
         credentials: true,
     })
 );
@@ -154,8 +158,8 @@ const PORT = process.env.PORT || 3000;
     await Promise.all([createIfcChannel(), createUploadChannel()]);
     console.log('[RabbitMQ] Channels ready');
 
-    httpServer.listen(PORT, () => {
-        console.log(`Server is running on port ${PORT}`);
+    httpServer.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server is running on port ${PORT} (LAN accessible at http://<your-lan-ip>:${PORT})`);
     });
 })();
 

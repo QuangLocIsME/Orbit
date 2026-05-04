@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { cn } from '@/lib/utils';
 import { apiFetch, uploadProjectThumbnail, uploadProjectAvatar, deleteProjectAvatar, updateProject, fetchProjectRoles, createProjectRole, updateProjectRole, deleteProjectRole, fetchProjectReport, exportProjectReport, type ProjectReportData } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { toast } from '@/components/ui/sonner';
 import { WorkflowEditor, type StageData } from './workflow-editor/WorkflowEditor';
@@ -460,27 +461,33 @@ export default function SettingsTab({
   const [deleteProjectConfirmText, setDeleteProjectConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
+  const loadDisciplines = useCallback(async () => {
     if (!projectPublicId) return;
     setIsLoadingDisciplines(true);
-    apiFetch(`/api/projects/${projectPublicId}/disciplines`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.data) {
-          setDisciplines(data.data.map((d: any) => ({
-            id: d.id,
-            name: d.name,
-            description: d.description,
-            color: d.color,
-            createdBy: d.createdBy,
-            createdAt: d.createdAt,
-            updatedAt: d.updatedAt,
-          })));
-        }
-      })
-      .catch(() => {})
-      .finally(() => setIsLoadingDisciplines(false));
+    try {
+      const res = await apiFetch(`/api/projects/${projectPublicId}/disciplines`);
+      const data = res.ok ? await res.json() : null;
+      if (data?.data) {
+        setDisciplines(data.data.map((d: any) => ({
+          id: d.id,
+          name: d.name,
+          description: d.description,
+          color: d.color,
+          createdBy: d.createdBy,
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt,
+        })));
+      }
+    } catch {
+      // keep stale disciplines
+    } finally {
+      setIsLoadingDisciplines(false);
+    }
   }, [projectPublicId]);
+
+  useEffect(() => {
+    void loadDisciplines();
+  }, [loadDisciplines]);
 
   const fetchWorkflowTemplates = useCallback(async () => {
     setWorkflowTemplatesLoading(true);
@@ -938,31 +945,81 @@ export default function SettingsTab({
     };
   }, [projectPublicId]);
 
+  const loadRoles = useCallback(async (options?: { cancelled?: () => boolean }) => {
+    if (!projectPublicId) return;
+
+    setIsLoadingRoles(true);
+    try {
+      const data = await fetchProjectRoles(projectPublicId);
+      if (!options?.cancelled?.() && Array.isArray(data) && data.length > 0) {
+        setRoles(data);
+      }
+    } catch {
+      // keep default roles on error
+    } finally {
+      if (!options?.cancelled?.()) setIsLoadingRoles(false);
+    }
+  }, [projectPublicId]);
+
   // Load roles from API
   useEffect(() => {
     let cancelled = false;
 
-    const loadRoles = async () => {
-      if (!projectPublicId) return;
-
-      setIsLoadingRoles(true);
-      try {
-        const data = await fetchProjectRoles(projectPublicId);
-        if (!cancelled && Array.isArray(data) && data.length > 0) {
-          setRoles(data);
-        }
-      } catch {
-        // keep default roles on error
-      } finally {
-        if (!cancelled) setIsLoadingRoles(false);
-      }
-    };
-
-    loadRoles();
+    void loadRoles({ cancelled: () => cancelled });
     return () => {
       cancelled = true;
     };
-  }, [projectPublicId]);
+  }, [loadRoles]);
+
+  useEffect(() => {
+    if (!projectPublicId) return;
+
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: projectPublicId });
+
+    const isThisProject = (payload?: { projectId?: string }) => payload?.projectId === projectPublicId;
+    const handleDisciplinesChanged = (payload?: { projectId?: string }) => {
+      if (isThisProject(payload)) void loadDisciplines();
+    };
+    const handleRolesChanged = (payload?: { projectId?: string }) => {
+      if (isThisProject(payload)) void loadRoles();
+    };
+    const handleWorkflowChanged = (payload?: { projectId?: string }) => {
+      if (!isThisProject(payload)) return;
+      window.dispatchEvent(new CustomEvent('workflow-applied', { detail: payload }));
+    };
+    const handleProjectUpdated = (payload?: { projectId?: string; changes?: Record<string, unknown> }) => {
+      if (!isThisProject(payload)) return;
+      const changes = payload?.changes || {};
+      if ('workflow' in changes || 'workflowTemplateId' in changes || 'taskTags' in changes || 'settings' in changes) {
+        window.dispatchEvent(new CustomEvent('workflow-applied', { detail: payload }));
+      }
+    };
+    const handleWorkflowTemplateChanged = () => {
+      void fetchWorkflowTemplates();
+    };
+
+    socket.on('disciplines:changed', handleDisciplinesChanged);
+    socket.on('roles:changed', handleRolesChanged);
+    socket.on('project:member:joined', handleRolesChanged);
+    socket.on('project:member:left', handleRolesChanged);
+    socket.on('project:member:role-updated', handleRolesChanged);
+    socket.on('project:workflow-updated', handleWorkflowChanged);
+    socket.on('project:updated', handleProjectUpdated);
+    socket.on('workflow-template:changed', handleWorkflowTemplateChanged);
+
+    return () => {
+      socket.off('disciplines:changed', handleDisciplinesChanged);
+      socket.off('roles:changed', handleRolesChanged);
+      socket.off('project:member:joined', handleRolesChanged);
+      socket.off('project:member:left', handleRolesChanged);
+      socket.off('project:member:role-updated', handleRolesChanged);
+      socket.off('project:workflow-updated', handleWorkflowChanged);
+      socket.off('project:updated', handleProjectUpdated);
+      socket.off('workflow-template:changed', handleWorkflowTemplateChanged);
+      socket.emit('project:leave', { projectId: projectPublicId });
+    };
+  }, [projectPublicId, loadDisciplines, loadRoles, fetchWorkflowTemplates]);
 
   // Load report data when switching to Reports tab
   useEffect(() => {

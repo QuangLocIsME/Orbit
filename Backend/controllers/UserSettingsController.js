@@ -237,6 +237,10 @@ class UserSettingsController {
             });
 
             await delKeys([`auth:me:${userId}`]);
+            broadcastAll('user:avatar:updated', {
+                userId,
+                avatar: '',
+            });
 
             return res.status(200).json({
                 success: true,

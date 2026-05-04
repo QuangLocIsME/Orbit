@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { navigate } from 'astro:transitions/client';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
 import { cn, getTodayLocalDateString, localDateStringToUTCDate, utcDateStringToLocalDateString } from '@/lib/utils';
 import { PackagesSkeleton } from '@/components/ui/skeletons';
 import { Search, LayoutGrid, List, Plus, Calendar, Users, Pencil, Trash2 } from 'lucide-react';
+import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
 
 type PackageStatus = 'Draft' | 'Active' | 'Archived';
 
@@ -269,11 +271,86 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     if (!fixedProjectId) {
       localStorage.setItem(SELECTED_PROJECT_KEY, selectedProjectId);
     }
+    const cached = getProjectTabCache<{
+      packages?: PackageItem[];
+      projectMembers?: ProjectMemberOption[];
+    }>(selectedProjectId, 'packages');
+
+    if (cached?.data) {
+      if (cached.data.packages) setPackages(cached.data.packages);
+      if (cached.data.projectMembers) setProjectMembers(cached.data.projectMembers);
+      setLoading(false);
+      refreshData(selectedProjectId)
+        .catch((err) => toast.error(err?.message || 'Failed to load packages'));
+      return;
+    }
+
     setLoading(true);
     refreshData(selectedProjectId)
       .catch((err) => toast.error(err?.message || 'Failed to load packages'))
       .finally(() => setLoading(false));
   }, [selectedProjectId, fixedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    setProjectTabCache(selectedProjectId, 'packages', {
+      packages,
+      projectMembers,
+    });
+  }, [packages, projectMembers, selectedProjectId]);
+
+  // WebSocket realtime — refresh package list when events occur
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: selectedProjectId });
+
+    const handlePackageCreated = (data: { projectId: string; publicId: string; name: string; description: string; packageType: string; status: string; dueDate: string | null; creatorId: string; teamMemberIds: string[]; archivedAt: string | null; createdAt: string; updatedAt: string }) => {
+      if (data.projectId !== selectedProjectId) return;
+      setPackages(prev => {
+        if (prev.some(p => p.publicId === data.publicId)) return prev;
+        const pkg: PackageItem = {
+          publicId: data.publicId,
+          projectId: data.projectId,
+          name: data.name,
+          description: data.description,
+          packageType: data.packageType,
+          status: data.status as PackageStatus,
+          dueDate: data.dueDate,
+          creatorId: data.creatorId,
+          teamMemberIds: data.teamMemberIds,
+          updatedAt: data.updatedAt,
+        };
+        return [pkg, ...prev];
+      });
+    };
+
+    const handlePackageUpdated = (payload: { packageId?: string; publicId?: string; projectId: string; changes?: Record<string, unknown> }) => {
+      if (payload.projectId !== selectedProjectId) return;
+      const packageId = payload.packageId || payload.publicId;
+      if (!packageId) return;
+      const changes = payload.changes || payload;
+      setPackages(prev => prev.map(p => p.publicId === packageId ? { ...p, ...changes } : p));
+    };
+
+    const handlePackageArchived = ({ packageId, projectId }: { packageId: string; projectId: string }) => {
+      if (projectId !== selectedProjectId) return;
+      setPackages(prev => prev.filter(p => p.publicId !== packageId));
+    };
+
+    socket.on('package:created', handlePackageCreated);
+    socket.on('package:updated', handlePackageUpdated);
+    socket.on('package:archived', handlePackageArchived);
+    socket.on('package:deleted', handlePackageArchived);
+
+    return () => {
+      socket.off('package:created', handlePackageCreated);
+      socket.off('package:updated', handlePackageUpdated);
+      socket.off('package:archived', handlePackageArchived);
+      socket.off('package:deleted', handlePackageArchived);
+      socket.emit('project:leave', { projectId: selectedProjectId });
+    };
+  }, [selectedProjectId]);
 
   const toggleMember = (userId: string) => {
     setNewPackage((prev) => ({
@@ -456,7 +533,7 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     }
   };
 
-  if (!isHydrated || loading) return <PackagesSkeleton />;
+  if (!isHydrated) return <PackagesSkeleton />;
 
   return (
     <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">

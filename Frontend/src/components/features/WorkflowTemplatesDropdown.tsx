@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { apiFetch } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
 import { toast } from '@/components/ui/sonner';
 
 interface WorkflowStageInfo {
@@ -78,11 +79,14 @@ export default function WorkflowTemplatesDropdown({
     window.addEventListener('workflow-created', handleWorkflowChanged);
     window.addEventListener('workflow-updated', handleWorkflowChanged);
     window.addEventListener('workflow-deleted', handleWorkflowChanged);
+    const socket = getSocket();
+    socket.on('workflow-template:changed', handleWorkflowChanged);
 
     return () => {
       window.removeEventListener('workflow-created', handleWorkflowChanged);
       window.removeEventListener('workflow-updated', handleWorkflowChanged);
       window.removeEventListener('workflow-deleted', handleWorkflowChanged);
+      socket.off('workflow-template:changed', handleWorkflowChanged);
     };
   }, []);
 
@@ -145,7 +149,13 @@ export default function WorkflowTemplatesDropdown({
     }
 
     setSelected(workflowId);
-    onSelect?.(workflowId, template?.stages || []);
+
+    // Only call onSelect immediately when NOT applying to project.
+    // When applying to project, the 'workflow-applied' event already triggers
+    // ScopedTasksPanel.loadProjectWorkflowData() which sets the stages from the server.
+    if (!shouldApplyToProject) {
+      onSelect?.(workflowId, template?.stages || []);
+    }
     setIsOpen(false);
   };
 

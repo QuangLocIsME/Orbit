@@ -4,12 +4,42 @@ const fs = require('fs');
 const { pipeline } = require('stream/promises');
 const { spawn } = require('child_process');
 
+// Self-patch @loaders.gl polyfills before any imports resolve them.
+// The package uses bare `.node` extension imports that Node.js ESM cannot resolve.
+(function patchLoadersGl() {
+  const dir = path.join(__dirname, '..', 'node_modules', '@loaders.gl');
+  if (!fs.existsSync(dir)) return;
+  let patched = 0;
+  function walk(d) {
+    const entries = fs.readdirSync(d, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) { walk(full); }
+      else if (entry.isFile() && entry.name.endsWith('.js')) {
+        const before = fs.readFileSync(full, 'utf8');
+        if (!/\.node['"\/]/.test(before)) continue;
+        let after = before
+          .replace(/\.node\.js\./g, 'PROTECTED_NODE_JS_DOT')
+          .replace(/\.node(['"\/])/g, '.node.js$1')
+          .replace(/PROTECTED_NODE_JS_DOT/g, '.node.js.');
+        if (after !== before) {
+          fs.writeFileSync(full, after, 'utf8');
+          patched++;
+        }
+      }
+    }
+  }
+  walk(dir);
+  if (patched > 0) console.log('[ifcConversionWorker] Patched', patched, '@loaders.gl file(s)');
+})();
+
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const connectDB = require('../config/database');
 const DocumentRepository = require('../repositories/DocumentRepository');
 const { s3Client } = require('../config/s3');
 const { startIfcConversionConsumer } = require('../queues/ifcConversionQueue');
+const { publishRealtime } = require('../services/socketService');
 const {
     buildSupabaseStoragePath,
     uploadXktFile,
@@ -146,6 +176,19 @@ async function processIfcJob(payload) {
         conversionError: '',
         conversionAttempts: Number(doc.conversionAttempts || 0) + 1,
     });
+    await publishRealtime({
+        target: 'project',
+        id: doc.projectId,
+        event: 'document:conversion-updated',
+        data: {
+            projectId: doc.projectId,
+            packageId: doc.packageId || null,
+            documentId: payload.documentId || doc.publicId,
+            versionId: doc.publicId,
+            status: 'PROCESSING',
+            conversionStatus: 'PROCESSING',
+        },
+    });
 
     const inputIfcPath = path.join(TEMP_DIR, `${doc.publicId}-${Date.now()}.ifc`);
     const outputXktPath = path.join(TEMP_DIR, `${doc.publicId}-${Date.now()}.xkt`);
@@ -184,12 +227,40 @@ async function processIfcJob(payload) {
             convertedAt: new Date(),
             conversionError: '',
         });
+        await publishRealtime({
+            target: 'project',
+            id: doc.projectId,
+            event: 'document:conversion-updated',
+            data: {
+                projectId: doc.projectId,
+                packageId: doc.packageId || null,
+                documentId: payload.documentId || doc.publicId,
+                versionId: doc.publicId,
+                status: 'READY',
+                conversionStatus: 'READY',
+                xktUrl: uploaded.publicUrl,
+            },
+        });
         console.log(`[ifcConversionWorker] Uploaded XKT: ${uploaded.publicUrl}`);
     } catch (error) {
         console.error(`[ifcConversionWorker] Conversion failed: ${error.message}`);
         await DocumentRepository.updateConversionStateByPublicId(doc.publicId, {
             conversionStatus: 'FAILED',
             conversionError: error?.message || 'IFC conversion failed',
+        });
+        await publishRealtime({
+            target: 'project',
+            id: doc.projectId,
+            event: 'document:conversion-updated',
+            data: {
+                projectId: doc.projectId,
+                packageId: doc.packageId || null,
+                documentId: payload.documentId || doc.publicId,
+                versionId: doc.publicId,
+                status: 'FAILED',
+                conversionStatus: 'FAILED',
+                conversionError: error?.message || 'IFC conversion failed',
+            },
         });
     } finally {
         fs.unlink(inputIfcPath, () => {});

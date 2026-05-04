@@ -16,6 +16,7 @@ const UploadApprovalRepository = require('../repositories/UploadApprovalReposito
 const { startPackageUploadConsumer } = require('../queues/packageUploadQueue');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const { uploadProjectFileBuffer, SUPABASE_URL } = require('../services/supabaseStorageService');
+const { publishRealtime } = require('../services/socketService');
 const { buildS3Url } = require('../config/s3');
 const { generateUUIDv7 } = require('../utils/cryptoUtils');
 
@@ -132,7 +133,7 @@ async function processJob(jobId) {
             updatedAt: new Date(),
         });
 
-        await UploadApprovalRepository.create({
+        const approval = await UploadApprovalRepository.create({
             projectId: job.projectId,
             documentId: document.publicId,
             packageId: job.packageId,
@@ -166,6 +167,25 @@ async function processJob(jobId) {
             finishedAt: new Date(),
             documentPublicId: document.publicId,
             errorMessage: null,
+        });
+
+        await publishRealtime({
+            target: 'project',
+            id: job.projectId,
+            event: 'approval:new',
+            data: {
+                projectId: job.projectId,
+                approvalId: approval.publicId,
+            },
+        });
+        await publishRealtime({
+            target: 'project',
+            id: job.projectId,
+            event: 'documents:refresh',
+            data: {
+                projectId: job.projectId,
+                packageId: job.packageId || null,
+            },
         });
 
         if (isIfcFile) {

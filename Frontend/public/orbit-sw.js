@@ -1,41 +1,56 @@
 /**
- * Orbit App Shell Service Worker
+ * Orbit Service Worker — Advanced refresh + cache strategy.
  *
- * Strategy: Cache-first for static assets, network-first for API data.
- * On successful API response, cache it AND send data back to page via postMessage
- * so the page can write it to sessionStorage for instant hydration.
+ * Goals:
+ * 1. Instant UI: Return cached data immediately, refresh in background
+ * 2. No jank: Background refresh via SW, postMessage delivers data to UI without re-fetching
+ * 3. Broad coverage: Cache all list/CRUD API routes, not just projects/folders
+ * 4. Reactive: UI subscribes to SW messages and patches state diff-style
  *
- * Flow:
- *   1. SW intercepts API request
- *   2. Check cache — if hit, return cached + send data to page via postMessage
- *   3. If miss, fetch from network → cache it → send data to page
+ * Message API (from page → SW):
+ *   PREFETCH_API    { routes }     — prefetch specified routes
+ *   REFRESH_API     { routes }     — fetch + cache + postMessage data to page
+ *   CACHE_ROUTES    { routes }     — add routes to the live cache list
+ *   GET_CACHED      { route }      — request cached data for a route (returns via GET_CACHED_RESPONSE)
+ *   CLEAR_ROUTE     { route }       — invalidate single route cache
+ *   CLEAR_API_CACHE                — clear all API cache
+ *   CLEAR_ALL                       — clear all caches
  *
- * This ensures ProjectsManager always has data from sessionStorage on mount,
- * eliminating skeleton flicker on subsequent visits.
+ * Message API (from SW → page):
+ *   REFRESH_RESPONSE  { route, data, isStale }  — fresh data delivered to UI
+ *   GET_CACHED_RESPONSE { route, data }         — requested cached data
+ *   SYNC_SESSION     { key, data }              — sessionStorage sync (existing)
+ *   CACHE_READY      { routes }                — announced after prefetch completes
  */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const STATIC_CACHE = `orbit-static-${CACHE_VERSION}`;
 const API_CACHE = `orbit-api-${CACHE_VERSION}`;
+const API_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
 
-// Static assets to precache
-const STATIC_ASSETS = [
-  '/',
+// Routes to always cache
+const ALWAYS_CACHE_ROUTES = [
+  '/api/projects/me',
+  '/api/folders/me',
 ];
 
-// ── Install: cache static assets immediately ─────────────────────────────────
+// Dynamic route list (expanded via CACHE_ROUTES message)
+let cachedRoutes = new Set(ALWAYS_CACHE_ROUTES);
+
+// Deduplicate concurrent fetches for the same URL
+const inflightRequests = new Map();
+
+// ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch(() => {
-        // ignore failure — SW still activates
-      });
+      return cache.addAll(['/']).catch(() => {});
     })
   );
   self.skipWaiting();
 });
 
-// ── Activate: clean old caches ─────────────────────────────────────────────
+// ── Activate ─────────────────────────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -48,55 +63,51 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// ── Fetch: decide strategy ─────────────────────────────────────────────────
+// ── Fetch ─────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only handle same-origin requests
   if (url.origin !== location.origin) return;
 
-  /**
-   * Dev / localhost: do not intercept fetches.
-   * Cache-first scripts + Vite HMR/changing hashes cause stale bundles → blank white React islands.
-   */
-  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
-    return;
-  }
+  // Skip localhost in dev
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return;
 
-  // API routes → cache-first with background update
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(handleApiRequest(request));
     return;
   }
 
-  // Static assets → cache-first
   if (request.destination === 'document' || request.destination === 'script' || request.destination === 'style' || request.destination === 'image') {
     event.respondWith(handleStaticRequest(request));
   }
 });
 
-// ── API: Cache-first, refresh in background, sync to sessionStorage ─────────────
+// ── API Handler ───────────────────────────────────────────────────────────────
 async function handleApiRequest(request) {
   const cache = await caches.open(API_CACHE);
-  const cached = await cache.match(request);
+  const cacheKey = request.url;
+  const cached = await cache.match(cacheKey);
 
   if (cached) {
-    // Return cached immediately (no skeleton!)
-    // But first sync to sessionStorage so page can read it synchronously
-    syncToSessionStorage(request, cached);
+    // Return cached immediately — no skeleton flicker
+    const cachedTime = cached.headers.get('x-cached-at');
+    const isStale = cachedTime ? Date.now() - parseInt(cachedTime) > API_CACHE_TTL_MS : true;
 
-    // Refresh in background silently
-    fetch(request)
-      .then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          cache.put(request, clone).catch(() => {});
-          syncToSessionStorage(request, clone);
-        }
-        return response;
-      })
-      .catch(() => null);
+    // Deliver cached data to page via postMessage so UI can patch state
+    deliverToClients({
+      type: 'REFRESH_RESPONSE',
+      payload: {
+        route: request.url,
+        data: cached.clone(),
+        isStale,
+      },
+    });
+
+    // Refresh in background if stale
+    if (isStale) {
+      refreshInBackground(request, cache);
+    }
 
     return cached;
   }
@@ -105,9 +116,22 @@ async function handleApiRequest(request) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const clone = response.clone();
-      cache.put(request, clone).catch(() => {});
-      syncToSessionStorage(request, clone);
+      const cloned = response.clone();
+
+      // Add timestamp header
+      const headers = new Headers(cloned.headers);
+      headers.set('x-cached-at', String(Date.now()));
+      const timedResponse = new Response(await cloned.clone().text(), {
+        status: cloned.status,
+        statusText: cloned.statusText,
+        headers,
+      });
+
+      cache.put(cacheKey, timedResponse).catch(() => {});
+      deliverToClients({
+        type: 'REFRESH_RESPONSE',
+        payload: { route: request.url, data: cloned, isStale: false },
+      });
     }
     return response;
   } catch {
@@ -118,34 +142,77 @@ async function handleApiRequest(request) {
   }
 }
 
-// ── Sync cached API data to sessionStorage so React can read on mount ──────────
-async function syncToSessionStorage(request, response) {
+async function refreshInBackground(request, cache) {
   try {
-    const url = new URL(request.url);
-    // Only sync the critical routes we care about
-    if (url.pathname !== '/api/projects/me' && url.pathname !== '/api/folders/me') return;
+    const response = await fetch(request);
+    if (response.ok) {
+      const cloned = response.clone();
+      const headers = new Headers(cloned.headers);
+      headers.set('x-cached-at', String(Date.now()));
+      const timedResponse = new Response(await cloned.clone().text(), {
+        status: cloned.status,
+        statusText: cloned.statusText,
+        headers,
+      });
+      cache.put(request.url, timedResponse).catch(() => {});
 
-    const data = await response.clone().json();
-    const key = 'orbit:' + url.pathname.replace('/api/', '');
-    const payload = {
-      data,
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 min TTL matching appStore
-    };
-
-    // Try to write to all clients' sessionStorage
-    const clients = await self.clients.matchAll({ type: 'window' });
-    for (const client of clients) {
-      client.postMessage({
-        type: 'SYNC_SESSION',
-        payload: { key, data: payload },
+      deliverToClients({
+        type: 'REFRESH_RESPONSE',
+        payload: { route: request.url, data: cloned, isStale: false },
       });
     }
   } catch {
-    // ignore serialization errors
+    // silent — stale data already returned
   }
 }
 
-// ── Static: Cache-first ─────────────────────────────────────────────────────
+// ── Deliver data to all clients via postMessage ────────────────────────────────
+// Tries structured clone first (efficient), falls back to JSON for Response objects
+async function deliverToClients(message) {
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) {
+    try {
+      // For REFRESH_RESPONSE, we need to send the cloned response properly
+      if (message.type === 'REFRESH_RESPONSE' && message.payload.data) {
+        const data = await message.payload.data.clone().json();
+        client.postMessage(
+          { type: 'REFRESH_RESPONSE', payload: { route: message.payload.route, data, isStale: message.payload.isStale } },
+          // Transfer the ArrayBuffer for zero-copy (helps with large payloads)
+          [await message.payload.data.clone().arrayBuffer()].filter(Boolean)
+        );
+      } else {
+        client.postMessage(message);
+      }
+    } catch {
+      // If structured clone fails, skip (e.g. non-serializable data)
+    }
+  }
+}
+
+// ── Sync to sessionStorage (legacy, kept for compatibility) ────────────────────
+async function syncToSessionStorage(request, response, data) {
+  try {
+    const url = new URL(request.url);
+    const route = url.pathname;
+
+    if (!cachedRoutes.has(route) && !ALWAYS_CACHE_ROUTES.includes(route)) return;
+
+    const key = 'orbit:' + route.replace('/api/', '');
+    const payload = {
+      data,
+      expiresAt: Date.now() + API_CACHE_TTL_MS,
+    };
+
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const client of clients) {
+      client.postMessage({ type: 'SYNC_SESSION', payload: { key, data: payload } });
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// ── Static Handler ────────────────────────────────────────────────────────────
 async function handleStaticRequest(request) {
   const cache = await caches.open(STATIC_CACHE);
   const cached = await cache.match(request);
@@ -154,8 +221,7 @@ async function handleStaticRequest(request) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const clone = response.clone();
-      cache.put(request, clone).catch(() => {});
+      cache.put(request, response.clone()).catch(() => {});
     }
     return response;
   } catch {
@@ -163,14 +229,36 @@ async function handleStaticRequest(request) {
   }
 }
 
-// ── Message: trigger prefetch from app ─────────────────────────────────────
+// ── Message Handler ───────────────────────────────────────────────────────────
 self.addEventListener('message', (event) => {
   if (!event.data) return;
-
   const { type, payload } = event.data;
 
   if (type === 'PREFETCH_API') {
-    prefetchApiRoutes(payload?.routes || ['/api/projects/me', '/api/folders/me', '/api/auth/me']);
+    const routes = payload?.routes || ALWAYS_CACHE_ROUTES;
+    prefetchApiRoutes(routes);
+  }
+
+  if (type === 'REFRESH_API') {
+    // Explicit refresh: fetch, cache, deliver via postMessage
+    const routes = payload?.routes || [];
+    refreshApiRoutes(routes);
+  }
+
+  if (type === 'CACHE_ROUTES') {
+    // Expand dynamic route coverage
+    const routes = payload?.routes || [];
+    routes.forEach((r) => cachedRoutes.add(r));
+  }
+
+  if (type === 'GET_CACHED') {
+    // Return cached data for a route on demand
+    const route = payload?.route;
+    if (route) getCachedRoute(route);
+  }
+
+  if (type === 'CLEAR_ROUTE') {
+    clearRouteCache(payload?.route);
   }
 
   if (type === 'CLEAR_API_CACHE') {
@@ -182,33 +270,149 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// ── Prefetch ─────────────────────────────────────────────────────────────────
 async function prefetchApiRoutes(routes) {
   const cache = await caches.open(API_CACHE);
+  const results = [];
+
   await Promise.allSettled(
     routes.map(async (route) => {
       try {
         const url = location.origin + route;
         const res = await fetch(url, { credentials: 'include' });
         if (res.ok) {
-          await cache.put(route, res.clone());
-          syncToSessionStorage(new Request(route), res);
+          const cloned = res.clone();
+          const headers = new Headers(cloned.headers);
+          headers.set('x-cached-at', String(Date.now()));
+          const timedResponse = new Response(await cloned.clone().text(), {
+            status: cloned.status,
+            statusText: cloned.statusText,
+            headers,
+          });
+          await cache.put(route, timedResponse);
+          const json = await cloned.json();
+          await syncToSessionStorage(new Request(route), cloned, json);
+          results.push(route);
         }
       } catch {
-        // ignore network errors during prefetch
+        // silent
       }
+    })
+  );
+
+  // Announce completion so UI knows prefetch is done
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) {
+    client.postMessage({ type: 'CACHE_READY', payload: { routes: results } });
+  }
+}
+
+// ── Refresh: fetch + cache + postMessage to UI ────────────────────────────────
+// This is the key to "no jank" — SW fetches in background, delivers data
+// via postMessage, and UI patches state without triggering re-renders for loading
+async function refreshApiRoutes(routes) {
+  await Promise.allSettled(
+    routes.map(async (route) => {
+      const cache = await caches.open(API_CACHE);
+      const cacheKey = location.origin + route;
+
+      // Deduplicate concurrent requests
+      if (inflightRequests.has(route)) {
+        return inflightRequests.get(route);
+      }
+
+      const request = new Request(cacheKey, { credentials: 'include' });
+      const promise = (async () => {
+        try {
+          const res = await fetch(request);
+          if (res.ok) {
+            const cloned = res.clone();
+            const headers = new Headers(cloned.headers);
+            headers.set('x-cached-at', String(Date.now()));
+            const timedResponse = new Response(await cloned.clone().text(), {
+              status: cloned.status,
+              statusText: cloned.statusText,
+              headers,
+            });
+            await cache.put(cacheKey, timedResponse);
+
+            const json = await cloned.json();
+            await syncToSessionStorage(new Request(route), cloned, json);
+
+            // Deliver to UI
+            deliverToClients({
+              type: 'REFRESH_RESPONSE',
+              payload: { route, data: json, isStale: false },
+            });
+          }
+        } finally {
+          inflightRequests.delete(route);
+        }
+      })();
+
+      inflightRequests.set(route, promise);
+      return promise;
     })
   );
 }
 
+// ── Get Cached Route ─────────────────────────────────────────────────────────
+async function getCachedRoute(route) {
+  try {
+    const cache = await caches.open(API_CACHE);
+    const cacheKey = location.origin + route;
+    const match = await cache.match(cacheKey);
+    if (match) {
+      const json = await match.clone().json();
+      const cachedTime = match.headers.get('x-cached-at');
+      const isStale = cachedTime ? Date.now() - parseInt(cachedTime) > API_CACHE_TTL_MS : true;
+
+      const clients = await self.clients.matchAll({ type: 'window' });
+      for (const client of clients) {
+        client.postMessage({
+          type: 'GET_CACHED_RESPONSE',
+          payload: { route, data: json, isStale },
+        });
+      }
+    }
+  } catch {
+    // silent
+  }
+}
+
+// ── Clear single route ────────────────────────────────────────────────────────
+async function clearRouteCache(route) {
+  if (!route) return;
+  try {
+    const cache = await caches.open(API_CACHE);
+    await cache.delete(location.origin + route);
+  } catch {
+    // silent
+  }
+}
+
+// ── Clear API cache ────────────────────────────────────────────────────────────
 async function clearApiCache() {
   const cache = await caches.open(API_CACHE);
   const keys = await cache.keys();
   await Promise.all(keys.map((k) => cache.delete(k)));
+
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) {
+    client.postMessage({ type: 'CLEAR_SESSION' });
+  }
 }
 
+// ── Clear all caches ───────────────────────────────────────────────────────────
 async function clearAllCaches() {
   const keys = await caches.keys();
   await Promise.all(
     keys.filter((k) => k.startsWith('orbit-')).map((k) => caches.delete(k))
   );
+  inflightRequests.clear();
+
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) {
+    client.postMessage({ type: 'CLEAR_SESSION' });
+  }
 }

@@ -1,4 +1,5 @@
 const repository = require('../repositories/WorkflowTemplateRepository');
+const socketService = require('../services/socketService');
 
 const success = (res, data, message = 'Success', statusCode = 200) => {
     return res.status(statusCode).json({
@@ -173,6 +174,12 @@ class WorkflowTemplateController {
                 authorName: req.user?.fullName || 'Anonymous',
                 isPrivate: isPrivate || false,
             });
+            socketService.broadcastAll('workflow-template:changed', {
+                action: 'created',
+                templateId: template.publicId,
+                authorId,
+                isPrivate: template.isPrivate,
+            });
 
             return success(res, template, 'Template created successfully', 201);
         } catch (err) {
@@ -246,6 +253,13 @@ class WorkflowTemplateController {
 
             // Mark as downloaded
             await repository.markAsDownloaded(userId, publicId, updatedSource._id);
+            socketService.broadcastAll('workflow-template:changed', {
+                action: 'copied',
+                templateId: copiedTemplate.publicId,
+                sourceTemplateId: publicId,
+                authorId: userId,
+                isPrivate: true,
+            });
 
             return success(res, { ...copiedTemplate.toObject ? copiedTemplate.toObject() : copiedTemplate, author: copiedTemplate.authorName }, 'Template copied successfully', 201);
         } catch (err) {
@@ -299,6 +313,12 @@ class WorkflowTemplateController {
                 })),
                 isPrivate,
             });
+            socketService.broadcastAll('workflow-template:changed', {
+                action: 'updated',
+                templateId: publicId,
+                authorId,
+                isPrivate: updated?.isPrivate,
+            });
 
             return success(res, updated, 'Template updated successfully');
         } catch (err) {
@@ -327,6 +347,12 @@ class WorkflowTemplateController {
             }
 
             await repository.delete(publicId, authorId);
+            socketService.broadcastAll('workflow-template:changed', {
+                action: 'deleted',
+                templateId: publicId,
+                authorId,
+                isPrivate: existing.isPrivate,
+            });
 
             return success(res, null, 'Template deleted successfully');
         } catch (err) {
@@ -364,6 +390,13 @@ class WorkflowTemplateController {
             if (userId) {
                 await repository.markAsDownloaded(userId, publicId, template._id);
             }
+            socketService.broadcastAll('workflow-template:changed', {
+                action: rating ? 'rated' : 'used',
+                templateId: publicId,
+                authorId: template.authorId,
+                userId,
+                isPrivate: template.isPrivate,
+            });
 
             return success(res, updated, 'Template used successfully');
         } catch (err) {

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
+import { getSocket } from '@/lib/socket';
 import { Calendar, MessageSquare, User, Briefcase, Clock, Send } from 'lucide-react';
 import {
   AlertDialog,
@@ -287,6 +288,89 @@ export default function TaskDetailPage({ projectPublicId, taskId, packageId = nu
     load();
     return () => {
       cancelled = true;
+    };
+  }, [projectPublicId, packageId, taskId]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: projectPublicId });
+
+    const reloadTask = async () => {
+      const detailRes = await apiFetch('/api/tasks/detail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: projectPublicId, packageId, taskId }),
+      });
+      if (!detailRes.ok) return;
+      const payload = await detailRes.json();
+      const t = payload?.data;
+      if (!t) return;
+      setTask({
+        id: String(t.publicId || t.id || taskId),
+        title: String(t.title || 'Untitled task'),
+        description: String(t.description || ''),
+        status: normalizeStageId(String(t.status || 'backlog')),
+        priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium') as TaskPriority,
+        assigneeId: String(t.assigneeId || ''),
+        assigneeIds: Array.isArray(t.assigneeIds) ? t.assigneeIds : [],
+        assigneeName: t.assigneeName || '',
+        assigneeNames: Array.isArray(t.assigneeNames) ? t.assigneeNames : [],
+        reviewerIds: Array.isArray(t.reviewerIds) ? t.reviewerIds : [],
+        reviewerNames: Array.isArray(t.reviewerNames) ? t.reviewerNames : [],
+        dueDate: t.dueDate || '',
+        tags: Array.isArray(t.tags) ? t.tags : [],
+        linkedUrl: t.linkedUrl || '',
+        attachments: Array.isArray(t.attachments) ? t.attachments : [],
+      });
+      setAttachments(Array.isArray(t.attachments) ? t.attachments : []);
+    };
+
+    const reloadComments = async () => {
+      const commentsRes = await apiFetch('/api/tasks/comments/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ projectId: projectPublicId, packageId, taskId }),
+      });
+      if (!commentsRes.ok) return;
+      const payload = await commentsRes.json();
+      const list = Array.isArray(payload?.data) ? payload.data : [];
+      setComments(list.map((c: any) => ({
+        id: String(c.publicId || c.id || Math.random()),
+        authorId: String(c.authorId || c.author?._id || ''),
+        author: String(c.authorName || c.author?.fullName || 'Unknown'),
+        content: String(c.content || ''),
+        createdAt: String(c.createdAt || ''),
+        updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
+        isEdited: Boolean(c.isEdited),
+        avatar: c.avatar || c.author?.avatar || '',
+      })));
+    };
+
+    const handleTaskChanged = (payload: { projectId: string; taskId: string; status?: string }) => {
+      if (payload.projectId !== projectPublicId || payload.taskId !== taskId) return;
+      if (payload.status) {
+        setTask(prev => prev ? { ...prev, status: normalizeStageId(payload.status || prev.status) } : prev);
+      }
+      reloadTask().catch(() => {});
+    };
+    const handleCommentChanged = (payload: { projectId: string; taskId: string }) => {
+      if (payload.projectId !== projectPublicId || payload.taskId !== taskId) return;
+      reloadComments().catch(() => {});
+    };
+
+    socket.on('task:status-changed', handleTaskChanged);
+    socket.on('task:updated', handleTaskChanged);
+    socket.on('task:commented', handleCommentChanged);
+    socket.on('task:comment_updated', handleCommentChanged);
+    socket.on('task:comment_deleted', handleCommentChanged);
+
+    return () => {
+      socket.off('task:status-changed', handleTaskChanged);
+      socket.off('task:updated', handleTaskChanged);
+      socket.off('task:commented', handleCommentChanged);
+      socket.off('task:comment_updated', handleCommentChanged);
+      socket.off('task:comment_deleted', handleCommentChanged);
+      socket.emit('project:leave', { projectId: projectPublicId });
     };
   }, [projectPublicId, packageId, taskId]);
 

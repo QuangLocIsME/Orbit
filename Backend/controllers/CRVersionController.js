@@ -8,6 +8,7 @@ const { errorResponse } = require('../utils/response');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../config/s3');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
+const socketService = require('../services/socketService');
 
 const normalizeString = (val) => {
     if (typeof val !== 'string') return '';
@@ -284,6 +285,19 @@ class CRVersionController {
                 resultFiles,
             });
 
+            socketService.broadcastProject(changeRequest.projectId, 'cr:version_created', {
+                projectId: changeRequest.projectId,
+                crId,
+                versionId: version.publicId,
+                version,
+            });
+            if (newDocIds.length > 0) {
+                socketService.broadcastProject(changeRequest.projectId, 'documents:refresh', {
+                    projectId: changeRequest.projectId,
+                    packageId: null,
+                });
+            }
+
             return res.status(201).json({
                 success: true,
                 data: version,
@@ -364,6 +378,19 @@ class CRVersionController {
                 }
             }
 
+            socketService.broadcastProject(projectId, 'cr:version_updated', {
+                projectId,
+                crId: version.crId,
+                versionId,
+                status: 'approved',
+            });
+            if (docIds.length > 0) {
+                socketService.broadcastProject(projectId, 'documents:refresh', {
+                    projectId,
+                    packageId: null,
+                });
+            }
+
             return res.status(200).json({
                 success: true,
                 message: 'Version approved and files published',
@@ -401,6 +428,14 @@ class CRVersionController {
             }
 
             await CRVersionRepository.updateStatus(versionId, 'rejected', userId);
+
+            socketService.broadcastProject(projectId, 'cr:version_updated', {
+                projectId,
+                crId: version.crId,
+                versionId,
+                status: 'rejected',
+                rejectionReason: reason,
+            });
 
             return res.status(200).json({
                 success: true,

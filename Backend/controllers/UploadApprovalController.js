@@ -436,10 +436,19 @@ class UploadApprovalController {
 
             const author = await User.findById(userId).select('publicId fullName avatar email').lean();
 
-            broadcastProject(approval.projectId, 'approval:updated', {
+            broadcastProject(approval.projectId, 'approval:comment_added', {
                 projectId: approval.projectId,
                 approvalId: normalizedApprovalId,
-                status: 'comment_added',
+                comment: {
+                    publicId: comment.publicId,
+                    approvalId: comment.approvalId,
+                    content: comment.content,
+                    author: author
+                        ? { id: author.publicId, name: author.fullName, email: author.email, avatar: author.avatar || null }
+                        : null,
+                    createdAt: comment.createdAt,
+                    updatedAt: comment.updatedAt,
+                },
             });
 
             return res.status(201).json({
@@ -487,6 +496,12 @@ class UploadApprovalController {
 
             await UploadApprovalComment.deleteOne({ publicId: normalizedCommentId });
 
+            broadcastProject(comment.projectId, 'approval:comment_deleted', {
+                projectId: comment.projectId,
+                approvalId: comment.approvalId,
+                commentId: normalizedCommentId,
+            });
+
             return res.status(200).json({ success: true, message: 'Comment deleted' });
         } catch (error) {
             console.error('[UploadApprovalController.deleteComment] error:', error);
@@ -515,7 +530,15 @@ class UploadApprovalController {
                 return forbidden(res, 'Only owner, admin, or manager can delete upload approvals');
             }
 
+            const approval = await UploadApprovalRepository.findByDocumentId(normalizedDocumentId);
             const deleted = await UploadApprovalRepository.deleteByDocumentId(normalizedDocumentId);
+
+            broadcastProject(normalizedProjectId, 'approval:deleted', {
+                projectId: normalizedProjectId,
+                approvalId: approval?.publicId || normalizedDocumentId,
+                documentId: normalizedDocumentId,
+                status: approval?.status || null,
+            });
 
             return res.status(200).json({ success: true, message: 'Upload approval deleted', data: { deleted } });
         } catch (error) {

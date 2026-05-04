@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const ShareLink = require('../models/ShareLink');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const socketService = require('../services/socketService');
 const { errorResponse } = require('../utils/response');
 
 class ShareLinkController {
@@ -95,6 +96,11 @@ class ShareLinkController {
                 isActive: true,
             });
             await shareLink.save();
+            socketService.broadcastProject(pId, 'share-links:changed', {
+                projectId: pId,
+                action: 'created',
+                shareId: String(shareLink._id),
+            });
 
             return res.status(201).json({
                 success: true,
@@ -187,12 +193,22 @@ class ShareLinkController {
                 if (!link) return errorResponse(res, 404, 'Share link not found');
                 link.isActive = false;
                 await link.save();
+                socketService.broadcastProject(pId, 'share-links:changed', {
+                    projectId: pId,
+                    action: 'deleted',
+                    shareId: sId,
+                });
             } else {
                 const query = { projectId: pId, isActive: true };
                 if (packageId) {
                     query.packageIds = typeof packageId === 'string' ? packageId.trim() : packageId;
                 }
                 await ShareLink.updateMany(query, { isActive: false });
+                socketService.broadcastProject(pId, 'share-links:changed', {
+                    projectId: pId,
+                    action: 'bulk_deleted',
+                    packageId: packageId ? String(packageId).trim() : undefined,
+                });
             }
 
             return res.status(200).json({ success: true, message: 'Share link removed' });
@@ -230,6 +246,11 @@ class ShareLinkController {
             if (Array.isArray(teamIds)) link.teamIds = teamIds.filter(Boolean).map(id => id.trim());
 
             await link.save();
+            socketService.broadcastProject(pId, 'share-links:changed', {
+                projectId: pId,
+                action: 'updated',
+                shareId: sId,
+            });
 
             return res.status(200).json({
                 success: true,

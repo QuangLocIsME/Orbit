@@ -15,11 +15,12 @@ const DocumentRepository = require('../repositories/DocumentRepository');
 const DocumentFolderRepository = require('../repositories/DocumentFolderRepository');
 const UploadJobRepository = require('../repositories/UploadJobRepository');
 const UploadApprovalRepository = require('../repositories/UploadApprovalRepository');
+const NotificationRepository = require('../repositories/NotificationRepository');
 const { publishPackageUpload } = require('../queues/packageUploadQueue');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath, uploadProjectFileBuffer, buildProjectFilePath, SUPABASE_URL } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
-const { broadcastProject } = require('../services/socketService');
+const { broadcastProject, broadcastPackage, notifyUser } = require('../services/socketService');
 const ActivityService = require('../services/activityService');
 const DiscordService = require('../services/discordService');
 const User = require('../models/User');
@@ -681,6 +682,13 @@ class PackageController {
                 sourceDoc.originalName,
                 { restoredFromVersion: sourceDoc.versionNumber, newVersion: nextVersionNumber }
             );
+            broadcastProject(normalizedProjectId, 'documents:refresh', {
+                projectId: normalizedProjectId,
+                packageId: newDoc.packageId || null,
+                action: 'version_restored',
+                documentId: newDoc.publicId,
+                versionGroupId: newDoc.versionGroupId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -828,23 +836,68 @@ class PackageController {
                 updatedAt: new Date(),
             });
 
+            const packageData = {
+                publicId: packageDoc.publicId,
+                projectId: packageDoc.projectId,
+                name: packageDoc.name,
+                description: packageDoc.description,
+                packageType: packageDoc.packageType,
+                status: packageDoc.status,
+                dueDate: packageDoc.dueDate,
+                creatorId: packageDoc.creatorId,
+                teamMemberIds: packageDoc.teamMemberIds,
+                archivedAt: packageDoc.archivedAt || null,
+                createdAt: packageDoc.createdAt,
+                updatedAt: packageDoc.updatedAt,
+            };
+
+            broadcastPackage(packageDoc.publicId, 'package:created', {
+                ...packageData,
+                actorId: userId,
+            });
+            broadcastProject(normalizedProjectId, 'package:created', {
+                ...packageData,
+                actorId: userId,
+            });
+
+            // Notify package members
+            if (normalizedTeamMemberIds.length > 0) {
+                const creator = await User.findById(userId).select('fullName').lean();
+                const creatorName = creator?.fullName || 'Someone';
+                const packageLink = `/projects/${normalizedProjectId}/packages/${packageDoc.publicId}`;
+
+                const userDocs = await User.find({ publicId: { $in: normalizedTeamMemberIds } }).select('_id publicId').lean();
+                const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
+
+                for (const memberPublicId of normalizedTeamMemberIds) {
+                    const mongoId = mongoIdMap.get(memberPublicId);
+                    if (!mongoId || mongoId === userId) continue;
+                    const notification = await NotificationRepository.create({
+                        userId: mongoId,
+                        type: 'info',
+                        title: 'Added to package',
+                        message: `${creatorName} added you to package "${packageDoc.name}"`,
+                        link: packageLink,
+                        read: false,
+                        refType: 'package',
+                        refId: packageDoc.publicId,
+                    });
+                    notifyUser(mongoId, 'notification:new', {
+                        id: String(notification._id),
+                        type: 'info',
+                        title: 'Added to package',
+                        message: `${creatorName} added you to package "${packageDoc.name}"`,
+                        link: packageLink,
+                        read: false,
+                        createdAt: notification.createdAt.toISOString(),
+                    });
+                }
+            }
+
             return res.status(201).json({
                 success: true,
                 message: 'Package created',
-                data: {
-                    publicId: packageDoc.publicId,
-                    projectId: packageDoc.projectId,
-                    name: packageDoc.name,
-                    description: packageDoc.description,
-                    packageType: packageDoc.packageType,
-                    status: packageDoc.status,
-                    dueDate: packageDoc.dueDate,
-                    creatorId: packageDoc.creatorId,
-                    teamMemberIds: packageDoc.teamMemberIds,
-                    archivedAt: packageDoc.archivedAt || null,
-                    createdAt: packageDoc.createdAt,
-                    updatedAt: packageDoc.updatedAt,
-                },
+                data: packageData,
             });
         } catch (error) {
             if (error && error.code === 11000) {
@@ -1273,23 +1326,78 @@ class PackageController {
             );
             const lifecycle = await evaluateSinglePackageLifecycle(normalizedProjectId, updated);
 
+            const updatedData = {
+                publicId: updated.publicId,
+                projectId: updated.projectId,
+                name: updated.name,
+                description: updated.description,
+                packageType: updated.packageType,
+                status: updated.status,
+                lifecycleStatus: lifecycle.lifecycleStatus,
+                progress: lifecycle.progress,
+                completionCriteria: lifecycle.completionCriteria,
+                dueDate: updated.dueDate,
+                teamMemberIds: updated.teamMemberIds,
+                updatedAt: updated.updatedAt,
+            };
+
+            broadcastPackage(normalizedPackageId, 'package:updated', {
+                ...updatedData,
+                packageId: updated.publicId,
+                changes: updatedData,
+                actorId: userId,
+            });
+            broadcastProject(normalizedProjectId, 'package:updated', {
+                ...updatedData,
+                packageId: updated.publicId,
+                changes: updatedData,
+                actorId: userId,
+            });
+
+            // Notify newly added package members
+            if (updateFields.teamMemberIds !== undefined) {
+                const oldMembers = new Set(pkg.teamMemberIds || []);
+                const newMembers = updateFields.teamMemberIds || [];
+                const addedMembers = newMembers.filter(id => !oldMembers.has(id));
+
+                if (addedMembers.length > 0) {
+                    const editor = await User.findById(userId).select('fullName').lean();
+                    const editorName = editor?.fullName || 'Someone';
+                    const packageLink = `/projects/${normalizedProjectId}/packages/${normalizedPackageId}`;
+
+                    const userDocs = await User.find({ publicId: { $in: addedMembers } }).select('_id publicId').lean();
+                    const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
+
+                    for (const memberPublicId of addedMembers) {
+                        const mongoId = mongoIdMap.get(memberPublicId);
+                        if (!mongoId) continue;
+                        const notification = await NotificationRepository.create({
+                            userId: mongoId,
+                            type: 'info',
+                            title: 'Added to package',
+                            message: `${editorName} added you to package "${updated.name}"`,
+                            link: packageLink,
+                            read: false,
+                            refType: 'package',
+                            refId: normalizedPackageId,
+                        });
+                        notifyUser(mongoId, 'notification:new', {
+                            id: String(notification._id),
+                            type: 'info',
+                            title: 'Added to package',
+                            message: `${editorName} added you to package "${updated.name}"`,
+                            link: packageLink,
+                            read: false,
+                            createdAt: notification.createdAt.toISOString(),
+                        });
+                    }
+                }
+            }
+
             return res.status(200).json({
                 success: true,
                 message: 'Package updated',
-                data: {
-                    publicId: updated.publicId,
-                    projectId: updated.projectId,
-                    name: updated.name,
-                    description: updated.description,
-                    packageType: updated.packageType,
-                    status: updated.status,
-                    lifecycleStatus: lifecycle.lifecycleStatus,
-                    progress: lifecycle.progress,
-                    completionCriteria: lifecycle.completionCriteria,
-                    dueDate: updated.dueDate,
-                    teamMemberIds: updated.teamMemberIds,
-                    updatedAt: updated.updatedAt,
-                },
+                data: updatedData,
             });
         } catch (error) {
             if (error && error.code === 11000) {
@@ -1823,6 +1931,11 @@ class PackageController {
                 oldName: updated.originalName,
             });
 
+            broadcastProject(normalizedProjectId, 'documents:refresh', {
+                projectId: normalizedProjectId,
+                packageId: updated.packageId || null,
+            });
+
             return res.status(200).json({ success: true, data: updated });
         } catch (error) {
             return serverError(res, error.message || 'Rename file failed');
@@ -1858,6 +1971,7 @@ class PackageController {
             await DocumentRepository.deleteByPublicId(normalizedFileId);
 
             const UploadApprovalRepository = require('../repositories/UploadApprovalRepository');
+            const approval = await UploadApprovalRepository.findByDocumentId(normalizedFileId);
             await UploadApprovalRepository.deleteByDocumentId(normalizedFileId);
 
             await ActivityService.log({
@@ -1871,6 +1985,17 @@ class PackageController {
             });
 
             await sendDiscordForDoc(normalizedProjectId, userId, 'file_deleted', deletedName, {});
+
+            broadcastProject(normalizedProjectId, 'documents:refresh', {
+                projectId: normalizedProjectId,
+                packageId: deletedPackageId || null,
+            });
+            broadcastProject(normalizedProjectId, 'approval:deleted', {
+                projectId: normalizedProjectId,
+                approvalId: approval?.publicId || normalizedFileId,
+                documentId: normalizedFileId,
+                status: approval?.status || null,
+            });
 
             return res.status(200).json({ success: true, message: 'File deleted' });
         } catch (error) {
@@ -1977,6 +2102,11 @@ class PackageController {
                 newPath,
             });
 
+            broadcastProject(normalizedProjectId, 'documents:refresh', {
+                projectId: normalizedProjectId,
+                packageId: folder.packageId || null,
+            });
+
             return res.status(200).json({ success: true, message: 'Folder renamed' });
         } catch (error) {
             return serverError(res, error.message || 'Rename folder failed');
@@ -2063,6 +2193,11 @@ class PackageController {
             });
 
             await sendDiscordForDoc(normalizedProjectId, userId, 'folder_deleted', deletedPath, {});
+
+            broadcastProject(normalizedProjectId, 'documents:refresh', {
+                projectId: normalizedProjectId,
+                packageId: packageId || null,
+            });
 
             return res.status(200).json({ success: true, message: 'Folder deleted' });
         } catch (error) {
@@ -2182,6 +2317,15 @@ class PackageController {
                 requestedBy: userId,
             });
 
+            broadcastProject(normalizedProjectId, 'document:conversion-updated', {
+                projectId: normalizedProjectId,
+                packageId: doc.packageId || null,
+                documentId: normalizedFileId,
+                versionId: doc.publicId,
+                status: 'PENDING',
+                conversionStatus: 'PENDING',
+            });
+
             return res.status(202).json({
                 success: true,
                 message: 'IFC conversion queued',
@@ -2296,6 +2440,11 @@ class PackageController {
 
             await DocumentFolderRepository.deleteByPackageId(normalizedPackageId);
             await DocumentRepository.deleteByPackageId(normalizedPackageId);
+
+            broadcastProject(normalizedProjectId, 'package:deleted', {
+                projectId: normalizedProjectId,
+                packageId: normalizedPackageId,
+            });
 
             return res.status(200).json({
                 success: true,

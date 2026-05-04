@@ -1,5 +1,6 @@
 const DisciplineRepository = require('../repositories/DisciplineRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const socketService = require('../services/socketService');
 const { errorResponse } = require('../utils/response');
 
 const normalizeString = (val) => {
@@ -80,6 +81,11 @@ class DisciplineController {
                 color: color || '#6366f1',
                 createdBy: userId,
             });
+            socketService.broadcastProject(projectId, 'disciplines:changed', {
+                projectId,
+                action: 'created',
+                disciplineId: discipline.publicId,
+            });
 
             return res.status(201).json({
                 success: true,
@@ -144,6 +150,11 @@ class DisciplineController {
                 description: normalizeString(description),
                 color: color || discipline.color,
             });
+            socketService.broadcastProject(discipline.projectId, 'disciplines:changed', {
+                projectId: discipline.projectId,
+                action: 'updated',
+                disciplineId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -190,6 +201,11 @@ class DisciplineController {
             }
 
             await DisciplineRepository.delete(disciplineId);
+            socketService.broadcastProject(discipline.projectId, 'disciplines:changed', {
+                projectId: discipline.projectId,
+                action: 'deleted',
+                disciplineId,
+            });
 
             return res.status(200).json({
                 success: true,

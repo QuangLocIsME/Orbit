@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
+import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
 
 export interface ScopedActivityScope {
   type: 'project' | 'package';
@@ -437,6 +438,9 @@ export default function ScopedActivityPanel({
   variant = 'full',
   title = 'Activity Feed',
 }: ScopedActivityPanelProps) {
+  const cacheProjectId = scope.type === 'package' && scope.packageId
+    ? `${scope.projectId}:package:${scope.packageId}`
+    : scope.projectId;
   const [loading, setLoading] = useState(true);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [search, setSearch] = useState('');
@@ -458,7 +462,9 @@ export default function ScopedActivityPanel({
         const payload = await res.json().catch(() => null);
 
         if (!cancelled) {
-          setActivities(Array.isArray(payload?.data) ? payload.data : []);
+          const nextActivities = Array.isArray(payload?.data) ? payload.data : [];
+          setActivities(nextActivities);
+          setProjectTabCache(cacheProjectId, 'activity', { activities: nextActivities });
           setCurrentPage(1);
         }
       } catch {
@@ -472,11 +478,19 @@ export default function ScopedActivityPanel({
       }
     };
 
+    const cached = getProjectTabCache<{ activities?: ActivityItem[] }>(cacheProjectId, 'activity');
+    if (cached?.data?.activities) {
+      setActivities(cached.data.activities);
+      setLoading(false);
+      load().catch(() => {});
+      return;
+    }
+
     load();
     return () => {
       cancelled = true;
     };
-  }, [scope.packageId, scope.projectId, scope.type]);
+  }, [cacheProjectId, scope.packageId, scope.projectId, scope.type]);
 
   // Derive unique users from activities
   const uniqueUsers = useMemo(() => {

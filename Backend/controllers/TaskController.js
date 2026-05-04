@@ -836,6 +836,13 @@ class TaskController {
 
             const author = await User.findById(userId).select('_id fullName email').lean();
 
+            socketService.broadcastProject(comment.projectId, 'task:comment_updated', {
+                projectId: comment.projectId,
+                packageId: comment.packageId || null,
+                taskId: comment.taskId,
+                commentId,
+            });
+
             return res.status(200).json({
                 success: true,
                 data: {
@@ -872,6 +879,13 @@ class TaskController {
                 { publicId: comment.taskId, ...buildScopeFilter(comment.projectId, comment.packageId || null) },
                 { $inc: { commentsCount: -1 }, $set: { updatedAt: new Date() } }
             );
+
+            socketService.broadcastProject(comment.projectId, 'task:comment_deleted', {
+                projectId: comment.projectId,
+                packageId: comment.packageId || null,
+                taskId: comment.taskId,
+                commentId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -920,6 +934,26 @@ class TaskController {
             task.updatedAt = new Date();
 
             await task.save();
+
+            const updatedChanges = {
+                title: task.title,
+                description: task.description,
+                priority: task.priority,
+                assigneeId: task.assigneeId,
+                assigneeIds: task.assigneeIds,
+                reviewerIds: task.reviewerIds,
+                dueDate: task.dueDate,
+                tags: task.tags,
+                affectedModels: task.affectedModels,
+                updatedAt: task.updatedAt,
+            };
+
+            socketService.broadcastProject(task.projectId, 'task:updated', {
+                projectId: task.projectId,
+                packageId: task.packageId || null,
+                taskId: task.publicId,
+                changes: updatedChanges,
+            });
 
             const newAssigneeIds = task.assigneeIds || [];
             const newReviewerIds = task.reviewerIds || [];
@@ -1004,6 +1038,12 @@ class TaskController {
                     action: 'updated',
                     taskId: task.publicId,
                     status: task.status,
+                });
+                socketService.broadcastPackage(task.packageId, 'task:updated', {
+                    projectId: task.projectId,
+                    packageId: task.packageId,
+                    taskId: task.publicId,
+                    changes: updatedChanges,
                 });
             }
 
@@ -1178,6 +1218,16 @@ class TaskController {
                 status: newStatus,
             });
 
+            if (task.packageId) {
+                socketService.broadcastPackage(task.packageId, 'package:task-count-changed', {
+                    projectId,
+                    packageId: task.packageId,
+                    action: 'status-changed',
+                    taskId,
+                    status: newStatus,
+                });
+            }
+
             return res.status(200).json({
                 success: true,
                 data: updated,
@@ -1240,11 +1290,25 @@ class TaskController {
             await task.save();
 
             // Broadcast update
+            socketService.broadcastProject(task.projectId, 'task:updated', {
+                projectId: task.projectId,
+                packageId: task.packageId || null,
+                taskId: task.publicId,
+                changes: {
+                    attachmentsCount: task.attachmentsCount,
+                    attachments: task.attachments,
+                },
+            });
+
             if (task.packageId) {
                 socketService.broadcastPackage(task.packageId, 'task:updated', {
                     projectId: task.projectId,
                     packageId: task.packageId,
                     taskId: task.publicId,
+                    changes: {
+                        attachmentsCount: task.attachmentsCount,
+                        attachments: task.attachments,
+                    },
                 });
             }
 
@@ -1279,11 +1343,25 @@ class TaskController {
             task.updatedAt = new Date();
             await task.save();
 
+            socketService.broadcastProject(task.projectId, 'task:updated', {
+                projectId: task.projectId,
+                packageId: task.packageId || null,
+                taskId: task.publicId,
+                changes: {
+                    attachmentsCount: task.attachmentsCount,
+                    attachments: task.attachments,
+                },
+            });
+
             if (task.packageId) {
                 socketService.broadcastPackage(task.packageId, 'task:updated', {
                     projectId: task.projectId,
                     packageId: task.packageId,
                     taskId: task.publicId,
+                    changes: {
+                        attachmentsCount: task.attachmentsCount,
+                        attachments: task.attachments,
+                    },
                 });
             }
 

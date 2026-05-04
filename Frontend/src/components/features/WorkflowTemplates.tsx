@@ -6,6 +6,7 @@ import { TemplateSearch } from './TemplateSearch';
 import { WorkflowEditor, type StageData } from './workflow-editor';
 import { workflowTemplateService, type WorkflowTemplate } from '@/lib/workflow-template-service';
 import { apiFetch } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
 import { toast } from '@/components/ui/sonner';
 import { Loader2, Plus } from 'lucide-react';
 
@@ -850,11 +851,14 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
     window.addEventListener('workflow-updated', handleWorkflowChange);
     window.addEventListener('workflow-created', handleWorkflowChange);
     window.addEventListener('workflow-deleted', handleWorkflowChange);
+    const socket = getSocket();
+    socket.on('workflow-template:changed', handleWorkflowChange);
 
     return () => {
       window.removeEventListener('workflow-updated', handleWorkflowChange);
       window.removeEventListener('workflow-created', handleWorkflowChange);
       window.removeEventListener('workflow-deleted', handleWorkflowChange);
+      socket.off('workflow-template:changed', handleWorkflowChange);
     };
   }, [fetchData]);
 

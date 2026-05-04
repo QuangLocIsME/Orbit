@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '../../lib/auth';
 import { uploadProjectAvatar } from '../../lib/api-client';
@@ -386,8 +387,6 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
@@ -430,10 +429,8 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
           }
         }
 
-        // Get custom industry data if this is a custom industry
-        // First check in state, then in localStorage
         let customIndustryData: { icon: string; color: string } | undefined;
-        
+
         const selectedCustomIndustry = customIndustries.find((i) => i.id === selectedIndustry);
         if (selectedCustomIndustry) {
           customIndustryData = {
@@ -441,7 +438,6 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
             color: selectedCustomIndustry.colorId || 'blue',
           };
         } else if (selectedIndustry?.startsWith('custom-')) {
-          // Try to find in localStorage if not in state (e.g., page refresh)
           const storedCustoms = loadCustomIndustriesRaw();
           const stored = storedCustoms.find((c) => c.id === selectedIndustry);
           if (stored) {
@@ -456,10 +452,9 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
           ...payload.data,
           customIndustry: customIndustryData,
         };
-        
+
         onProjectCreated?.(createdProject);
 
-        // Dispatch event to refresh Sidebar
         window.dispatchEvent(new CustomEvent('orbit:project-created', {
           detail: { project: createdProject }
         }));
@@ -491,10 +486,10 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
 
   const handleAddCustomIndustry = () => {
     if (!customName.trim()) return;
-    
+
     const selectedIcon = iconOptions.find(i => i.id === customIcon);
     const selectedColorOption = colorOptions.find(c => c.id === customColor);
-    
+
     const newIndustry: IndustryOption = {
       id: `custom-${Date.now()}`,
       name: customName,
@@ -505,10 +500,9 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
       bgColor: `bg-${customColor}-50`,
       bgSolid: `bg-${customColor}-500`,
     };
-    
-    // Save to localStorage for persistence
+
     saveCustomIndustry(newIndustry);
-    
+
     setCustomIndustries([...customIndustries, newIndustry]);
     setSelectedIndustry(newIndustry.id);
     setCustomName('');
@@ -517,10 +511,11 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
     setShowCustomIndustry(false);
   };
 
-  const allIndustries = showMoreIndustries 
-    ? [...baseIndustries, ...extendedIndustries, ...customIndustries] 
+  const allIndustries = showMoreIndustries
+    ? [...baseIndustries, ...extendedIndustries, ...customIndustries]
     : [...baseIndustries, ...customIndustries];
 
+  if (!isOpen) return null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -615,7 +610,7 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
             {showCustomIndustry && (
               <div className="mt-4 p-4 border border-gray-200 rounded-lg bg-white">
                 <h3 className="text-sm font-medium text-gray-900 mb-4">Create Custom Industry</h3>
-                
+
                 {/* Industry Name Input */}
                 <div className="mb-4">
                   <label className="block text-sm text-gray-600 mb-1.5">Industry Name</label>
@@ -782,6 +777,8 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
       </div>
     </div>
   );
+
+  return ReactDOM.createPortal(modalContent, document.body);
 }
 
 // Wrapper component for Astro pages

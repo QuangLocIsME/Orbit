@@ -38,6 +38,13 @@ interface TaskCalendarProps {
   tasks: Task[];
   teamMembers: TaskMember[];
   onTaskClick: (taskId: string) => void;
+  stages?: WorkflowStage[];
+}
+
+interface WorkflowStage {
+  id: string;
+  name: string;
+  color?: string;
 }
 
 const PRIORITY_BG: Record<string, string> = {
@@ -87,7 +94,12 @@ function parseTaskDate(dueDate: string): Date | null {
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-export default function TaskCalendar({ tasks, teamMembers, onTaskClick }: TaskCalendarProps) {
+const STAGE_COLORS = [
+  'bg-[#F3F4F6]', 'bg-[#EEF2FF]', 'bg-[#EFF6FF]', 'bg-[#F0FDFA]',
+  'bg-[#ECFDF5]', 'bg-[#FEF3C7]', 'bg-[#FDF2F8]', 'bg-[#F5F3FF]',
+];
+
+export default function TaskCalendar({ tasks, teamMembers, onTaskClick, stages }: TaskCalendarProps) {
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -242,12 +254,17 @@ export default function TaskCalendar({ tasks, teamMembers, onTaskClick }: TaskCa
 
       {/* Legend */}
       <div className="flex items-center gap-4 mt-3 flex-wrap">
-        {Object.entries(STATUS_LABEL).map(([status, label]) => (
-          <div key={status} className="flex items-center gap-1.5">
-            <div className={cn('h-2 w-2 rounded-full', STATUS_BG[status as TaskStatus])} />
-            <span className="text-[11px] text-[#6A7282]">{label}</span>
-          </div>
-        ))}
+        {(stages && stages.length > 0 ? stages : Object.entries(STATUS_LABEL).map(([id, name]) => ({ id, name, color: '' }))).map((stage, idx) => {
+          const bgColor = stages && stages.length > 0
+            ? (STAGE_COLORS[idx % STAGE_COLORS.length])
+            : STATUS_BG[stage.id as TaskStatus] || 'bg-[#F3F4F6]';
+          return (
+            <div key={stage.id} className="flex items-center gap-1.5">
+              <div className={cn('h-2 w-2 rounded-full', bgColor)} />
+              <span className="text-[11px] text-[#6A7282]">{stage.name}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

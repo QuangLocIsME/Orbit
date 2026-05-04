@@ -15,10 +15,16 @@
 
 const { Server } = require('socket.io');
 const cookie = require('cookie');
+const { createClient } = require('redis');
 const { verifyToken } = require('../utils/jwt');
 
 // ── Singleton state ───────────────────────────────────────────────────────────
 let io = null;
+const REALTIME_CHANNEL = 'orbit:realtime';
+const redisUrl = process.env.REDIS_URL;
+let realtimeSubscriber = null;
+let realtimePublisher = null;
+let realtimePublisherPromise = null;
 
 // Map<userId, Set<socketId>>  — who is online
 const onlineUsers = new Map();
@@ -41,6 +47,97 @@ function isOnline(userId) {
     return onlineUsers.has(userId);
 }
 
+function emitRealtimeMessage(message) {
+    if (!io || !message || !message.event) return;
+
+    const { target, id, event, data } = message;
+    if (target === 'project' && id) {
+        io.to(`project:${id}`).emit(event, data);
+        return;
+    }
+    if (target === 'package' && id) {
+        io.to(`package:${id}`).emit(event, data);
+        return;
+    }
+    if (target === 'user' && id) {
+        io.to(`user:${id}`).emit(event, data);
+        return;
+    }
+    if (target === 'all') {
+        io.emit(event, data);
+    }
+}
+
+async function subscribeRealtimeChannel() {
+    if (!redisUrl || realtimeSubscriber) return;
+
+    try {
+        realtimeSubscriber = createClient({ url: redisUrl });
+        realtimeSubscriber.on('error', (error) => {
+            console.error('[WS] Redis realtime subscriber error:', error?.message || error);
+        });
+        await realtimeSubscriber.connect();
+        await realtimeSubscriber.subscribe(REALTIME_CHANNEL, (raw) => {
+            try {
+                emitRealtimeMessage(JSON.parse(raw));
+            } catch (error) {
+                console.error('[WS] Invalid realtime message:', error?.message || error);
+            }
+        });
+        console.log('[WS] Redis realtime bridge subscribed');
+    } catch (error) {
+        console.error('[WS] Redis realtime bridge unavailable:', error?.message || error);
+        realtimeSubscriber = null;
+    }
+}
+
+async function getRealtimePublisher() {
+    if (!redisUrl) return null;
+    if (realtimePublisher?.isOpen) return realtimePublisher;
+
+    if (!realtimePublisherPromise) {
+        realtimePublisher = createClient({ url: redisUrl });
+        realtimePublisher.on('error', (error) => {
+            console.error('[WS] Redis realtime publisher error:', error?.message || error);
+        });
+        realtimePublisherPromise = realtimePublisher.connect()
+            .then(() => realtimePublisher)
+            .catch((error) => {
+                console.error('[WS] Redis realtime publisher unavailable:', error?.message || error);
+                realtimePublisher = null;
+                return null;
+            })
+            .finally(() => {
+                realtimePublisherPromise = null;
+            });
+    }
+
+    return realtimePublisherPromise;
+}
+
+async function publishRealtime(message) {
+    if (!message?.event) return false;
+
+    const publisher = await getRealtimePublisher();
+    if (publisher) {
+        await publisher.publish(REALTIME_CHANNEL, JSON.stringify(message));
+        return true;
+    }
+
+    if (io) {
+        emitRealtimeMessage(message);
+        return true;
+    }
+
+    return false;
+}
+
+function queueRealtime(message) {
+    publishRealtime(message).catch((error) => {
+        console.error('[WS] Realtime dispatch failed:', error?.message || error);
+    });
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -49,14 +146,14 @@ function isOnline(userId) {
 function attachSocket(httpServer) {
     if (io) return io; // already initialised
 
-    const frontendOrigin =
-        process.env.FRONTEND_URI ||
-        process.env.FRONTED_URI ||
-        'http://localhost:4321';
+    const frontendOrigins = Array.from(new Set([
+        process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
+        process.env.FRONTEND_URI_LAN || process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
+    ].filter(Boolean)));
 
     io = new Server(httpServer, {
         cors: {
-            origin: frontendOrigin,
+            origin: frontendOrigins,
             credentials: true,
         },
         // Use long-polling as fallback so it works behind any proxy
@@ -143,6 +240,9 @@ function attachSocket(httpServer) {
     });
 
     console.log('[WS] Socket.io attached');
+    subscribeRealtimeChannel().catch((error) => {
+        console.error('[WS] Redis realtime subscribe failed:', error?.message || error);
+    });
     return io;
 }
 
@@ -153,8 +253,8 @@ function attachSocket(httpServer) {
  *  notifyUser('abc123', 'notification:new', { title: '...', ... })
  */
 function notifyUser(userId, event, data) {
-    if (!io) return;
-    io.to(`user:${userId}`).emit(event, data);
+    if (!userId || !event) return;
+    queueRealtime({ target: 'user', id: userId, event, data });
 }
 
 /**
@@ -162,8 +262,8 @@ function notifyUser(userId, event, data) {
  *  broadcastProject('proj123', 'project:updated', { ... })
  */
 function broadcastProject(projectId, event, data) {
-    if (!io) return;
-    io.to(`project:${projectId}`).emit(event, data);
+    if (!projectId || !event) return;
+    queueRealtime({ target: 'project', id: projectId, event, data });
 }
 
 /**
@@ -219,4 +319,5 @@ module.exports = {
     getOnlineUsers,
     isOnline,
     getIO,
+    publishRealtime,
 };

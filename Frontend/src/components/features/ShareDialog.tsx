@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
+import { getSocket } from '@/lib/socket';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import {
@@ -133,6 +134,36 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
             fetchLinks();
         }
     }, [isOpen, fetchPackages, fetchLinks]);
+
+    useEffect(() => {
+        if (!isOpen || !projectId) return;
+
+        const socket = getSocket();
+        socket.emit('project:join', { projectId });
+
+        const isThisProject = (payload?: { projectId?: string }) => payload?.projectId === projectId;
+        const handleLinksChanged = (payload?: { projectId?: string }) => {
+            if (isThisProject(payload)) fetchLinks();
+        };
+        const handlePackagesChanged = (payload?: { projectId?: string }) => {
+            if (isThisProject(payload)) fetchPackages();
+        };
+
+        socket.on('share-links:changed', handleLinksChanged);
+        socket.on('package:created', handlePackagesChanged);
+        socket.on('package:updated', handlePackagesChanged);
+        socket.on('package:archived', handlePackagesChanged);
+        socket.on('package:deleted', handlePackagesChanged);
+
+        return () => {
+            socket.off('share-links:changed', handleLinksChanged);
+            socket.off('package:created', handlePackagesChanged);
+            socket.off('package:updated', handlePackagesChanged);
+            socket.off('package:archived', handlePackagesChanged);
+            socket.off('package:deleted', handlePackagesChanged);
+            socket.emit('project:leave', { projectId });
+        };
+    }, [isOpen, projectId, fetchLinks, fetchPackages]);
 
     useEffect(() => {
         if (packages.length > 0 && editingLink && syncRef.current !== editingLink.id) {

@@ -1,15 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
-import { getSocket } from '@/lib/socket';
+import { getSocket, joinProject, leaveProject } from '@/lib/socket';
+import { getProjectTabCache, mergeProjectTabCache } from '@/stores/projectDetailCacheStore';
 import {
   CheckCircle, XCircle, Clock, FileText, Image as ImageIcon,
   Download, Eye, ChevronDown, ChevronUp, Loader2,
-  AlertCircle, MessageSquare, Send, Trash2, Box, Plus
+  AlertCircle, Box, Plus
 } from 'lucide-react';
+import { CommentSection } from './TaskFormShared';
 import XktViewerDialog from './XktViewerDialog';
 
 interface ApprovalUploader {
@@ -47,15 +49,6 @@ interface ApprovalItem {
   updatedAt: string;
   packageId: string | null;
   packageName: string | null;
-}
-
-interface ApprovalComment {
-  publicId: string;
-  approvalId: string;
-  content: string;
-  author: { id: string; name: string; email: string; avatar: string | null } | null;
-  createdAt: string;
-  updatedAt: string;
 }
 
 interface UploadApprovalPanelProps {
@@ -234,11 +227,6 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
   const [previewTextContent, setPreviewTextContent] = useState<string>('');
   const [previewTextFileName, setPreviewTextFileName] = useState<string>('');
   const [isLoadingTextPreview, setIsLoadingTextPreview] = useState(false);
-  const [comments, setComments] = useState<Record<string, ApprovalComment[]>>({});
-  const [commentsLoading, setCommentsLoading] = useState<Record<string, boolean>>({});
-  const [commentsExpanded, setCommentsExpanded] = useState<Record<string, boolean>>({});
-  const [newComment, setNewComment] = useState<Record<string, string>>({});
-  const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
   const [xktViewerState, setXktViewerState] = useState<{
     projectId: string;
     fileId: string;
@@ -331,6 +319,11 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
           return true;
         });
         setApprovals(deduped);
+        mergeProjectTabCache(projectId, 'versions', {
+          approvals: deduped,
+          crVersions,
+          changeRequests,
+        });
       }
     } catch { /* silent */ }
   };
@@ -345,6 +338,11 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       const data = await res.json();
       if (data.success) {
         setCrVersions(data.data || []);
+        mergeProjectTabCache(projectId, 'versions', {
+          approvals,
+          crVersions: data.data || [],
+          changeRequests,
+        });
       }
     } catch { /* silent */ } finally {
       setLoadingCrVersions(false);
@@ -360,6 +358,11 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       const data = await res.json();
       if (data.success) {
         setChangeRequests(data.data || []);
+        mergeProjectTabCache(projectId, 'versions', {
+          approvals,
+          crVersions,
+          changeRequests: data.data || [],
+        });
       }
     } catch { /* silent */ }
   };
@@ -373,19 +376,57 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
 
   useEffect(() => {
     if (projectId) {
+      const cached = getProjectTabCache<{
+        approvals?: ApprovalItem[];
+        crVersions?: any[];
+        changeRequests?: ChangeRequest[];
+      }>(projectId, 'versions');
+
+      if (cached?.data) {
+        if (cached.data.approvals) setApprovals(cached.data.approvals);
+        if (cached.data.crVersions) setCrVersions(cached.data.crVersions);
+        if (cached.data.changeRequests) setChangeRequests(cached.data.changeRequests);
+        setLoading(false);
+        loadAll().catch(() => {});
+        return;
+      }
+
       loadAll();
     }
   }, [projectId]);
 
   useEffect(() => {
+    if (!projectId) return;
     const socket = getSocket();
+    joinProject(projectId);
     const handleApprovalNew = () => { fetchApprovals(); };
     const handleApprovalUpdated = () => { fetchApprovals(); };
+    const handleApprovalDeleted = () => { fetchApprovals(); };
+    const handleApprovalCommentChanged = () => { fetchApprovals(); };
+    const handleConversionUpdated = (payload: { projectId: string; documentId: string; versionId: string; conversionStatus?: string; status?: string; conversionError?: string }) => {
+      if (payload.projectId !== projectId) return;
+      const nextStatus = payload.conversionStatus || payload.status;
+      if (!nextStatus) return;
+      setApprovals(prev => prev.map(a => (
+        a.documentId === payload.documentId || a.documentId === payload.versionId
+          ? { ...a, conversionStatus: nextStatus }
+          : a
+      )));
+    };
     socket.on('approval:new', handleApprovalNew);
     socket.on('approval:updated', handleApprovalUpdated);
+    socket.on('approval:deleted', handleApprovalDeleted);
+    socket.on('approval:comment_added', handleApprovalCommentChanged);
+    socket.on('approval:comment_deleted', handleApprovalCommentChanged);
+    socket.on('document:conversion-updated', handleConversionUpdated);
     return () => {
       socket.off('approval:new', handleApprovalNew);
       socket.off('approval:updated', handleApprovalUpdated);
+      socket.off('approval:deleted', handleApprovalDeleted);
+      socket.off('approval:comment_added', handleApprovalCommentChanged);
+      socket.off('approval:comment_deleted', handleApprovalCommentChanged);
+      socket.off('document:conversion-updated', handleConversionUpdated);
+      leaveProject(projectId);
     };
   }, [projectId]);
 
@@ -445,72 +486,6 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       toast.error('Failed to reject upload');
     } finally {
       setActionLoading(null);
-    }
-  };
-
-  const fetchComments = async (approvalId: string) => {
-    if (comments[approvalId]) return;
-    setCommentsLoading(prev => ({ ...prev, [approvalId]: true }));
-    try {
-      const res = await apiFetch('/api/approvals/comments/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approvalId }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setComments(prev => ({ ...prev, [approvalId]: data.data.comments || [] }));
-      }
-    } catch { /* silent */ } finally {
-      setCommentsLoading(prev => ({ ...prev, [approvalId]: false }));
-    }
-  };
-
-  const handleSubmitComment = async (approvalId: string) => {
-    const content = newComment[approvalId]?.trim();
-    if (!content) return;
-    setSubmittingComment(prev => ({ ...prev, [approvalId]: true }));
-    try {
-      const res = await apiFetch('/api/approvals/comments/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approvalId, content }),
-      });
-      const data = await res.json();
-      if (data.success && data.data.comment) {
-        setComments(prev => ({
-          ...prev,
-          [approvalId]: [data.data.comment, ...(prev[approvalId] || [])],
-        }));
-        setNewComment(prev => ({ ...prev, [approvalId]: '' }));
-      } else {
-        toast.error(data.message || 'Failed to add comment');
-      }
-    } catch {
-      toast.error('Failed to add comment');
-    } finally {
-      setSubmittingComment(prev => ({ ...prev, [approvalId]: false }));
-    }
-  };
-
-  const handleDeleteComment = async (approvalId: string, commentId: string) => {
-    try {
-      const res = await apiFetch('/api/approvals/comments/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commentId }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setComments(prev => ({
-          ...prev,
-          [approvalId]: (prev[approvalId] || []).filter(c => c.publicId !== commentId),
-        }));
-      } else {
-        toast.error(data.message || 'Failed to delete comment');
-      }
-    } catch {
-      toast.error('Failed to delete comment');
     }
   };
 
@@ -896,10 +871,8 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
     const approval = item.data;
     const FileIcon = getFileIcon(approval.mimeType);
     const isExpanded = expandedId === approval.publicId;
-    const isCommentsExpanded = commentsExpanded[approval.publicId];
     const isActing = actionLoading === approval.publicId;
-    const approvalComments = comments[approval.publicId] || [];
-    const commentCount = approvalComments.length;
+    const [commentCount, setCommentCount] = useState(0);
 
     return (
       <div className="px-6 py-5">
@@ -1134,87 +1107,17 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
         )}
 
         {/* Comment section */}
-        <div className="mt-4 pt-3 border-t border-[#E5E7EB]">
-          <button
-            onClick={() => {
-              const newState = !isCommentsExpanded;
-              setCommentsExpanded(prev => ({ ...prev, [approval.publicId]: newState }));
-              if (newState && !comments[approval.publicId]) fetchComments(approval.publicId);
-            }}
-            className="flex w-full items-center gap-2 text-[12px] text-[#6A7282] hover:text-[#101828] transition-colors"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            {commentCount > 0 ? `${commentCount} comment${commentCount !== 1 ? 's' : ''}` : 'Add comment'}
-            {commentsLoading[approval.publicId] ? (
-              <Loader2 className="h-3 w-3 animate-spin ml-auto" />
-            ) : (
-              <ChevronDown className={cn('h-3 w-3 ml-auto transition-transform', isCommentsExpanded && 'rotate-180')} />
-            )}
-          </button>
-
-          {isCommentsExpanded && (
-            <div className="mt-3 pb-4">
-              {approvalComments.length === 0 && !commentsLoading[approval.publicId] ? (
-                <p className="text-[12px] text-[#9CA3AF] text-center py-3">No comments yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {approvalComments.map(comment => {
-                    const currentUserId = getCurrentUserId();
-                    const isOwn = comment.author?.id === currentUserId;
-                    const canDelete = isOwn || canApprove;
-
-                    return (
-                      <div key={comment.publicId} className="flex gap-3">
-                        <Avatar name={comment.author?.name || '?'} avatar={comment.author?.avatar || null} size="sm" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[13px] font-semibold text-[#101828]">{comment.author?.name || 'Unknown'}</span>
-                            <span className="text-[11px] text-[#6A7282]">{formatTimestamp(comment.createdAt)}</span>
-                            {canDelete && (
-                              <button onClick={() => handleDeleteComment(approval.publicId, comment.publicId)}
-                                className="ml-auto flex h-5 w-5 items-center justify-center rounded text-[#D1D5DC] hover:text-[#DC2626] transition-colors">
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                          <p className="text-[13px] text-[#4A5565] mt-0.5 break-words">{comment.content}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {commentsLoading[approval.publicId] && (
-                    <div className="flex justify-center py-2">
-                      <Loader2 className="h-4 w-4 animate-spin text-[#155DFC]" />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-3 flex gap-2 items-end">
-                <textarea
-                  value={newComment[approval.publicId] || ''}
-                  onChange={(e) => setNewComment(prev => ({ ...prev, [approval.publicId]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitComment(approval.publicId); } }}
-                  placeholder="Add a comment..."
-                  rows={1}
-                  className="flex-1 rounded-[10px] border border-[#E5E7EB] px-4 py-2.5 text-[14px] resize-none focus:border-[#155DFC] focus:outline-none focus:ring-1 focus:ring-[#155DFC] min-h-[44px]"
-                  style={{ height: 'auto' }}
-                  onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 120) + 'px'; }}
-                />
-                <button
-                  onClick={() => handleSubmitComment(approval.publicId)}
-                  disabled={submittingComment[approval.publicId] || !newComment[approval.publicId]?.trim()}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#155DFC] text-white transition-colors hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {submittingComment[approval.publicId] ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
+        <div className="mt-4">
+          <CommentSection
+            type="approval"
+            targetId={approval.publicId}
+            projectId={projectId}
+            currentUserId={getCurrentUserId() || ''}
+            canModerate={canApprove}
+            variant="panel"
+            borderTop={true}
+            onCommentsChange={(comments) => setCommentCount(comments.length)}
+          />
         </div>
       </div>
     );

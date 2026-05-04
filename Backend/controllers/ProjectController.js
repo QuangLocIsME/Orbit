@@ -63,6 +63,17 @@ const invalidateUserCaches = async (userId) => {
     invalidateUserCache(userId, ['projects', 'folders']);
 };
 
+const invalidateProjectMemberCaches = async (projectId, extraUserIds = []) => {
+    const members = await ProjectMemberRepository.getMembersByProject(projectId);
+    const userIds = [
+        ...new Set([
+            ...members.map((member) => String(member.userId)).filter(Boolean),
+            ...extraUserIds.map((id) => String(id)).filter(Boolean),
+        ]),
+    ];
+    await Promise.all(userIds.map((id) => invalidateUserCaches(id)));
+};
+
 const workflowTemplates = {
     'construction-standard': [
         { id: 'backlog',      label: 'Backlog',      color: '#6A7280' },
@@ -133,7 +144,7 @@ class ProjectController {
                 });
             }
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(project.publicId, [userId]);
 
             // Broadcast project:updated so creator's project list refreshes
             socketService.broadcastProject(project.publicId, 'project:updated', {
@@ -418,7 +429,7 @@ class ProjectController {
                 return notFound(res, 'Project not found');
             }
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             // Broadcast so all project members see the updated name/icon/status
             socketService.broadcastProject(normalizedProjectId, 'project:updated', {
@@ -484,7 +495,7 @@ class ProjectController {
                 return notFound(res, 'Project not found');
             }
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             socketService.broadcastProject(normalizedProjectId, 'project:updated', {
                 projectId: normalizedProjectId,
@@ -555,7 +566,7 @@ class ProjectController {
                 { returnDocument: 'after' }
             );
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             socketService.broadcastProject(normalizedProjectId, 'project:updated', {
                 projectId: normalizedProjectId,
@@ -613,7 +624,7 @@ class ProjectController {
                 { coverImageUrl: '', avatarStoragePath: null, updatedAt: new Date() }
             );
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             socketService.broadcastProject(normalizedProjectId, 'project:updated', {
                 projectId: normalizedProjectId,
@@ -651,13 +662,14 @@ class ProjectController {
                 return forbidden(res);
             }
 
+            // Invalidate all project members' caches so their project list refreshes
+            const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
             await Project.deleteOne({ publicId: normalizedProjectId });
             await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
             await ProjectInviteRepository.removeByProject(normalizedProjectId);
 
-            // Invalidate all project members' caches so their project list refreshes
-            const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
             await Promise.all(members.map((m) => invalidateUserCaches(m.userId)));
+            socketService.broadcastProject(normalizedProjectId, 'project:deleted', { projectId: normalizedProjectId });
 
             return res.status(200).json({
                 success: true,
@@ -758,7 +770,7 @@ class ProjectController {
                 return notFound(res, 'Project not found');
             }
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             return res.status(200).json({
                 success: true,
@@ -825,7 +837,7 @@ class ProjectController {
                 normalizedRole
             );
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             // Broadcast so UI role/permissions update immediately
             socketService.broadcastProject(normalizedProjectId, 'project:member:role-updated', {
@@ -1037,7 +1049,7 @@ class ProjectController {
 
             if (!project) return notFound(res, 'Project not found');
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
             socketService.broadcastProject(normalizedProjectId, 'project:workflow-updated', {
                 projectId: normalizedProjectId,
                 workflowTemplateId,
@@ -1129,7 +1141,7 @@ class ProjectController {
 
             if (!project) return notFound(res, 'Project not found');
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
             socketService.broadcastProject(normalizedProjectId, 'project:updated', {
                 projectId: normalizedProjectId,
                 changes: { workflow: project.workflow },
@@ -1203,6 +1215,8 @@ class ProjectController {
                 await ProjectMember.collection.bulkWrite(bulkOps);
             }
 
+            await invalidateUserCaches(userId);
+
             return res.status(200).json({
                 success: true,
                 message: 'Project order saved',
@@ -1230,7 +1244,7 @@ class ProjectController {
             project.updatedAt = new Date();
             await project.save();
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             socketService.broadcastProject(normalizedProjectId, 'project:trashed', { projectId: normalizedProjectId });
 
@@ -1258,7 +1272,7 @@ class ProjectController {
             project.updatedAt = new Date();
             await project.save();
 
-            await invalidateUserCaches(userId);
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             socketService.broadcastProject(normalizedProjectId, 'project:restored', { projectId: normalizedProjectId });
 
@@ -1281,11 +1295,16 @@ class ProjectController {
 
             if (!(await isProjectOwner(project, userId))) return forbidden(res);
 
+            const members = await ProjectMemberRepository.getMembersByProject(normalizedProjectId);
             await Project.deleteOne({ publicId: normalizedProjectId });
             await ProjectMemberRepository.removeMembersByProject(normalizedProjectId);
             await ProjectInviteRepository.removeByProject(normalizedProjectId);
 
-            await invalidateUserCaches(userId);
+            await Promise.all([
+                ...members.map((m) => invalidateUserCaches(m.userId)),
+                invalidateUserCaches(userId),
+            ]);
+            socketService.broadcastProject(normalizedProjectId, 'project:deleted', { projectId: normalizedProjectId });
 
             return res.status(200).json({ success: true, message: 'Project permanently deleted' });
         } catch (error) {
@@ -1435,6 +1454,12 @@ class ProjectController {
                 { returnDocument: 'after', lean: true }
             );
             if (!updated) return notFound(res, 'Project not found');
+
+            await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
+            socketService.broadcastProject(normalizedProjectId, 'project:updated', {
+                projectId: normalizedProjectId,
+                changes: { integrations: updated.integrations },
+            });
 
             return res.status(200).json({
                 success: true,

@@ -203,7 +203,7 @@ export default function GuestPackageDetail({
             }
         };
 
-        const handleDocumentsRefresh = (data: { projectId: string; packageId: string }) => {
+        const handleDocumentsRefresh = (data: { projectId: string; packageId: string | null }) => {
             if (data.packageId === packageId) {
                 fetch(`/api/guest/documents/${encodeURIComponent(projectPublicId)}/${encodeURIComponent(packageId)}?token=${encodeURIComponent(guestToken)}`)
                     .then(res => res.json())

@@ -23,6 +23,7 @@ interface ModelFile {
 }
 
 interface TeamMember {
+  publicId: string;
   userId: string;
   user?: { fullName: string; avatar?: string | null };
   role: string;
@@ -57,6 +58,8 @@ interface CreateTaskModalProps {
   loadingFiles?: boolean;
   teamMembers?: TeamMember[];
   disciplines?: Discipline[];
+  /** Passed to MemberPicker — controls which field is used as the selection value. */
+  valueKey?: 'publicId' | 'userId';
 }
 
 interface TaskFormData {
@@ -102,6 +105,8 @@ export default function CreateTaskModal({
   modelFiles = [],
   loadingFiles = false,
   teamMembers = [],
+  disciplines = [],
+  valueKey,
 }: CreateTaskModalProps) {
   const isEditMode = Boolean(editTask);
 
@@ -410,12 +415,14 @@ export default function CreateTaskModal({
               members={teamMembers}
               selected={formData.assigneeIds}
               onChange={(ids) => setFormData(prev => ({ ...prev, assigneeIds: ids }))}
+              valueKey={valueKey}
             />
             <MemberPicker
               label="Reviewers"
               members={teamMembers}
               selected={formData.reviewerIds}
               onChange={(ids) => setFormData(prev => ({ ...prev, reviewerIds: ids }))}
+              valueKey={valueKey}
             />
           </div>
 

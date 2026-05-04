@@ -11,6 +11,7 @@ import TaskCalendar from './TaskCalendar';
 import TaskDetailPage from './TaskDetailPage';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
 import { getSocket } from '@/lib/socket';
+import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
 
 type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 
@@ -39,7 +40,7 @@ interface TeamMemberView {
 }
 
 interface ModelFile { id: string; name: string; folderPath?: string; }
-interface TeamMemberForTask { userId: string; user?: { fullName: string; avatar?: string | null }; role: string; avatarUrl?: string | null; }
+interface TeamMemberForTask { publicId: string; userId: string; user?: { fullName: string; avatar?: string | null }; role: string; avatarUrl?: string | null; }
 
 interface TaskItem {
   id: string;
@@ -72,6 +73,7 @@ interface EditTaskData {
   tags: string[];
   linkedItems: string;
   affectedModels?: string[];
+  existingAttachments?: any[];
 }
 type CalendarTaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done';
 type LinkedSuggestionItem = { label: string; value: string };
@@ -101,6 +103,9 @@ const formatIsoDate = (dateStr: string) => {
 };
 
 export default function ScopedTasksPanel({ scope, projectRole = 'member', variant = 'full', onTaskClick, isGuest = false }: ScopedTasksPanelProps) {
+  const cacheProjectId = scope.type === 'package' && scope.packageId
+    ? `${scope.projectId}:package:${scope.packageId}`
+    : scope.projectId;
   const formatRelativeDate = (dueDate: string) => {
     const now = new Date();
     const due = new Date(dueDate);
@@ -249,6 +254,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   // Map team members for CreateTaskModal's MemberPicker from existing teamMembers
   useEffect(() => {
     setTeamMembersForTask(teamMembers.map((m) => ({
+      publicId: m.id,
       userId: m.id,
       user: { fullName: m.name, avatar: m.avatarUrl },
       role: m.role,
@@ -337,20 +343,30 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       });
 
       setTasksData(mapped);
+      setProjectTabCache(cacheProjectId, 'tasks', { tasksData: mapped });
     } catch {
       setTasksData([]);
     } finally {
       setIsTasksLoading(false);
     }
-  }, [scope.packageId, scope.type, scopeRequestBody]);
+  }, [cacheProjectId, scope.packageId, scope.type, scopeRequestBody]);
 
   useEffect(() => {
+    const cached = getProjectTabCache<{ tasksData: TaskItem[] }>(cacheProjectId, 'tasks');
+    if (cached?.data?.tasksData) {
+      setTasksData(cached.data.tasksData);
+      setIsTasksLoading(false);
+      loadTasks().catch(() => {});
+      return;
+    }
+
     loadTasks();
-  }, [loadTasks]);
+  }, [cacheProjectId, loadTasks]);
 
   // WebSocket realtime — refresh task board when task events occur
   useEffect(() => {
     const socket = getSocket();
+    socket.emit('project:join', { projectId: scope.projectId });
     console.debug('[WS] ScopedTasksPanel: Registering listeners for project:', scope.projectId);
 
     const handleTaskStatusChanged = ({ projectId, taskId, status }: { projectId: string; taskId: string; status: string }) => {
@@ -384,17 +400,70 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       loadTasks();
     };
 
+    const handleTaskUpdated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:updated', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleCrCreated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: cr:created', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleCrUpdated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: cr:updated', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleCrStatusChanged = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: cr:status-changed', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleCrDeleted = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: cr:deleted', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
+    const handleCrCommentAdded = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] ScopedTasksPanel: cr:comment_added', { projectId, listeningFor: scope.projectId });
+      if (projectId !== scope.projectId) return;
+      loadTasks();
+    };
+
     socket.on('task:status-changed', handleTaskStatusChanged);
     socket.on('task:created', handleTaskCreated);
+    socket.on('task:updated', handleTaskUpdated);
     socket.on('task:deleted', handleTaskDeleted);
     socket.on('task:commented', handleTaskCommented);
+    socket.on('task:comment_updated', handleTaskCommented);
+    socket.on('task:comment_deleted', handleTaskCommented);
+    socket.on('cr:created', handleCrCreated);
+    socket.on('cr:updated', handleCrUpdated);
+    socket.on('cr:status-changed', handleCrStatusChanged);
+    socket.on('cr:deleted', handleCrDeleted);
+    socket.on('cr:comment_added', handleCrCommentAdded);
 
     return () => {
       console.debug('[WS] ScopedTasksPanel: Unregistering listeners for project:', scope.projectId);
       socket.off('task:status-changed', handleTaskStatusChanged);
       socket.off('task:created', handleTaskCreated);
+      socket.off('task:updated', handleTaskUpdated);
       socket.off('task:deleted', handleTaskDeleted);
       socket.off('task:commented', handleTaskCommented);
+      socket.off('task:comment_updated', handleTaskCommented);
+      socket.off('task:comment_deleted', handleTaskCommented);
+      socket.off('cr:created', handleCrCreated);
+      socket.off('cr:updated', handleCrUpdated);
+      socket.off('cr:status-changed', handleCrStatusChanged);
+      socket.off('cr:deleted', handleCrDeleted);
+      socket.off('cr:comment_added', handleCrCommentAdded);
+      socket.emit('project:leave', { projectId: scope.projectId });
     };
   }, [scope.projectId, loadTasks]);
 
@@ -493,12 +562,26 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
         void loadProjectWorkflowData();
       }
     };
+    const handleSocketWorkflowChanged = (payload?: { projectId?: string; changes?: Record<string, unknown> }) => {
+      if (cancelled || payload?.projectId !== scope.projectId) return;
+      const changes = payload.changes || {};
+      if (!payload.changes || 'workflow' in changes || 'workflowTemplateId' in changes || 'taskTags' in changes || 'settings' in changes) {
+        void loadProjectWorkflowData();
+      }
+    };
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: scope.projectId });
     window.addEventListener('workflow-applied', handleWorkflowApplied);
+    socket.on('project:workflow-updated', handleSocketWorkflowChanged);
+    socket.on('project:updated', handleSocketWorkflowChanged);
     return () => {
       cancelled = true;
       window.removeEventListener('workflow-applied', handleWorkflowApplied);
+      socket.off('project:workflow-updated', handleSocketWorkflowChanged);
+      socket.off('project:updated', handleSocketWorkflowChanged);
+      socket.emit('project:leave', { projectId: scope.projectId });
     };
-  }, [loadProjectWorkflowData]);
+  }, [loadProjectWorkflowData, scope.projectId]);
 
   // Reload tasks when a task is created from the Changes tab DetailModal
   useEffect(() => {
@@ -520,9 +603,14 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   }, [tasksData, tasksSearchQuery]);
   const calendarTasks = useMemo(
     () => filteredTasks
-      .filter((t) => ['backlog', 'todo', 'in-progress', 'review', 'done'].includes(t.status))
+      .filter((t) => {
+        if (selectedWorkflowStages.length > 0) {
+          return selectedWorkflowStages.some(s => s.id === t.status);
+        }
+        return ['backlog', 'todo', 'in-progress', 'review', 'done'].includes(t.status);
+      })
       .map((t) => ({ ...t, status: t.status as CalendarTaskStatus })),
-    [filteredTasks]
+    [filteredTasks, selectedWorkflowStages]
   );
   useEffect(() => {
     let cancelled = false;
@@ -1021,6 +1109,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
               tasks={calendarTasks}
               teamMembers={teamMembers}
               onTaskClick={setSelectedTaskId}
+              stages={selectedWorkflowStages.length > 0 ? selectedWorkflowStages : undefined}
             />
           </div>
         )}
@@ -1104,6 +1193,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
           modelFiles={modelFiles}
           loadingFiles={loadingModelFiles}
           teamMembers={teamMembersForTask}
+          valueKey="userId"
         onSubmit={async (task) => {
           try {
             await persistNewTaskTags(task.tags);
@@ -1491,6 +1581,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             tasks={calendarTasks}
             teamMembers={teamMembers}
             onTaskClick={setSelectedTaskId}
+            stages={selectedWorkflowStages.length > 0 ? selectedWorkflowStages : undefined}
           />
         </div>
       )}
@@ -1573,6 +1664,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
           modelFiles={modelFiles}
           loadingFiles={loadingModelFiles}
           teamMembers={teamMembersForTask}
+          valueKey="userId"
         onSubmit={async (task) => {
           try {
             await persistNewTaskTags(task.tags);

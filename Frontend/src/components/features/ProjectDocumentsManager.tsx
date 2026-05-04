@@ -27,6 +27,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import VersionHistoryModal from './VersionHistoryModal';
+import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
 
 // Helper function to download file from URL
 const handleDownloadFile = async (url: string, filename: string) => {
@@ -199,6 +200,7 @@ function deriveLocation(
 }
 
 export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true, initialFileId = null, projectRole = 'member' }: ProjectDocumentsManagerProps) {
+  const cacheProjectId = packageId ? `${projectId}:package:${packageId}` : projectId;
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
@@ -244,10 +246,16 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
 
   // Real-time: refresh documents when another user creates/upload/deletes
   useEffect(() => {
-    const cleanup = registerProjectCallback(projectId, 'documents:refresh', () => {
+    const cleanupDocuments = registerProjectCallback(projectId, 'documents:refresh', () => {
       loadDocumentsRef.current();
     });
-    return cleanup;
+    const cleanupConversion = registerProjectCallback(projectId, 'document:conversion-updated', () => {
+      loadDocumentsRef.current();
+    });
+    return () => {
+      cleanupDocuments();
+      cleanupConversion();
+    };
   }, [registerProjectCallback, projectId]);
 
   // Close context menu when clicking outside
@@ -282,7 +290,9 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
     if (!res.ok) throw new Error('Failed to load documents');
 
     const payload = await res.json();
-    setRootTree(payload?.data?.tree || null);
+    const nextTree = payload?.data?.tree || null;
+    setRootTree(nextTree);
+    setProjectTabCache(cacheProjectId, 'documents', { rootTree: nextTree });
   };
   const loadDocumentsRef = useRef(loadDocuments);
   loadDocumentsRef.current = loadDocuments;
@@ -299,8 +309,16 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   };
 
   useEffect(() => {
+    const cached = getProjectTabCache<{ rootTree: TreeNode | null }>(cacheProjectId, 'documents');
+    if (cached?.data) {
+      setRootTree(cached.data.rootTree || null);
+      setLoading(false);
+      loadDocuments().catch(() => {});
+      return;
+    }
+
     refresh();
-  }, [projectId, packageId]);
+  }, [cacheProjectId, projectId, packageId]);
 
   useEffect(() => {
     let cancelled = false;

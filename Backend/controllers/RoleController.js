@@ -1,5 +1,6 @@
 const ProjectRoleRepository = require('../repositories/ProjectRoleRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const socketService = require('../services/socketService');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -163,6 +164,11 @@ class RoleController {
                 isSystem: false,
                 permissions,
             });
+            socketService.broadcastProject(projectId, 'roles:changed', {
+                projectId,
+                action: 'created',
+                roleId: role.id,
+            });
 
             return res.status(201).json({
                 success: true,
@@ -215,6 +221,11 @@ class RoleController {
 
             const updates = { name, description, color, accessLevel, permissions };
             const updatedRole = await ProjectRoleRepository.updateRole(roleId, updates);
+            socketService.broadcastProject(existingRole.projectId, 'roles:changed', {
+                projectId: existingRole.projectId,
+                action: 'updated',
+                roleId,
+            });
 
             return res.json({
                 success: true,
@@ -254,6 +265,11 @@ class RoleController {
             }
 
             await ProjectRoleRepository.deleteRole(roleId);
+            socketService.broadcastProject(existingRole.projectId, 'roles:changed', {
+                projectId: existingRole.projectId,
+                action: 'deleted',
+                roleId,
+            });
 
             return res.json({
                 success: true,

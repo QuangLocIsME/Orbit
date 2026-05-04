@@ -13,6 +13,7 @@ import type { CreatedProjectPayload } from './CreateProjectModal';
 import { loadCustomIndustriesRaw } from './CreateProjectModal';
 import { ProjectsSkeleton } from '../ui/skeletons';
 import { useAppStore } from '@/stores/appStore';
+import { refreshApiCache } from '@/lib/sw-utils';
 
 // Types
 interface Folder {
@@ -1447,8 +1448,9 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         return;
       }
 
-      const updatedProjects = await loadProjects(false, { force: true });
-      await loadFolders(updatedProjects, { force: true });
+      // Use SW refresh pipeline: SW fetches in background, delivers data via postMessage.
+      // This avoids blocking the user interaction with a full fetch + setState cycle.
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
     } finally {
       setIsMovingProject(false);
     }
@@ -1470,7 +1472,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       });
 
       if (!response.ok) {
-        // Rollback on failure
+        // Rollback: invalidate cache and re-fetch to restore correct state
         await loadProjects(false, { force: true });
         let errorMessage = 'Failed to move project to trash';
         try {
@@ -1484,8 +1486,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       }
 
       // Dispatch event to remove from TopBar tabs
-      window.dispatchEvent(new CustomEvent('orbit:project-removed', { 
-        detail: { projectId } 
+      window.dispatchEvent(new CustomEvent('orbit:project-removed', {
+        detail: { projectId }
       }));
 
       toast.success('Project moved to trash', {
@@ -1493,7 +1495,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         action: { label: 'View Trash', onClick: () => { window.location.href = '/trash'; } },
       });
 
-      await loadProjects(false, { force: true });
+      // SW refresh pipeline handles Zustand store update in background — no blocking fetch
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
     } finally {
       setIsTrashing(false);
     }
@@ -1610,21 +1613,15 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       const mapped = storeProjects.map(mapApiProjectToUiProject);
       setProjects(mapped);
       setIsProjectsLoading(false);
-      // Always revalidate in background so /projects still triggers fresh API call.
-      loadProjects(false, { force: true }).then((fresh) => {
-        const source = fresh.length > 0 ? fresh : mapped;
-        if (source.length > 0) loadFolders(source, { force: true });
-        loadMemberCounts(source);
-      });
+      // SW refresh: fetch in background, deliver via postMessage → sw:data → patchFromSW → Zustand.
+      // Component syncs from Zustand subscription — no extra setState from loadProjects.
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
       return;
     }
 
     if (hasSessionCache) {
-      // Session cache exists — data already visible. Revalidate in background silently.
-      loadProjects(false, { force: true }).then((fetched) => {
-        if (fetched.length > 0) loadFolders(fetched, { force: true });
-        loadMemberCounts(fetched);
-      });
+      // Session cache exists — data already visible. SW refresh silently.
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
       return;
     }
 
@@ -1659,10 +1656,34 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       upsertProject(mapCreatedProjectToUiProject(incoming));
     };
 
-    const handleUpdated = (payload: { project?: CreatedProjectPayload; data?: CreatedProjectPayload } | CreatedProjectPayload) => {
+    const handleUpdated = (payload: { projectId?: string; changes?: Record<string, unknown>; project?: CreatedProjectPayload; data?: CreatedProjectPayload } | CreatedProjectPayload) => {
+      if ('projectId' in payload && payload.projectId && payload.changes) {
+        setProjects((prev) => prev.map((project) => (
+          project.id === payload.projectId
+            ? {
+                ...project,
+                name: String(payload.changes?.name ?? project.name),
+                description: String(payload.changes?.description ?? project.description ?? ''),
+                thumbnail: String(payload.changes?.coverImageUrl ?? project.thumbnail ?? ''),
+                projectType: payload.changes?.industry ? toSlug(String(payload.changes.industry)) : project.projectType,
+                industryName: payload.changes?.industry ? String(payload.changes.industry) : project.industryName,
+              }
+            : project
+        )));
+        return;
+      }
+
       const incoming = 'publicId' in payload ? payload : payload.project || payload.data;
       if (!incoming?.publicId) return;
       upsertProject(mapCreatedProjectToUiProject(incoming));
+    };
+
+    const handleProjectRemoved = (payload: { projectId: string }) => {
+      if (!payload?.projectId) return;
+      setProjects((prev) => prev.filter((project) => project.id !== payload.projectId));
+      projectsCacheRef.current = null;
+      foldersCacheRef.current = null;
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
     };
 
     const socket = storeSocket ?? socketRef.current;
@@ -1670,30 +1691,37 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
 
     socket.on('project:created', handleCreated);
     socket.on('project:updated', handleUpdated);
+    socket.on('project:trashed', handleProjectRemoved);
+    socket.on('project:deleted', handleProjectRemoved);
 
     // Refresh member counts when team membership changes
+    // Use SW refresh: SW fetches in background, delivers data via postMessage,
+    // appStore patches Zustand, component re-renders via subscription. No jank.
     const handleMemberJoined = (payload: { projectId: string }) => {
       if (!payload?.projectId) return;
       setMemberCounts(prev => ({ ...prev, [payload.projectId]: (prev[payload.projectId] || 0) + 1 }));
       memberCountsCacheRef.current = null;
-      loadProjectsRef.current(false, { force: true });
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
     };
 
     socket.on('project:member:joined', handleMemberJoined);
 
     // Reload projects when cache is invalidated (e.g. invite accepted, member removed)
+    // SW refresh pipeline: background fetch → postMessage → sw:data event → patchFromSW → Zustand → re-render
     const handleCacheInvalidate = (payload: { data: { cacheTypes: string[]; userId: string } }) => {
       const { cacheTypes } = payload.data ?? {};
       if (!Array.isArray(cacheTypes)) return;
       if (cacheTypes.includes('projects')) {
-        // Invalidate local cache so next load fetches fresh data
         projectsCacheRef.current = null;
-        loadProjectsRef.current(false, { force: true });
+        refreshApiCache(['/api/projects/me', '/api/folders/me']);
+      }
+      if (cacheTypes.includes('folders')) {
+        foldersCacheRef.current = null;
       }
     };
 
     // If current user is removed from a project while staying on /projects,
-    // remove it from UI immediately, then revalidate in background.
+    // optimistically remove from UI, then let SW pipeline update Zustand store.
     const handleMemberRemoved = (payload: { projectId: string }) => {
       if (!payload?.projectId) return;
       setProjects((prev) => prev.filter((p) => p.id !== payload.projectId));
@@ -1703,8 +1731,10 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
         return next;
       });
       projectsCacheRef.current = null;
+      foldersCacheRef.current = null;
       memberCountsCacheRef.current = null;
-      loadProjectsRef.current(false, { force: true });
+      // SW refresh pipeline handles the Zustand store update
+      refreshApiCache(['/api/projects/me', '/api/folders/me']);
     };
 
     socket.on('cache:invalidate', handleCacheInvalidate);
@@ -1713,14 +1743,17 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     return () => {
       socket.off('project:created', handleCreated);
       socket.off('project:updated', handleUpdated);
+      socket.off('project:trashed', handleProjectRemoved);
+      socket.off('project:deleted', handleProjectRemoved);
       socket.off('project:member:joined', handleMemberJoined);
       socket.off('member:removed', handleMemberRemoved);
       socket.off('cache:invalidate', handleCacheInvalidate);
     };
   }, []); // intentionally empty — socket events handle their own lifecycle
 
-  // Only show skeleton on initial load when there's no cache at all
-  if (!isHydrated && !hasSessionCache) return <ProjectsSkeleton />;
+  // Always render the same shell on the server and on the first client pass.
+  // Client-only cache reads (sessionStorage/localStorage) then take over after mount.
+  if (!isHydrated) return <ProjectsSkeleton />;
 
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId) || null

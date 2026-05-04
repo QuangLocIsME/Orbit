@@ -20,32 +20,78 @@ const { title, pageTitle = 'Home' } = Astro.props;
     import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
 
     // ── Auth event listeners ──────────────────────────────────────────────────
-    // Replace all hard window.location.href = '/login' calls with event-based
-    // navigation so Astro's View Transitions pipeline stays intact.
     window.addEventListener('orbit:auth-expired', () => navigate('/login'));
     window.addEventListener('orbit:sign-out', () => {
       clearAll();
       navigate('/login');
     });
 
-    // ── SW session sync: write SW-cached API data to sessionStorage ──────────
-    // This makes data available to React components synchronously on mount,
-    // eliminating skeleton flicker on subsequent visits.
+    // ── SW Message Pipeline ───────────────────────────────────────────────────
+    // SW delivers fresh data via postMessage (REFRESH_RESPONSE, GET_CACHED_RESPONSE).
+    // We dispatch custom events so React components can patch their state directly
+    // without triggering new fetches — this eliminates loading flicker.
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data?.type === 'SYNC_SESSION') {
-          const { key, data } = event.data.payload || {};
+        const { type, payload } = event.data || {};
+
+        // ── SYNC_SESSION: Legacy sessionStorage sync (projects/folders) ─────
+        if (type === 'SYNC_SESSION') {
+          const { key, data } = payload || {};
           if (key && data) {
-            try {
-              sessionStorage.setItem(key, JSON.stringify(data));
-            } catch (_) { /* ignore quota */ }
+            try { sessionStorage.setItem(key, JSON.stringify(data)); } catch (_) { /* ignore */ }
           }
         }
-        if (event.data?.type === 'CLEAR_SESSION') {
-          try {
-            sessionStorage.removeItem('orbit:projects:me');
-            sessionStorage.removeItem('orbit:folders:me');
-          } catch (_) { /* ignore */ }
+
+        // ── REFRESH_RESPONSE: Fresh data from SW background refresh ───────────
+        // Route data format: full URL → extract path
+        // e.g. "http://localhost:4321/api/projects/me" → "/api/projects/me"
+        if (type === 'REFRESH_RESPONSE') {
+          const route = payload?.route || '';
+          const data = payload?.data;
+          const isStale = payload?.isStale;
+
+          if (!route || !data) return;
+
+          // Extract path from full URL
+          let path = route;
+          try { path = new URL(route).pathname; } catch (_) { /* use as-is */ }
+
+          // Dispatch a typed event that React components can listen to
+          // This lets components patch state directly instead of re-fetching
+          window.dispatchEvent(new CustomEvent('sw:data', {
+            detail: { route: path, data, isStale },
+          }));
+
+          // Keep sessionStorage in sync for SSR/hydration
+          if (path === '/api/projects/me' || path === '/api/folders/me') {
+            const key = 'orbit:' + path.replace('/api/', '');
+            const cachePayload = { data, expiresAt: Date.now() + 5 * 60 * 1000 };
+            try { sessionStorage.setItem(key, JSON.stringify(cachePayload)); } catch (_) { /* ignore */ }
+          }
+        }
+
+        // ── GET_CACHED_RESPONSE: On-demand cached data from SW ────────────────
+        if (type === 'GET_CACHED_RESPONSE') {
+          const route = payload?.route || '';
+          const data = payload?.data;
+          const isStale = payload?.isStale;
+
+          if (!route || !data) return;
+
+          let path = route;
+          try { path = new URL(route).pathname; } catch (_) { /* use as-is */ }
+
+          window.dispatchEvent(new CustomEvent('sw:data', {
+            detail: { route: path, data, isStale },
+          }));
+        }
+
+        // ── CLEAR_SESSION: Invalidate sessionStorage cache ────────────────────
+        if (type === 'CLEAR_SESSION') {
+          ['orbit:projects:me', 'orbit:folders:me'].forEach((key) => {
+            try { sessionStorage.removeItem(key); } catch (_) { /* ignore */ }
+          });
+          window.dispatchEvent(new CustomEvent('sw:cleared'));
         }
       });
     }
@@ -54,7 +100,7 @@ const { title, pageTitle = 'Home' } = Astro.props;
     hydrateApp();
     initAppSocket();
 
-    // ── SW prefetch: if SW is available, prefetch API data now ─────────────────
+    // ── SW prefetch: cache critical routes on app boot ────────────────────────
     if (navigator.serviceWorker?.controller) {
       navigator.serviceWorker.controller.postMessage({
         type: 'PREFETCH_API',

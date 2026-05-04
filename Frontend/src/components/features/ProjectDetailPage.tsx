@@ -20,6 +20,7 @@ import ChangesTab from './ChangesTab';
 import UploadApprovalPanel from './UploadApprovalPanel';
 import type { WorkflowStage } from './TaskBoard';
 import { getSocket } from '@/lib/socket';
+import { prefetchApiCache } from '@/lib/sw-utils';
 import {
   DndContext,
   DragOverlay,
@@ -397,6 +398,7 @@ const Cube3DIcon = ({ className = '' }: { className?: string }) => (
 function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [initialCrId, setInitialCrId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState('overview');
+  const [mountedTabs, setMountedTabs] = useState<Record<string, boolean>>({ overview: true });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -431,6 +433,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [isEditingOverviewStartDate, setIsEditingOverviewStartDate] = useState(false);
   const [isEditingOverviewDeadline, setIsEditingOverviewDeadline] = useState(false);
   const isMounted = useRef(true);
+  const cancelledRef = useRef(false);
   const coverUploadInputRef = useRef<HTMLInputElement | null>(null);
   const canEditProjectCover = project.role === 'owner' || project.role === 'admin';
 
@@ -885,13 +888,8 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     return new URLSearchParams(window.location.search).get('fileId');
   })();
 
-  // Fetch change requests when 'changes' tab is active
-  useEffect(() => {
-    if (activeTab !== 'changes') return;
-    let cancelled = false;
-
-    // Helper to extract IFC files from tree structure
-    const extractIfcFiles = (nodes: any[]): { id: string; name: string }[] => {
+  const extractIfcFiles = useMemo(() => {
+    return (nodes: any[]): { id: string; name: string }[] => {
       const files: { id: string; name: string }[] = [];
       for (const node of nodes) {
         if (node.type === 'file' && node.isIfc) {
@@ -903,67 +901,96 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       }
       return files;
     };
+  }, []);
 
-    // Check localStorage cache first
-    const cacheKey = `orbit-ifc-files-${project.publicId}`;
-    const cachedData = localStorage.getItem(cacheKey);
-    const cachedTime = localStorage.getItem(`${cacheKey}-time`);
-    const cacheExpiry = 5 * 60 * 1000; // 5 minutes
+  const loadIfcFiles = useCallback(async () => {
+    const res = await apiFetch(`/api/projects/packages/documents/list`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: project.publicId, includePackages: true }),
+    });
 
-    const loadIfcFiles = async () => {
-      const res = await apiFetch(`/api/projects/packages/documents/list`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: project.publicId, includePackages: true }),
-      });
-
-      if (res.ok) {
-        const payload = await res.json();
-        const tree = payload?.data?.tree;
-        if (tree && !cancelled) {
-          const ifcFiles = extractIfcFiles(tree.children || []);
-          setAvailableIfcFiles(ifcFiles);
-          // Cache the result
-          localStorage.setItem(cacheKey, JSON.stringify(ifcFiles));
-          localStorage.setItem(`${cacheKey}-time`, String(Date.now()));
-        }
+    if (res.ok) {
+      const payload = await res.json();
+      const tree = payload?.data?.tree;
+      if (tree && !cancelledRef.current) {
+        const ifcFiles = extractIfcFiles(tree.children || []);
+        setAvailableIfcFiles(ifcFiles);
+        const cacheKey = `orbit-ifc-files-${project.publicId}`;
+        localStorage.setItem(cacheKey, JSON.stringify(ifcFiles));
+        localStorage.setItem(`${cacheKey}-time`, String(Date.now()));
       }
-    };
+    }
+  }, [project.publicId, extractIfcFiles]);
 
-    const fetchChangeRequests = async () => {
-      setIsLoadingChangeRequests(true);
-      setIsLoadingIfcFiles(true);
-      try {
-        // Load change requests
-        const crRes = await apiFetch(`/api/projects/${project.publicId}/change-requests`);
-        if (crRes.ok && !cancelled) {
-          const payload = await crRes.json();
-          setChangeRequests(payload.data || []);
-        }
+  const fetchChangeRequests = useCallback(async () => {
+    setIsLoadingChangeRequests(true);
+    setIsLoadingIfcFiles(true);
+    try {
+      const crRes = await apiFetch(`/api/projects/${project.publicId}/change-requests`);
+      if (crRes.ok && !cancelledRef.current) {
+        const payload = await crRes.json();
+        setChangeRequests(payload.data || []);
+      }
 
-        // Load IFC files from cache or API
-        if (cachedData && cachedTime && Date.now() - Number(cachedTime) < cacheExpiry) {
-          try {
-            setAvailableIfcFiles(JSON.parse(cachedData));
-          } catch {
-            await loadIfcFiles();
-          }
-        } else {
+      const cacheKey = `orbit-ifc-files-${project.publicId}`;
+      const cachedData = localStorage.getItem(cacheKey);
+      const cachedTime = localStorage.getItem(`${cacheKey}-time`);
+      const cacheExpiry = 5 * 60 * 1000;
+      if (cachedData && cachedTime && Date.now() - Number(cachedTime) < cacheExpiry) {
+        try {
+          setAvailableIfcFiles(JSON.parse(cachedData));
+        } catch {
           await loadIfcFiles();
         }
-      } catch {
-        // Keep empty state on error
-      } finally {
-        if (!cancelled) {
-          setIsLoadingChangeRequests(false);
-          setIsLoadingIfcFiles(false);
-        }
+      } else {
+        await loadIfcFiles();
       }
+    } catch {
+    } finally {
+      if (!cancelledRef.current) {
+        setIsLoadingChangeRequests(false);
+        setIsLoadingIfcFiles(false);
+      }
+    }
+  }, [project.publicId, loadIfcFiles]);
+
+  // Fetch change requests when 'changes' tab is active
+  useEffect(() => {
+    if (activeTab !== 'changes') return;
+    cancelledRef.current = false;
+    fetchChangeRequests();
+    return () => { cancelledRef.current = true; };
+  }, [activeTab, fetchChangeRequests]);
+
+  useEffect(() => {
+    if (activeTab !== 'changes') return;
+
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: project.publicId });
+
+    const handleCrRefresh = ({ projectId }: { projectId: string }) => {
+      if (projectId !== project.publicId) return;
+      fetchChangeRequests();
     };
 
-    fetchChangeRequests();
-    return () => { cancelled = true; };
-  }, [activeTab, project.publicId]);
+    socket.on('cr:created', handleCrRefresh);
+    socket.on('cr:updated', handleCrRefresh);
+    socket.on('cr:status-changed', handleCrRefresh);
+    socket.on('cr:deleted', handleCrRefresh);
+    socket.on('cr:version_created', handleCrRefresh);
+    socket.on('cr:version_updated', handleCrRefresh);
+
+    return () => {
+      socket.off('cr:created', handleCrRefresh);
+      socket.off('cr:updated', handleCrRefresh);
+      socket.off('cr:status-changed', handleCrRefresh);
+      socket.off('cr:deleted', handleCrRefresh);
+      socket.off('cr:version_created', handleCrRefresh);
+      socket.off('cr:version_updated', handleCrRefresh);
+      socket.emit('project:leave', { projectId: project.publicId });
+    };
+  }, [activeTab, fetchChangeRequests, project.publicId]);
 
   const handleCreateChangeRequest = async () => {
     if (!newRequestTitle.trim()) {
@@ -1081,6 +1108,31 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedWorkflowStages, setSelectedWorkflowStages] = useState<WorkflowStage[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+
+  useEffect(() => {
+    setMountedTabs((prev) => (prev[activeTab] ? prev : { ...prev, [activeTab]: true }));
+  }, [activeTab]);
+
+  useEffect(() => {
+    prefetchApiCache([
+      '/api/projects/me',
+      `/api/projects/${project.publicId}/activities`,
+      `/api/projects/${project.publicId}/navisworks/clashes/count`,
+    ]);
+
+    const timer = window.setTimeout(() => {
+      setMountedTabs((prev) => ({
+        ...prev,
+        documents: true,
+        versions: true,
+        changes: true,
+        tasks: true,
+        activity: true,
+      }));
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [project.publicId]);
 
   // Get current folder based on path
   const getCurrentFolder = (): DocFolder => {
@@ -1262,18 +1314,30 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       loadProjectTasks();
     };
 
+    const handleTaskUpdated = ({ projectId }: { projectId: string }) => {
+      console.debug('[WS] task:updated received', { projectId, currentProject: project.publicId });
+      if (projectId !== project.publicId) return;
+      loadProjectTasks();
+    };
+
     console.debug('[WS] Registering task listeners for project:', project.publicId);
     socket.on('task:status-changed', handleTaskStatusChanged);
     socket.on('task:created', handleTaskCreated);
+    socket.on('task:updated', handleTaskUpdated);
     socket.on('task:deleted', handleTaskDeleted);
     socket.on('task:commented', handleTaskCommented);
+    socket.on('task:comment_updated', handleTaskCommented);
+    socket.on('task:comment_deleted', handleTaskCommented);
 
     return () => {
       console.debug('[WS] Unregistering task listeners for project:', project.publicId);
       socket.off('task:status-changed', handleTaskStatusChanged);
       socket.off('task:created', handleTaskCreated);
+      socket.off('task:updated', handleTaskUpdated);
       socket.off('task:deleted', handleTaskDeleted);
       socket.off('task:commented', handleTaskCommented);
+      socket.off('task:comment_updated', handleTaskCommented);
+      socket.off('task:comment_deleted', handleTaskCommented);
     };
   }, [activeTab, loadProjectTasks, project.publicId]);
 
@@ -1331,8 +1395,25 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
     };
 
     loadProjectWorkflowData();
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: project.publicId });
+
+    const handleSocketWorkflowChanged = (payload?: { projectId?: string; changes?: Record<string, unknown> }) => {
+      if (cancelled || payload?.projectId !== project.publicId) return;
+      const changes = payload.changes || {};
+      if (!payload.changes || 'workflow' in changes || 'workflowTemplateId' in changes || 'taskTags' in changes || 'settings' in changes) {
+        void loadProjectWorkflowData();
+      }
+    };
+
+    socket.on('project:workflow-updated', handleSocketWorkflowChanged);
+    socket.on('project:updated', handleSocketWorkflowChanged);
+
     return () => {
       cancelled = true;
+      socket.off('project:workflow-updated', handleSocketWorkflowChanged);
+      socket.off('project:updated', handleSocketWorkflowChanged);
+      socket.emit('project:leave', { projectId: project.publicId });
     };
   }, [project.publicId]);
 
@@ -1439,8 +1520,10 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
       {/* Content - With 300px left/right margins */}
       <div className="px-[100px] py-6">
         {/* Packages Tab Content */}
-        {activeTab === 'packages' && (
-          <PackagesManager fixedProjectId={project.publicId} fixedProjectName={project.name} />
+        {mountedTabs.packages && (
+          <div style={{ display: activeTab === 'packages' ? 'block' : 'none' }}>
+            <PackagesManager fixedProjectId={project.publicId} fixedProjectName={project.name} />
+          </div>
         )}
 
 {/* Overview Tab Content */}
@@ -1865,17 +1948,23 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         )}
 
         {/* Documents Tab */}
-        {activeTab === 'documents' && (
-          <ProjectDocumentsManager projectId={project.publicId} initialFileId={initialDocFileId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
+        {mountedTabs.documents && (
+          <div style={{ display: activeTab === 'documents' ? 'block' : 'none' }}>
+            <ProjectDocumentsManager projectId={project.publicId} initialFileId={initialDocFileId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
+          </div>
         )}
 
         {/* Versions Tab */}
-        {activeTab === 'versions' && (
-          <UploadApprovalPanel projectId={project.publicId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
+        {mountedTabs.versions && (
+          <div style={{ display: activeTab === 'versions' ? 'block' : 'none' }}>
+            <UploadApprovalPanel projectId={project.publicId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
+          </div>
         )}
         {/* Changes Tab */}
-        {activeTab === 'changes' && (
-          <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} initialCrId={initialCrId} />
+        {mountedTabs.changes && (
+          <div style={{ display: activeTab === 'changes' ? 'block' : 'none' }}>
+            <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} initialCrId={initialCrId} />
+          </div>
         )}
         {activeTab === 'changes_DISABLED_INLINE' && (
           <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
@@ -2098,11 +2187,13 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           )}
 
         {/* Tasks Tab */}
-        {activeTab === 'tasks' && (
-          <ScopedTasksPanel
-            scope={{ type: 'project', projectId: project.publicId }}
-            projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
-          />
+        {mountedTabs.tasks && (
+          <div style={{ display: activeTab === 'tasks' ? 'block' : 'none' }}>
+            <ScopedTasksPanel
+              scope={{ type: 'project', projectId: project.publicId }}
+              projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
+            />
+          </div>
         )}
 
         {/* New Change Request Modal — disabled, handled by ChangesTab */}
@@ -3096,29 +3187,38 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         )}
 
         {/* Clashes Tab */}
-        {activeTab === 'clashes' && (
-          <ClashesTab
-            projectPublicId={project.publicId}
-            projectDisplayName={project.name}
-            currentUserRole={
-              project.role as 'owner' | 'admin' | 'manager' | 'member' | 'viewer'
-            }
-          />
+        {mountedTabs.clashes && (
+          <div style={{ display: activeTab === 'clashes' ? 'block' : 'none' }}>
+            <ClashesTab
+              projectPublicId={project.publicId}
+              projectDisplayName={project.name}
+              currentUserRole={
+                project.role as 'owner' | 'admin' | 'manager' | 'member' | 'viewer'
+              }
+            />
+          </div>
         )}
 
         {/* Teams Tab */}
-        {activeTab === 'teams' && (
-          <TeamsTab projectPublicId={project.publicId} currentUserRole={project.role as 'admin' | 'member' | 'viewer'} />
+        {mountedTabs.teams && (
+          <div style={{ display: activeTab === 'teams' ? 'block' : 'none' }}>
+            <TeamsTab projectPublicId={project.publicId} currentUserRole={project.role as 'admin' | 'member' | 'viewer'} />
+          </div>
         )}
 
         {/* Extensions Tab */}
-        {activeTab === 'extensions' && (
-          <ExtensionsTab />
+        {mountedTabs.extensions && (
+          <div style={{ display: activeTab === 'extensions' ? 'block' : 'none' }}>
+            <ExtensionsTab />
+          </div>
         )}
 
         {/* Activity Tab — full feed (overview shows compact recent list separately) */}
-        {activeTab === 'activity' && (
-          <div className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]">
+        {mountedTabs.activity && (
+          <div
+            className="space-y-6 py-6 px-6 lg:px-[80px] xl:px-[160px]"
+            style={{ display: activeTab === 'activity' ? 'block' : 'none' }}
+          >
             <ScopedActivityPanel
               scope={{ type: 'project', projectId: project.publicId }}
             />
@@ -3126,16 +3226,18 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         )}
 
         {/* Settings Tab */}
-        {activeTab === 'settings' && (
-          <SettingsTab
-            projectName={project.name}
-            projectCode={project.publicId}
-            projectDescription={project.description}
-            projectPublicId={project.publicId}
-            projectCoverImageUrl={projectCoverImageUrl}
-            onSettingsUpdated={handleSettingsUpdated}
-            onActivityAdded={() => setActivitiesVersion(v => v + 1)}
-          />
+        {mountedTabs.settings && (
+          <div style={{ display: activeTab === 'settings' ? 'block' : 'none' }}>
+            <SettingsTab
+              projectName={project.name}
+              projectCode={project.publicId}
+              projectDescription={project.description}
+              projectPublicId={project.publicId}
+              projectCoverImageUrl={projectCoverImageUrl}
+              onSettingsUpdated={handleSettingsUpdated}
+              onActivityAdded={() => setActivitiesVersion(v => v + 1)}
+            />
+          </div>
         )}
   
         {/* Other Tabs - Placeholder (only for tabs without content yet) */}
@@ -3165,5 +3267,3 @@ export default function ProjectDetailPage({ project, isGuest, guestToken }: Proj
     </QueryClientProvider>
   );
 }
-
-

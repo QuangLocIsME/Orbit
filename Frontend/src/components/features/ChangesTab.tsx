@@ -5,8 +5,12 @@ import { cn } from '@/lib/utils';
 import { getTodayLocalDateString, localDateStringToUTCDate, utcDateStringToLocalDateString } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-client';
 import { toast } from 'sonner';
+import { getSocket } from '@/lib/socket';
+import { refreshApiCache } from '@/lib/sw-utils';
+import { getProjectTabCache, mergeProjectTabCache } from '@/stores/projectDetailCacheStore';
 import { FileIcon, fmtSize, MAX_ATTACH_SIZE, Avatar } from './TaskFormShared';
 import { MemberPicker, AttachPicker } from './TaskFormShared';
+import { CommentSection, type CommentItem } from './TaskFormShared';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -848,38 +852,6 @@ function DeleteConfirmModal({ cr, onClose, onDeleted }: {
   );
 }
 
-// ─── CR Comment types ─────────────────────────────────────────────────────────
-
-interface CRComment {
-  publicId: string;
-  authorId: string;
-  authorName: string;
-  avatar?: string;
-  content: string;
-  createdAt: string;
-  updatedAt?: string;
-  isEdited?: boolean;
-}
-
-function fmtCommentTime(d: string) {
-  const diff = Date.now() - new Date(d).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(d).toLocaleDateString();
-}
-
-function nameToColor(name: string) {
-  const PALETTE = ['#6366F1','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6'];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return PALETTE[Math.abs(hash) % PALETTE.length];
-}
-
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
 function DetailModal({
@@ -900,13 +872,6 @@ function DetailModal({
   onRefreshCR?: (freshCR: ChangeRequest) => void;
 }) {
   const [updating, setUpdating] = useState(false);
-  const [comments, setComments] = useState<CRComment[]>([]);
-  const [loadingComments, setLoadingComments] = useState(true);
-  const [commentInput, setCommentInput] = useState('');
-  const [posting, setPosting] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState('');
 
   // ── Task linking state ─────────────────────────────────────────────────────────
   const [linkedTasks, setLinkedTasks] = useState<LinkedTask[]>([]);
@@ -943,27 +908,6 @@ function DetailModal({
   const isCreator = cr.createdBy === currentUserId;
   const canUpdateStatus = currentRole === 'admin' || isCreator;
   const canEdit = currentRole === 'admin' || isCreator;
-
-  // Load comments on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoadingComments(true);
-      try {
-        const res = await apiFetch('/api/change-requests/comments/list', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ crId: cr.publicId, projectId: projectPublicId }),
-        });
-        if (res.ok && !cancelled) {
-          const d = await res.json();
-          setComments(Array.isArray(d?.data) ? d.data : []);
-        }
-      } catch { /* silent */ }
-      finally { if (!cancelled) setLoadingComments(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [cr.publicId, projectPublicId]);
 
   // ── Load linked tasks ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1191,81 +1135,6 @@ function DetailModal({
       }
     } catch { toast.error('Failed to create version'); }
     finally { setCreatingVersion(false); }
-  };
-
-  const submitComment = async () => {
-    const content = commentInput.trim();
-    if (!content || posting) return;
-    setPosting(true);
-    try {
-      const res = await apiFetch('/api/change-requests/comments/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ crId: cr.publicId, projectId: projectPublicId, content }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setComments(prev => [...prev, data.data]);
-        setCommentInput('');
-        if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      } else {
-        toast.error(data.message || 'Failed to post comment');
-      }
-    } catch { toast.error('Failed to post comment'); }
-    finally { setPosting(false); }
-  };
-
-  const startEdit = (comment: CRComment) => {
-    setEditingCommentId(comment.publicId);
-    setEditingContent(comment.content);
-  };
-
-  const cancelEdit = () => {
-    setEditingCommentId(null);
-    setEditingContent('');
-  };
-
-  const saveEdit = async (commentId: string) => {
-    if (!editingContent.trim()) return;
-    try {
-      const res = await apiFetch('/api/change-requests/comments', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commentId, content: editingContent.trim() }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setComments(prev => prev.map(c => 
-          c.publicId === commentId ? { ...c, content: data.data.content, isEdited: true, updatedAt: data.data.updatedAt } : c
-        ));
-        cancelEdit();
-      } else {
-        toast.error(data.message || 'Failed to update comment');
-      }
-    } catch { toast.error('Failed to update comment'); }
-  };
-
-  const deleteComment = async (commentId: string) => {
-    if (!confirm('Delete this comment?')) return;
-    try {
-      const res = await apiFetch('/api/change-requests/comments', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commentId }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setComments(prev => prev.filter(c => c.publicId !== commentId));
-      } else {
-        toast.error(data.message || 'Failed to delete comment');
-      }
-    } catch { toast.error('Failed to delete comment'); }
-  };
-
-  const autoResize = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setCommentInput(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${e.target.scrollHeight}px`;
   };
 
   return (
@@ -1716,134 +1585,14 @@ function DetailModal({
           )}
 
           {/* ── Comments Section ──────────────────────────────────────────── */}
-          <div className="border-t border-[#E5E7EB] pt-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.7}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
-                </svg>
-                <span className="text-sm font-semibold text-foreground">Comments</span>
-              </div>
-              {comments.length > 0 && (
-                <span className="ml-auto inline-flex h-5 items-center rounded-full bg-muted px-2 text-[10px] font-medium text-muted-foreground">{comments.length}</span>
-              )}
-            </div>
-
-            {/* Comment input */}
-            <div className="rounded-xl border border-border bg-background shadow-sm">
-              <textarea
-                ref={textareaRef}
-                placeholder="Write a comment…"
-                value={commentInput}
-                onChange={autoResize}
-                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment(); }}
-                className="w-full resize-none rounded-t-xl bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none min-h-[72px]"
-              />
-              <div className="flex items-center justify-between border-t border-border px-3 py-2">
-                <span className="text-[11px] text-muted-foreground/60">Ctrl + Enter to post</span>
-                <button
-                  onClick={submitComment}
-                  disabled={!commentInput.trim() || posting}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity disabled:opacity-40 hover:opacity-80"
-                >
-                  {posting ? (
-                    <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                  ) : (
-                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
-                  )}
-                  {posting ? 'Posting…' : 'Post'}
-                </button>
-              </div>
-            </div>
-
-            {/* Comment list */}
-            {loadingComments ? (
-              <div className="flex items-center justify-center py-6">
-                <svg className="h-5 w-5 animate-spin text-[#155DFC]" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-              </div>
-            ) : comments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted/60">
-                  <svg className="h-4 w-4 text-muted-foreground/50" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/>
-                  </svg>
-                </div>
-                <p className="mt-2 text-[13px] text-muted-foreground">No comments yet.</p>
-              </div>
-            ) : (
-              <div className="space-y-1 pt-1">
-                {comments.map(c => (
-                  <div key={c.publicId} className="flex gap-3 rounded-xl p-2 transition-colors hover:bg-muted/30 group">
-                    {c.avatar ? (
-                      <img
-                        src={c.avatar}
-                        alt={c.authorName}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full object-cover text-xs font-semibold text-white"
-                      />
-                    ) : (
-                      <div
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-                        style={{ backgroundColor: nameToColor(c.authorName) }}
-                      >
-                        {c.authorName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-semibold text-foreground">{c.authorName}</span>
-                        <span className="text-[11px] text-muted-foreground/60">{fmtCommentTime(c.createdAt)}</span>
-                        {c.isEdited && <span className="text-[11px] text-muted-foreground/60 italic">(Edited)</span>}
-                      </div>
-                      {editingCommentId === c.publicId ? (
-                        <div className="space-y-2">
-                          <textarea
-                            value={editingContent}
-                            onChange={(e) => setEditingContent(e.target.value)}
-                            className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-[#155DFC] focus:outline-none"
-                            rows={2}
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => saveEdit(c.publicId)}
-                              className="px-3 py-1 text-xs font-medium bg-[#155DFC] text-white rounded-lg hover:bg-blue-700"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={cancelEdit}
-                              className="px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-[13px] leading-relaxed text-foreground/80 whitespace-pre-wrap">{c.content}</p>
-                      )}
-                      {(currentUserId === c.authorId || currentRole === 'admin') && !editingCommentId && (
-                        <div className="flex gap-3 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {currentUserId === c.authorId && (
-                            <button
-                              onClick={() => startEdit(c)}
-                              className="text-[11px] text-muted-foreground hover:text-[#155DFC]"
-                            >
-                              Edit
-                            </button>
-                          )}
-                          <button
-                            onClick={() => deleteComment(c.publicId)}
-                            className="text-[11px] text-muted-foreground hover:text-red-500"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <CommentSection
+            type="change-request"
+            targetId={cr.publicId}
+            projectId={projectPublicId}
+            currentUserId={currentUserId}
+            currentRole={currentRole}
+            variant="detail"
+          />
         </div>
 
         <div className="flex justify-end px-6 py-4 border-t border-[#E5E7EB] shrink-0">
@@ -1928,7 +1677,18 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
           body: JSON.stringify({ projectId: projectPublicId }),
         }),
       ]);
-      if (dRes.ok)    { const d = await dRes.json(); setDisciplines(d.data || []); }
+      let nextDisciplines: Discipline[] = [];
+      let nextModelFiles: ModelFile[] = [];
+      let nextTeamMembers: TeamMember[] = [];
+      let nextCurrentUserId = '';
+      let nextCurrentRole: 'admin' | 'member' | 'viewer' = 'member';
+      let nextWorkflowStages: { id: string; name: string; color?: string }[] = [];
+
+      if (dRes.ok) {
+        const d = await dRes.json();
+        nextDisciplines = d.data || [];
+        setDisciplines(nextDisciplines);
+      }
       if (docsRes.ok) {
         const d = await docsRes.json();
         const flatten = (nodes: any[]): ModelFile[] => {
@@ -1940,13 +1700,23 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
           return out;
         };
         const tree = d?.data?.tree;
-        if (tree) setModelFiles(flatten(tree.children || []));
+        if (tree) {
+          nextModelFiles = flatten(tree.children || []);
+          setModelFiles(nextModelFiles);
+        }
       }
       if (teamRes.ok) {
         const d = await teamRes.json();
-        setTeamMembers(d?.data || []);
-        if (d?.currentUserId) setCurrentUserId(d.currentUserId);
-        if (d?.currentRole)   setCurrentRole(d.currentRole as 'admin' | 'member' | 'viewer');
+        nextTeamMembers = d?.data || [];
+        setTeamMembers(nextTeamMembers);
+        if (d?.currentUserId) {
+          nextCurrentUserId = d.currentUserId;
+          setCurrentUserId(d.currentUserId);
+        }
+        if (d?.currentRole) {
+          nextCurrentRole = d.currentRole as 'admin' | 'member' | 'viewer';
+          setCurrentRole(nextCurrentRole);
+        }
       }
       // Fetch workflow stages for task status labels
       try {
@@ -1962,14 +1732,215 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
             name: String(s.label || s.name || ''),
             color: s.color || undefined,
           }));
+          nextWorkflowStages = stages;
           setWorkflowStages(stages);
         }
       } catch { /* silent */ }
+
     } catch { /* silent */ }
     finally { setLoadingFiles(false); }
   }, [projectPublicId]);
 
-  useEffect(() => { loadCR(); loadMeta(); }, [loadCR, loadMeta]);
+  useEffect(() => {
+    const cached = getProjectTabCache<{
+      changeRequests?: ChangeRequest[];
+      disciplines?: Discipline[];
+      modelFiles?: ModelFile[];
+      teamMembers?: TeamMember[];
+      currentUserId?: string;
+      currentRole?: 'admin' | 'member' | 'viewer';
+      workflowStages?: { id: string; name: string; color?: string }[];
+    }>(projectPublicId, 'changes');
+
+    if (cached?.data) {
+      if (cached.data.changeRequests) setChangeRequests(cached.data.changeRequests);
+      if (cached.data.disciplines) setDisciplines(cached.data.disciplines);
+      if (cached.data.modelFiles) setModelFiles(cached.data.modelFiles);
+      if (cached.data.teamMembers) setTeamMembers(cached.data.teamMembers);
+      if (cached.data.currentUserId) setCurrentUserId(cached.data.currentUserId);
+      if (cached.data.currentRole) setCurrentRole(cached.data.currentRole);
+      if (cached.data.workflowStages) setWorkflowStages(cached.data.workflowStages);
+      setLoadingCR(false);
+      setLoadingFiles(false);
+      loadCR().catch(() => {});
+      loadMeta().catch(() => {});
+      return;
+    }
+
+    loadCR();
+    loadMeta();
+  }, [loadCR, loadMeta, projectPublicId]);
+
+  useEffect(() => {
+    mergeProjectTabCache(projectPublicId, 'changes', {
+      changeRequests,
+      disciplines,
+      modelFiles,
+      teamMembers,
+      currentUserId,
+      currentRole,
+      workflowStages,
+    });
+  }, [changeRequests, currentRole, currentUserId, disciplines, modelFiles, projectPublicId, teamMembers, workflowStages]);
+
+  // WebSocket realtime — use SW refresh pipeline instead of full re-fetch.
+  // SW fetches in background, delivers data via postMessage → sw:data event → this component
+  // patches state via the sw:data listener below. No loading flicker, no jank.
+  useEffect(() => {
+    const socket = getSocket();
+    socket.emit('project:join', { projectId: projectPublicId });
+    const crRoute = `/api/projects/${projectPublicId}/change-requests`;
+
+    // Register CR route with SW so it caches and intercepts fetches
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'CACHE_ROUTES',
+        payload: { routes: [crRoute] },
+      });
+    }
+
+    const handleCrCreated = ({ projectId }: { projectId: string }) => {
+      if (projectId !== projectPublicId) return;
+      // Optimistic: prepend a placeholder or just let SW refresh deliver fresh data
+      refreshApiCache([crRoute]);
+    };
+
+    const handleCrUpdated = ({ projectId }: { projectId: string }) => {
+      if (projectId !== projectPublicId) return;
+      refreshApiCache([crRoute]);
+    };
+
+    const handleCrStatusChanged = ({ projectId }: { projectId: string }) => {
+      if (projectId !== projectPublicId) return;
+      refreshApiCache([crRoute]);
+    };
+
+    const handleCrDeleted = ({ projectId }: { projectId: string }) => {
+      if (projectId !== projectPublicId) return;
+      refreshApiCache([crRoute]);
+    };
+
+    const dispatchCommentsToDetail = (crId: string) => {
+      fetch(`/api/change-requests/comments/list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crId, projectId: projectPublicId }),
+      })
+        .then(r => r.json())
+        .then(d => {
+          const list: CommentItem[] = (Array.isArray(d?.data) ? d.data : []).map((c: any) => ({
+            id: String(c.publicId || c.id || Math.random()),
+            authorId: String(c.authorId || c.author?._id || ''),
+            authorName: String(c.authorName || c.author?.fullName || c.author?.name || 'Unknown'),
+            avatar: c.avatar || c.author?.avatar || null,
+            content: String(c.content || ''),
+            createdAt: String(c.createdAt || ''),
+            updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
+            isEdited: Boolean(c.isEdited),
+          }));
+          window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', { detail: list }));
+        })
+        .catch(() => {});
+    };
+
+    const handleCrCommentAdded = ({ projectId, crId, comment }: { projectId: string; crId: string; comment?: { publicId: string; authorId: string; authorName: string; avatar?: string | null; content: string; createdAt: string; updatedAt?: string; isEdited?: boolean } }) => {
+      if (projectId !== projectPublicId) return;
+      if (detailCR?.publicId !== crId) return;
+      if (!comment) {
+        dispatchCommentsToDetail(crId);
+        return;
+      }
+
+      const incoming: CommentItem = {
+        id: String(comment.publicId),
+        authorId: String(comment.authorId || ''),
+        authorName: String(comment.authorName || 'Unknown'),
+        avatar: comment.avatar || null,
+        content: String(comment.content || ''),
+        createdAt: String(comment.createdAt || ''),
+        updatedAt: comment.updatedAt ? String(comment.updatedAt) : undefined,
+        isEdited: Boolean(comment.isEdited),
+      };
+
+      window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', { detail: [incoming] }));
+    };
+
+    const handleCrCommentChanged = ({ projectId, crId }: { projectId: string; crId: string }) => {
+      if (projectId !== projectPublicId) return;
+      if (detailCR?.publicId !== crId) return;
+      dispatchCommentsToDetail(crId);
+    };
+
+    const handleMetaChanged = ({ projectId }: { projectId: string }) => {
+      if (projectId !== projectPublicId) return;
+      loadMeta();
+    };
+
+    const handleProjectUpdated = ({ projectId, changes }: { projectId: string; changes?: Record<string, unknown> }) => {
+      if (projectId !== projectPublicId) return;
+      const update = changes || {};
+      if ('workflow' in update || 'workflowTemplateId' in update || 'taskTags' in update || 'settings' in update) {
+        loadMeta();
+      }
+    };
+
+    socket.on('cr:created', handleCrCreated);
+    socket.on('cr:updated', handleCrUpdated);
+    socket.on('cr:status-changed', handleCrStatusChanged);
+    socket.on('cr:deleted', handleCrDeleted);
+    socket.on('cr:comment_added', handleCrCommentAdded);
+    socket.on('cr:comment_updated', handleCrCommentChanged);
+    socket.on('cr:comment_deleted', handleCrCommentChanged);
+    socket.on('cr:version_created', handleCrUpdated);
+    socket.on('cr:version_updated', handleCrUpdated);
+    socket.on('disciplines:changed', handleMetaChanged);
+    socket.on('project:member:joined', handleMetaChanged);
+    socket.on('project:member:left', handleMetaChanged);
+    socket.on('project:member:role-updated', handleMetaChanged);
+    socket.on('project:workflow-updated', handleMetaChanged);
+    socket.on('project:updated', handleProjectUpdated);
+
+    return () => {
+      socket.off('cr:created', handleCrCreated);
+      socket.off('cr:updated', handleCrUpdated);
+      socket.off('cr:status-changed', handleCrStatusChanged);
+      socket.off('cr:deleted', handleCrDeleted);
+      socket.off('cr:comment_added', handleCrCommentAdded);
+      socket.off('cr:comment_updated', handleCrCommentChanged);
+      socket.off('cr:comment_deleted', handleCrCommentChanged);
+      socket.off('cr:version_created', handleCrUpdated);
+      socket.off('cr:version_updated', handleCrUpdated);
+      socket.off('disciplines:changed', handleMetaChanged);
+      socket.off('project:member:joined', handleMetaChanged);
+      socket.off('project:member:left', handleMetaChanged);
+      socket.off('project:member:role-updated', handleMetaChanged);
+      socket.off('project:workflow-updated', handleMetaChanged);
+      socket.off('project:updated', handleProjectUpdated);
+      socket.emit('project:leave', { projectId: projectPublicId });
+    };
+  }, [projectPublicId, loadMeta, detailCR?.publicId]);
+
+  // ── SW Data Listener ─────────────────────────────────────────────────────────
+  // Listen for SW-delivered CR data and patch state directly — no loading state needed.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const crRoute = `/api/projects/${projectPublicId}/change-requests`;
+
+    const handleSWData = (e: Event) => {
+      const { route, data } = (e as CustomEvent<{ route: string; data: unknown; isStale: boolean }>).detail;
+      if (!route || !route.includes(projectPublicId) || !route.includes('change-requests')) return;
+
+      const crs = Array.isArray(data) ? data : (data as any)?.data;
+      if (!Array.isArray(crs)) return;
+
+      setChangeRequests(crs);
+      setFilter('all');
+    };
+
+    window.addEventListener('sw:data', handleSWData);
+    return () => window.removeEventListener('sw:data', handleSWData);
+  }, [projectPublicId]);
 
   const filtered = changeRequests.filter(cr => {
     if (filter === 'pending'      && cr.status !== 'pending')      return false;
