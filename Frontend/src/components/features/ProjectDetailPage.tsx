@@ -2983,7 +2983,9 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
           <ClashesTab
             projectPublicId={project.publicId}
             projectDisplayName={project.name}
-            currentUserRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
+            currentUserRole={
+              project.role as 'owner' | 'admin' | 'manager' | 'member' | 'viewer'
+            }
           />
         )}
 

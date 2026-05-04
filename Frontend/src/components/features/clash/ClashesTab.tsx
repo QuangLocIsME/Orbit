@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { apiUrl } from '@/config/api';
@@ -11,7 +11,7 @@ import { clashesOverviewKey } from './hooks/useNavisworksWorkspace';
 interface ClashesTabProps {
   projectPublicId: string;
   projectDisplayName?: string;
-  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
+  currentUserRole?: 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 }
 
 // ─── API types ────────────────────────────────────────────────────────────────
@@ -400,6 +400,44 @@ export default function ClashesTab({ projectPublicId, projectDisplayName, curren
   const [showWorkspace, setShowWorkspace] = useState(false);
   const [workspaceFocus, setWorkspaceFocus] = useState<{ testId: string; clashId: string } | null>(null);
   const canManageClash = currentUserRole !== 'viewer';
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('clashView') !== 'workspace') return;
+
+    const testId = params.get('clashTestId');
+    const clashId = params.get('clashId');
+    if (testId && clashId) {
+      setWorkspaceFocus({ testId, clashId });
+    } else {
+      setWorkspaceFocus(null);
+    }
+    setShowWorkspace(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+
+    if (showWorkspace) {
+      url.searchParams.set('clashView', 'workspace');
+      if (workspaceFocus?.testId) url.searchParams.set('clashTestId', workspaceFocus.testId);
+      else url.searchParams.delete('clashTestId');
+      if (workspaceFocus?.clashId) url.searchParams.set('clashId', workspaceFocus.clashId);
+      else url.searchParams.delete('clashId');
+    } else {
+      url.searchParams.delete('clashView');
+      url.searchParams.delete('clashTestId');
+      url.searchParams.delete('clashId');
+    }
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState({}, '', nextUrl);
+    }
+  }, [showWorkspace, workspaceFocus]);
 
   if (!projectPublicId.trim()) {
     return (

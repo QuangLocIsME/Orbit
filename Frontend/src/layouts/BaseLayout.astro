@@ -5,12 +5,17 @@ import { ClientRouter } from 'astro:transitions';
 interface Props {
   title?: string;
   description?: string;
+  /** Extra classes on `<body>` (e.g. dark bg for full-bleed viewer pages). */
+  bodyClass?: string;
 }
 
 const { 
   title = 'ORBIT - Project Management', 
-  description = 'A high-performance project management dashboard built with Astro.js' 
+  description = 'A high-performance project management dashboard built with Astro.js',
+  bodyClass = '',
 } = Astro.props;
+
+const bodyClasses = ['min-h-screen', 'font-sans', bodyClass].filter(Boolean).join(' ');
 ---
 
 <!doctype html>
@@ -49,7 +54,7 @@ const {
       }
     </script>
   </head>
-  <body class="min-h-screen font-sans" transition:animate="none">
+  <body class={bodyClasses} transition:animate="none">
     <slot />
   </body>
 </html>

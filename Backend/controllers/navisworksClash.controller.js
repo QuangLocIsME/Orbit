@@ -169,13 +169,21 @@ class NavisworksClashController {
         try {
             const projectSlug = getProjectSlug(req);
             if (!projectSlug) return errorResponse(res, 400, 'Missing project slug');
+            const actorUserId = req.user?.id || null;
             const payload = await navisworksClashService.updateClashStatus(
                 projectSlug,
                 req.params?.clashId,
-                req.body || {}
+                req.body || {},
+                { actorUserId }
             );
             return res.status(200).json({ success: true, ...payload });
         } catch (error) {
+            if (error && error.code === 'CLASH_RESOLVE_FORBIDDEN') {
+                return errorResponse(res, 403, error.message || 'Forbidden');
+            }
+            if (error && error.code === 'CLASH_NOTE_ASSIGNEE_FORBIDDEN') {
+                return errorResponse(res, 403, error.message || 'Forbidden');
+            }
             return errorResponse(res, 400, error.message || 'Failed to update clash status');
         }
     }

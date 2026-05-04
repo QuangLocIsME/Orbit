@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import type { Clash } from '../types/clashes';
+import type { BBox, Clash } from '../types/clashes';
 import { useObjectInteraction } from '../hooks/useObjectInteraction';
 import {
+  computeClashDetailMeshOriginWorld,
   computeWorldOriginFromScene,
-  resolveClashZoneForViewer,
   transformMeshPositionsToViewerSpace,
   type SceneObject,
 } from '../lib/clashScene';
@@ -14,6 +14,195 @@ import type { ViewerAdapter } from '../lib/viewerAdapter';
 import { useClashViewerStore } from '../state/clashStore';
 import { XeoKitViewerAdapter } from '../lib/xeoKitViewerAdapter';
 import { useMeasureDistance, type Measurement } from '@/hooks/useMeasureDistance';
+import { toast } from 'sonner';
+import { AlertTriangle, Focus, Layers2 } from 'lucide-react';
+
+/** Ensure CSS layout has given the canvas a non-zero size before creating WebGL (avoids 300×150 fallback). */
+async function waitForCanvasLayout(canvas: HTMLCanvasElement, timeoutMs = 12000): Promise<void> {
+  if (canvas.clientWidth > 0 && canvas.clientHeight > 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const t = window.setTimeout(() => {
+      ro.disconnect();
+      reject(new Error('Viewer canvas has no size — layout not ready'));
+    }, timeoutMs);
+    const ro = new ResizeObserver(() => {
+      if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+        window.clearTimeout(t);
+        ro.disconnect();
+        resolve();
+      }
+    });
+    ro.observe(canvas);
+    requestAnimationFrame(() => {
+      if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+        window.clearTimeout(t);
+        ro.disconnect();
+        resolve();
+      }
+    });
+  });
+}
+
+/** Union of axis-aligned boxes [xmin,ymin,zmin,xmax,ymax,zmax] in world metres. */
+function unionWorldAABBs(pieces: number[][]): number[] | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const p of pieces) {
+    if (!Array.isArray(p) || p.length < 6) continue;
+    minX = Math.min(minX, p[0]);
+    minY = Math.min(minY, p[1]);
+    minZ = Math.min(minZ, p[2]);
+    maxX = Math.max(maxX, p[3]);
+    maxY = Math.max(maxY, p[4]);
+    maxZ = Math.max(maxZ, p[5]);
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+  return [minX, minY, minZ, maxX, maxY, maxZ];
+}
+
+/**
+ * Merge world AABBs for the clash pair — union every source that exists:
+ * live xeokit entity bounds (one or both), federated `objectABBox` / `objectBBBox`, so Focus works when only one id resolves in XKT.
+ */
+function mergeClashWorldAabb(clash: Clash, adapter: XeoKitViewerAdapter): number[] | null {
+  const pieces: number[][] = [];
+  const ba = adapter.getObjectBoundingBox(clash.objectA);
+  const bb = adapter.getObjectBoundingBox(clash.objectB);
+  if (ba) pieces.push([ba.min[0], ba.min[1], ba.min[2], ba.max[0], ba.max[1], ba.max[2]]);
+  if (bb) pieces.push([bb.min[0], bb.min[1], bb.min[2], bb.max[0], bb.max[1], bb.max[2]]);
+  if (clash.objectABBox) {
+    const a = clash.objectABBox;
+    pieces.push([a.min[0], a.min[1], a.min[2], a.max[0], a.max[1], a.max[2]]);
+  }
+  if (clash.objectBBBox) {
+    const b = clash.objectBBBox;
+    pieces.push([b.min[0], b.min[1], b.min[2], b.max[0], b.max[1], b.max[2]]);
+  }
+  return unionWorldAABBs(pieces);
+}
+
+/** When the union of both element AABBs is smaller than this diagonal (m), frame that union directly. */
+const MAX_FULL_PAIR_UNION_DIAG_M = 14;
+/** Padding around a tight “clash neighborhood” when the pair union is huge (e.g. wall + fitting). */
+const CLASH_NEIGHBORHOOD_PAD_M = 2.75;
+/** Fallback cube half-size when only `clash.position` is reliable (metres). */
+const POSITION_FALLBACK_HALF_M = 4;
+
+function bboxToBox6(bb: { min: [number, number, number]; max: [number, number, number] }): number[] {
+  return [bb.min[0], bb.min[1], bb.min[2], bb.max[0], bb.max[1], bb.max[2]];
+}
+
+/** World AABB for one clash element: prefer live XKT bounds, else backend `objectA/B` box. */
+function box6ForClashElement(
+  adapter: XeoKitViewerAdapter,
+  objectId: string,
+  fallback?: BBox
+): number[] | null {
+  const live = adapter.getObjectBoundingBox(objectId);
+  if (live) {
+    return [live.min[0], live.min[1], live.min[2], live.max[0], live.max[1], live.max[2]];
+  }
+  if (fallback) return bboxToBox6(fallback);
+  return null;
+}
+
+function boxDiagonal(box: number[]): number {
+  const [x0, y0, z0, x1, y1, z1] = box;
+  return Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+}
+
+function centerOfBox6(b: number[]): [number, number, number] {
+  return [(b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2];
+}
+
+function isFinitePosition(p: unknown): p is [number, number, number] {
+  if (!Array.isArray(p) || p.length < 3) return false;
+  return [Number(p[0]), Number(p[1]), Number(p[2])].every((n) => Number.isFinite(n));
+}
+
+/** Minimal axis-aligned box containing all points, expanded by `pad` on every side. */
+function aabbAroundPoints(points: Array<[number, number, number]>, pad: number): number[] | null {
+  if (points.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const [x, y, z] of points) {
+    minX = Math.min(minX, x - pad);
+    minY = Math.min(minY, y - pad);
+    minZ = Math.min(minZ, z - pad);
+    maxX = Math.max(maxX, x + pad);
+    maxY = Math.max(maxY, y + pad);
+    maxZ = Math.max(maxZ, z + pad);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return [minX, minY, minZ, maxX, maxY, maxZ];
+}
+
+/**
+ * Camera framing for clash detail — **both conflicting objects** in view.
+ * - Prefer the **union AABB** of object A and object B when that union is not huge.
+ * - If the union is huge (typical: one bbox is an entire host wall), shrink to the neighborhood of
+ *   **both element centers** plus **clash.position**, so the shot stays on the clash, not the whole wall.
+ * - Avoid framing only on `clash.position` with a tiny cube — that missed XKT/object alignment.
+ */
+function buildClashFocusWorldAabb(clash: Clash, adapter: XeoKitViewerAdapter): number[] | null {
+  const boxA = box6ForClashElement(adapter, clash.objectA, clash.objectABBox);
+  const boxB = box6ForClashElement(adapter, clash.objectB, clash.objectBBBox);
+  const mergedPair = unionWorldAABBs(
+    [boxA, boxB].filter((b): b is number[] => Array.isArray(b) && b.length >= 6)
+  );
+
+  const mergedFallback = mergeClashWorldAabb(clash, adapter);
+
+  if (!mergedPair) {
+    if (mergedFallback) return mergedFallback;
+    if (isFinitePosition(clash.position)) {
+      const [px, py, pz] = clash.position.map(Number) as [number, number, number];
+      const h = POSITION_FALLBACK_HALF_M;
+      return [px - h, py - h, pz - h, px + h, py + h, pz + h];
+    }
+    return null;
+  }
+
+  const diag = boxDiagonal(mergedPair);
+  if (diag <= MAX_FULL_PAIR_UNION_DIAG_M) {
+    return mergedPair;
+  }
+
+  /** Large union: frame centers of A & B and the reported clash point (ignores oversized wall slabs). */
+  const pts: Array<[number, number, number]> = [];
+  if (boxA) pts.push(centerOfBox6(boxA));
+  if (boxB) pts.push(centerOfBox6(boxB));
+  if (isFinitePosition(clash.position)) {
+    pts.push(clash.position.map(Number) as [number, number, number]);
+  }
+  const tight = aabbAroundPoints(pts, CLASH_NEIGHBORHOOD_PAD_M);
+  if (tight) return tight;
+
+  return mergedFallback ?? mergedPair;
+}
+
+/** Per-element visibility for clash pair when suppressing XKT/bbox (no mesh / proxy) — must restore `visible` when suppression clears. */
+function applyClashSuppressedEntityVisibility(
+  adapter: XeoKitViewerAdapter,
+  clash: Clash,
+  suppressed: string[]
+): void {
+  for (const id of [clash.objectA, clash.objectB] as const) {
+    if (!id) continue;
+    adapter.setEntitiesVisibility([id], !suppressed.includes(id));
+  }
+}
+
+const isProxyCategory = (category?: string | null) =>
+  (category ?? '').trim().toLowerCase() === 'buildingelementproxy';
 
 /** Compact measurement results panel — shared across overview and clash detail sections. */
 function MeasurePanel({
@@ -28,7 +217,7 @@ function MeasurePanel({
   formatDistance: (meters: number) => string;
 }) {
   return (
-    <div className="w-64 shrink-0 overflow-y-auto rounded-xl border border-[#2a3245] bg-[#131a2b]">
+    <div className="h-full min-h-0 w-64 shrink-0 overflow-y-auto rounded-xl border border-[#2a3245] bg-[#131a2b]">
       <div className="sticky top-0 z-10 border-b border-[#2a3245] bg-[#0d1117] px-3 py-2">
         <div className="flex items-center justify-between">
           <div>
@@ -127,11 +316,13 @@ interface Viewer3DProps {
   adapter?: ViewerAdapter;
   testScopeObjectIds?: string[];
   deEmphasizeUnrelated?: boolean;
-  showScopeBadge?: boolean;
-  hideUnrelatedActive?: boolean;
   /** XKT federated models loaded in xeokit for hybrid render — both overview and clash detail. */
   projectSlug?: string | null;
   xktModels?: { id: string }[];
+  /** When true, workspace already includes at least one XKT model — suppress bbox before `xktModels` is populated (e.g. after reload). */
+  projectUsesXktGeometry?: boolean;
+  /** While workspace is still loading, do not draw the bbox clash placeholder (avoids a red flash). */
+  deferClashBboxOverlay?: boolean;
   /** Real mesh triangle positions per object id (flat array, every 9 floats = 1 triangle, world-space meters). */
   objectMeshPositions?: Record<string, number[]>;
   /** Show measure distance toolbar + panel. Default true. */
@@ -150,17 +341,30 @@ export default function Viewer3D({
   adapter,
   testScopeObjectIds = [],
   deEmphasizeUnrelated = false,
-  showScopeBadge = false,
-  hideUnrelatedActive = false,
   projectSlug = null,
   xktModels,
+  projectUsesXktGeometry = false,
+  deferClashBboxOverlay = false,
   objectMeshPositions = {},
   showMeasureToolbar = true,
 }: Viewer3DProps) {
+  const clashRef = useRef(clash);
+  clashRef.current = clash;
+
   const xeokitCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const xeokitBootstrappedRef = useRef(false);
   const [xeokitAdapter, setXeokitAdapter] = useState<XeoKitViewerAdapter | null>(null);
   const [showMeasurePanel, setShowMeasurePanel] = useState(false);
+  /** XKT-only: dim/hide non-clash geometry; clash pair keeps native IFC colors. */
+  const [xktIsolation, setXktIsolation] = useState<'off' | 'dim' | 'hide'>('dim');
+  const isolationRef = useRef(xktIsolation);
+  isolationRef.current = xktIsolation;
+  /** Tracks last applied isolation pass so we can full-reset xeokit when clash or All/Dim/Hide changes (avoids stale entity state). */
+  const prevClashIdForIsoRef = useRef<string | undefined>(undefined);
+  const prevXktIsolationAppliedRef = useRef<'off' | 'dim' | 'hide'>(xktIsolation);
+  /** True after XKT models for this workspace are in the viewer (reload when `xktModelIdsKey` changes). */
+  const [clashDetailXktSynced, setClashDetailXktSynced] = useState(false);
+  const missingPairToastForClashRef = useRef<string | null>(null);
   /** Raw xeokit Viewer instance — set after async init so useMeasureDistance can attach the plugin. */
   const rawViewerRef = useRef<unknown>(null);
   /** Cached doublePickFlyTo value so we can restore it when measurement mode ends. */
@@ -191,6 +395,13 @@ export default function Viewer3D({
   const effectiveAdapter = adapter ?? xeokitAdapter;
   const xeokitInteractive = Boolean(xeokitAdapter);
   const visibleObjects = objects.filter((object) => !hiddenObjectIds.includes(object.id));
+  const clashProxyObjectIds = useMemo(() => {
+    if (!clash) return [];
+    const ids: string[] = [];
+    if (isProxyCategory(clash.element1?.category)) ids.push(clash.objectA);
+    if (isProxyCategory(clash.element2?.category)) ids.push(clash.objectB);
+    return ids;
+  }, [clash]);
 
   /**
    * Pre-transform raw IFC-world-space mesh positions into viewer-space so xeokit
@@ -207,20 +418,20 @@ export default function Viewer3D({
 
     if (clash) {
       const scene = clashStore.getScene(clash.id);
-      const sa = scene?.find((o) => o.id === clash.objectA);
-      const sb = scene?.find((o) => o.id === clash.objectB);
-      if (sa?.worldPosition && sb?.worldPosition) {
-        originWorld = [
-          (sa.worldPosition[0] + sb.worldPosition[0]) / 2,
-          (sa.worldPosition[1] + sb.worldPosition[1]) / 2,
-          (sa.worldPosition[2] + sb.worldPosition[2]) / 2,
-        ];
-      }
+      originWorld = computeClashDetailMeshOriginWorld(clash, objectMeshPositions, scene);
     } else if (overviewScene?.length) {
       originWorld = computeWorldOriginFromScene(overviewScene);
     }
 
-    if (!originWorld) return {};
+    if (!originWorld) {
+      /** Clash detail only: IFC mesh vertices in world space — matches XKT when scene origin is not ready yet. */
+      if (!clash) return {};
+      const worldAligned: Record<string, number[]> = {};
+      for (const [id, positions] of Object.entries(objectMeshPositions)) {
+        if (positions.length >= 9) worldAligned[id] = positions;
+      }
+      return worldAligned;
+    }
 
     const result: Record<string, number[]> = {};
     for (const [id, positions] of Object.entries(objectMeshPositions)) {
@@ -230,11 +441,70 @@ export default function Viewer3D({
     }
     return result;
   }, [clash, clashStore, objectMeshPositions, overviewScene]);
+
   const xktModelIdsKey = useMemo(
     () => (xktModels ?? []).map((m) => m.id).sort().join(','),
     [xktModels]
   );
+
+  /**
+   * After Hide, every non-pair XKT entity has `visible: false`. Switching clashes without a hard reset leaves the
+   * new pair still hidden (never “un-hidden” because `applyClashPairIsolation` only skips kept ids — it does not
+   * set `visible: true` on them). Clear xeokit overrides synchronously before paint; user’s All/Dim/Hide choice is preserved.
+   */
+  useLayoutEffect(() => {
+    missingPairToastForClashRef.current = null;
+    if (!clash?.id || !xeokitAdapter) return;
+    xeokitAdapter.forceClearLoadedXktVisualState();
+  }, [clash?.id, xeokitAdapter]);
+
+  /** Reset XKT loaded flag when federated model set changes (must reload binary). */
+  useEffect(() => {
+    setClashDetailXktSynced(false);
+  }, [xktModelIdsKey]);
+
   const hasXktOverview = Boolean(xktModels && xktModels.length > 0);
+  /** Derived synchronously so bbox overlay does not flash `null → {a,b}` when switching clashes. */
+  const xktPairPresence = useMemo(() => {
+    if (!clash || !xeokitAdapter || (xktModels?.length ?? 0) === 0 || !clashDetailXktSynced) return null;
+    return {
+      a: xeokitAdapter.hasXktEntity(clash.objectA),
+      b: xeokitAdapter.hasXktEntity(clash.objectB),
+    };
+  }, [clash, xeokitAdapter, xktModels, clashDetailXktSynced]);
+  /** Only skip bbox when both clash elements resolve in XKT — otherwise show federated bbox + XKT together. */
+  const clashPairFullyInXkt = Boolean(xktPairPresence?.a && xktPairPresence?.b);
+  /** Clash detail: hide SceneModel boxes only when both ids exist as XKT entities (otherwise bbox fallback stays visible). */
+  const skipBboxOverlayBecauseXkt = Boolean(
+    clash &&
+      (((xktModels?.length ?? 0) > 0) ||
+        projectUsesXktGeometry ||
+        deferClashBboxOverlay ||
+        clashDetailXktSynced) &&
+      clashPairFullyInXkt
+  );
+
+  /**
+   * Hide XKT entities only while SceneModel draws the extracted IFC mesh for the same id (avoid duplicate).
+   * When `skipBboxOverlayBecauseXkt` we clear SceneModel — never suppress clash ids or XKT becomes empty (white canvas).
+   */
+  const clashNoRealMeshObjectIds = useMemo(() => {
+    if (!clash || skipBboxOverlayBecauseXkt) return [];
+    const ids: string[] = [];
+    if (viewerSpaceMeshPositions[clash.objectA]?.length) ids.push(clash.objectA);
+    if (viewerSpaceMeshPositions[clash.objectB]?.length) ids.push(clash.objectB);
+    return ids;
+  }, [clash, skipBboxOverlayBecauseXkt, viewerSpaceMeshPositions]);
+
+  const suppressedClashObjectIds = useMemo(() => {
+    if (clash && skipBboxOverlayBecauseXkt) return [];
+    return Array.from(new Set([...clashProxyObjectIds, ...clashNoRealMeshObjectIds]));
+  }, [clash, skipBboxOverlayBecauseXkt, clashProxyObjectIds, clashNoRealMeshObjectIds]);
+
+  /** Latest suppression list for async XKT onLoaded — avoids stale closure without re-running sync (which would destroy XKT). */
+  const suppressedClashRef = useRef(suppressedClashObjectIds);
+  suppressedClashRef.current = suppressedClashObjectIds;
+
   const overviewHasCanvas =
     modelOverview && ((overviewScene?.length ?? 0) > 0 || hasXktOverview);
 
@@ -256,11 +526,19 @@ export default function Viewer3D({
         const SceneModelCtor = (xeokit as { SceneModel?: new (scene: unknown, cfg: Record<string, unknown>) => any }).SceneModel;
         if (!ViewerCtor || !SceneModelCtor) return;
 
+        try {
+          await waitForCanvasLayout(canvas);
+        } catch {
+          return;
+        }
+        if (cancelled) return;
+
         const viewer = new ViewerCtor({
           canvasElement: canvas,
-          transparent: true,
+          transparent: false,
+          backgroundColor: [0.05, 0.07, 0.125],
           antialias: true,
-          dtxEnabled: true,
+          dtxEnabled: false,
         });
         rawViewerRef.current = viewer;
         onViewerReady();
@@ -340,44 +618,157 @@ export default function Viewer3D({
 
   useEffect(() => {
     if (!xeokitAdapter) return;
-    const clashZone =
-      clash
-        ? resolveClashZoneForViewer(clash, visibleObjects, clashStore.getScene(clash.id))
-        : null;
+    /** In model overview, when XKT exists, render only native XKT geometry (no SceneModel proxy overlay). */
+    if (modelOverview && (xktModels?.length ?? 0) > 0) {
+      xeokitAdapter.loadSceneObjects([]);
+      return;
+    }
+    if (skipBboxOverlayBecauseXkt) {
+      xeokitAdapter.loadSceneObjects([]);
+      return;
+    }
     xeokitAdapter.loadSceneObjects(
       visibleObjects.map((object) => ({
         id: object.id,
         position: object.position,
         size: object.size,
-        isPrimary: Boolean(clash && object.id === clash.objectA),
-        isClashObject: Boolean(clash && (object.id === clash.objectA || object.id === clash.objectB)),
+        isPrimary: false,
+        isClashObject: Boolean(clash && object.id === clash.objectA),
         isClashObjectB: Boolean(clash && object.id === clash.objectB),
         isColliding: object.isColliding,
         isSelected: object.isSelected,
         isInTestScope: testScopeObjectIds.includes(object.id),
         isDeEmphasized: deEmphasizeUnrelated && testScopeObjectIds.length > 0 && !testScopeObjectIds.includes(object.id),
         meshPositions: viewerSpaceMeshPositions[object.id] ?? null,
-      })),
-      clashZone
+      }))
     );
-  }, [clash, clashStore, deEmphasizeUnrelated, viewerSpaceMeshPositions, testScopeObjectIds, visibleObjects, xeokitAdapter, overviewScene]);
+  }, [
+    clash,
+    clashStore,
+    deEmphasizeUnrelated,
+    modelOverview,
+    skipBboxOverlayBecauseXkt,
+    clashDetailXktSynced,
+    xktModels,
+    viewerSpaceMeshPositions,
+    testScopeObjectIds,
+    visibleObjects,
+    xeokitAdapter,
+    overviewScene,
+    xktModels,
+  ]);
 
-  /** Load and recolor XKT models in clash detail mode (parallel to bbox overlay). */
+  /** Load XKT once per federated model set (clash detail). Overview uses the separate `modelOverview` effect below. */
   useEffect(() => {
     if (!xeokitAdapter || !projectSlug || !clash) return;
     const ids = (xktModels ?? []).map((m) => m.id);
     if (ids.length === 0) return;
-    const objectA = clash.objectA;
-    const objectB = clash.objectB;
-    void xeokitAdapter.syncXktModels(projectSlug, ids, () => {
-      xeokitAdapter.recolorXktObjects(objectA, objectB, [objectA, objectB]);
-    });
-  }, [clash?.id, projectSlug, xeokitAdapter, xktModelIdsKey]);
+    void xeokitAdapter.syncXktModels(
+      projectSlug,
+      ids,
+      (loadedIds) => {
+        if (loadedIds.length > 0) setClashDetailXktSynced(true);
+        const c = clashRef.current;
+        if (!c) return;
+        const objectA = c.objectA;
+        const objectB = c.objectB;
+        /** Must run before Dim/Hide so prior clash’s `visible: false` (Hide) does not hide the new pair. */
+        xeokitAdapter.forceClearLoadedXktVisualState();
+        /** Dim/Hide: recolor clash pair then isolation. All: neutral materials only (no green/yellow tint). */
+        if (isolationRef.current === 'off') {
+          xeokitAdapter.applyClashPairIsolation('off', objectA, objectB);
+        } else {
+          xeokitAdapter.recolorXktObjects(objectA, objectB, [objectA, objectB]);
+          xeokitAdapter.applyClashPairIsolation(isolationRef.current, objectA, objectB);
+        }
+        applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashRef.current);
+        const hasA = xeokitAdapter.hasXktEntity(objectA);
+        const hasB = xeokitAdapter.hasXktEntity(objectB);
+        if ((!hasA || !hasB) && missingPairToastForClashRef.current !== c.id) {
+          missingPairToastForClashRef.current = c.id;
+          toast.warning(
+            'Only part of this clash pair appears in the viewer. One IFC id may be missing from the XKT export, merged into another object, or use a different identifier than the clash result.'
+          );
+        }
+        /**
+         * Default camera fits the *entire* XKT — often jumps inside a wall (white slab). Frame the clash region instead.
+         */
+        const clashAabb = buildClashFocusWorldAabb(c, xeokitAdapter);
+        if (clashAabb) {
+          xeokitAdapter.flyCameraToWorldAabb(clashAabb);
+        } else if (loadedIds.length > 0) {
+          xeokitAdapter.fitCameraToLoadedXktUnion();
+        }
+      },
+      { skipCameraFit: true }
+    );
+    /**
+     * Do not depend on `suppressedClashObjectIds` here: when IFC mesh data arrives late, that array changes and
+     * would re-run sync → destroyXktModels() → full XKT reload (~1s flash / white slab). Suppression is applied
+     * in the effect below and via `suppressedClashRef` inside the async onLoaded callback.
+     */
+  }, [projectSlug, xeokitAdapter, xktModelIdsKey, clash?.id, clash?.objectA, clash?.objectB]);
+
+  /**
+   * Re-apply isolation + highlight when the user changes dim/hide or suppression/mesh state — no XKT reload.
+   * Full xeokit visual reset when switching clashes or toggling Dim/Hide/All avoids leftover opacity/visibility on
+   * entities from the prior clash pair (`applyClashPairIsolation` skips pair ids — stale mesh state would otherwise persist).
+   */
+  useEffect(() => {
+    if (!xeokitAdapter) return;
+    if (!clash) {
+      prevClashIdForIsoRef.current = undefined;
+      return;
+    }
+    const ids = (xktModels ?? []).map((m) => m.id);
+    if (ids.length === 0) return;
+    if (!clashDetailXktSynced) return;
+
+    const c = clashRef.current;
+    if (!c) return;
+
+    const clashChanged = prevClashIdForIsoRef.current !== c.id;
+    const isoChanged = prevXktIsolationAppliedRef.current !== xktIsolation;
+    const shouldHardResetVisual =
+      clashChanged || (xktIsolation !== 'off' && isoChanged);
+
+    if (shouldHardResetVisual) {
+      xeokitAdapter.forceClearLoadedXktVisualState();
+    }
+
+    if (xktIsolation === 'off') {
+      xeokitAdapter.applyClashPairIsolation('off', c.objectA, c.objectB);
+      applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashObjectIds);
+    } else {
+      xeokitAdapter.recolorXktObjects(c.objectA, c.objectB, [c.objectA, c.objectB]);
+      xeokitAdapter.applyClashPairIsolation(xktIsolation, c.objectA, c.objectB);
+      applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashObjectIds);
+    }
+
+    prevClashIdForIsoRef.current = c.id;
+    prevXktIsolationAppliedRef.current = xktIsolation;
+  }, [
+    xktIsolation,
+    xeokitAdapter,
+    clash?.id,
+    clash?.objectA,
+    clash?.objectB,
+    xktModelIdsKey,
+    suppressedClashObjectIds,
+    clashDetailXktSynced,
+  ]);
+
+  /** Section clipping removed from UI — always clear stale xeokit SectionPlanes. */
+  useEffect(() => {
+    if (!xeokitAdapter) return;
+    xeokitAdapter.clearClashSectionBox();
+  }, [xeokitAdapter, clash?.id]);
 
   useEffect(() => {
     if (!xeokitAdapter || !projectSlug || !modelOverview) return;
     const ids = (xktModels ?? []).map((m) => m.id);
     void xeokitAdapter.syncXktModels(projectSlug, ids, () => {
+      xeokitAdapter.applyClashPairIsolation('off', null, null);
       xeokitAdapter.recolorXktObjects(null, null, [], visibleObjects.map((o) => o.id), visibleObjects);
     });
   }, [modelOverview, projectSlug, xeokitAdapter, xktModelIdsKey, visibleObjects]);
@@ -392,10 +783,33 @@ export default function Viewer3D({
     return () => unsubscribe();
   }, [effectiveAdapter, onSelectObject, selectObject]);
 
+  /**
+   * Parent sets `selectedObjectId` in an effect that runs **after** child effects — one frame can still hold the
+   * previous clash’s id. Snap highlight to the current clash pair so Dim/selection emphasis tracks the active row.
+   */
+  const xeokitHighlightIds = useMemo(() => {
+    if (!clash) return [] as string[];
+    const sel = selectedObjectId;
+    if (sel && (sel === clash.objectA || sel === clash.objectB)) return [sel];
+    if (clash.objectA) return [clash.objectA];
+    return [];
+  }, [clash, selectedObjectId]);
+
   useEffect(() => {
     if (!effectiveAdapter) return;
-    effectiveAdapter.highlightObjects(selectedObjectId ? [selectedObjectId] : []);
-  }, [effectiveAdapter, selectedObjectId]);
+    /** Overview should never keep per-object emphasis from previous clash selection. */
+    if (!clash) {
+      effectiveAdapter.highlightObjects([]);
+      return;
+    }
+    /** "All" + XKT: xeokit highlight tints large subtrees (often solid blue) — show native materials like a desktop viewer. */
+    const xktClash = Boolean(clash && (xktModels?.length ?? 0) > 0);
+    if (xktClash && xktIsolation === 'off') {
+      effectiveAdapter.highlightObjects([]);
+      return;
+    }
+    effectiveAdapter.highlightObjects(xeokitHighlightIds);
+  }, [effectiveAdapter, xeokitHighlightIds, clash, xktModels, xktIsolation]);
 
   if (!clash) {
     if (modelOverview && !overviewHasCanvas) {
@@ -423,21 +837,22 @@ export default function Viewer3D({
           : xktCount
             ? `${xktCount} XKT model${xktCount > 1 ? 's' : ''}`
             : meshCount
-              ? `${meshCount}/${boxCount} real mesh · ${boxCount - meshCount} bbox`
+              ? `${meshCount}/${boxCount} mesh preview · ${boxCount - meshCount} metadata-only`
               : `${boxCount} elements`;
       const renderHint =
         meshCount > 0
-          ? `real mesh (recolored)`
+          ? `mesh preview (recolored)`
           : xktCount > 0
             ? `XKT (recolored)`
-            : `bbox overlay`;
+            : `metadata only (no mesh)`;
+      const hideExtraRenderHint = renderHint === 'metadata only (no mesh)';
       return (
         <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 text-white md:p-4">
           <div className="flex shrink-0 flex-wrap items-baseline justify-between gap-3">
             <p className="text-sm font-semibold tracking-tight text-slate-200">3D Overview</p>
             <p className="text-[11px] text-slate-500" title="Left-click drag to orbit · Right-click to pan · Scroll to zoom · Click to select.">
               xeokit · {layerHint}
-              {renderHint !== 'bbox overlay' && (
+              {!hideExtraRenderHint && (
                 <span className="ml-1.5 text-cyan-400/60">· {renderHint}</span>
               )}
             </p>
@@ -591,12 +1006,13 @@ export default function Viewer3D({
         </div>
       </div>
 
-      {/* Canvas + Footer + Measure Panel */}
-      <div className="flex flex-1 min-h-0 gap-3">
-        {/* Canvas area with floating toolbar + badges */}
+      {/* Canvas full width; footer strip below (IDs / location were beside canvas and wasted horizontal space). */}
+      <div className="flex flex-1 min-h-0 flex-col gap-3">
+        <div className="flex min-h-0 flex-1 gap-3">
+          {/* Canvas area with floating toolbar + badges */}
         <div
           onDoubleClick={() => onFocusClash?.(clash)}
-          className="relative min-h-[220px] flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]"
+          className="relative min-h-[220px] min-w-0 flex-1 overflow-hidden rounded-xl border border-[#2a3245] bg-[#0d1117]"
         >
           <canvas ref={xeokitCanvasRef} className={cn('absolute inset-0 h-full w-full', xeokitInteractive ? 'pointer-events-auto' : 'pointer-events-none')} />
 
@@ -657,6 +1073,54 @@ export default function Viewer3D({
                 <span>Results</span>
               </button>
 
+              {(xktModels?.length ?? 0) > 0 && xeokitAdapter && clash && (
+                <>
+                  <div className="pointer-events-auto mx-0.5 hidden h-6 w-px shrink-0 bg-[#2a3245] sm:block" aria-hidden />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const aabb = buildClashFocusWorldAabb(clash, xeokitAdapter);
+                      if (!aabb) {
+                        toast.info('Bounding boxes are not ready yet — try again after the model loads.');
+                        return;
+                      }
+                      xeokitAdapter.flyCameraToWorldAabb(aabb);
+                    }}
+                    disabled={!xeokitInteractive}
+                    className={cn(
+                      'pointer-events-auto flex items-center gap-1.5 rounded-lg border border-[#2a3245] bg-[#1a2332]/90 px-2.5 py-1.5 text-xs font-medium text-slate-300 shadow-lg backdrop-blur-sm transition-all hover:bg-[#243044]/90',
+                      !xeokitInteractive ? 'opacity-40 cursor-not-allowed' : ''
+                    )}
+                    title="Frame camera on the clash intersection (not full wall extents — stays farther back to reduce clipping noise)"
+                  >
+                    <Focus className="h-3.5 w-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Focus region</span>
+                  </button>
+                  <div
+                    className="pointer-events-auto flex flex-wrap items-center gap-0.5 rounded-lg border border-[#2a3245] bg-[#1a2332]/90 p-0.5 shadow-lg backdrop-blur-sm"
+                    title="All: full XKT model. Dim/Hide: focus on the clash pair — matched XKT entities stay sharp; if ids are missing from XKT, unrelated geometry is dimmed/hidden and bbox markers show the pair."
+                  >
+                    {(['off', 'dim', 'hide'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        disabled={!xeokitInteractive}
+                        onClick={() => setXktIsolation(mode)}
+                        className={cn(
+                          'rounded-md px-2 py-1 text-[11px] font-medium capitalize transition-colors',
+                          xktIsolation === mode
+                            ? 'bg-slate-600 text-white'
+                            : 'text-slate-400 hover:bg-[#243044] hover:text-slate-200',
+                          !xeokitInteractive ? 'opacity-40 cursor-not-allowed' : ''
+                        )}
+                      >
+                        {mode === 'off' ? 'All' : mode === 'dim' ? 'Dim' : 'Hide'}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
               {measurements.length > 0 && (
                 <button
                   onClick={clearAllMeasurements}
@@ -677,22 +1141,16 @@ export default function Viewer3D({
             </div>
           )}
 
-          {/* Scope badges */}
-          {showScopeBadge && (
-            <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
-              <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2.5 py-1 text-[10px] font-medium text-cyan-200 backdrop-blur-sm">
-                ◎ Highlighted Set A/B
-              </span>
-              <span className={cn(
-                'rounded-full border px-2.5 py-1 text-[10px] font-medium backdrop-blur-sm',
-                hideUnrelatedActive
-                  ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
-                  : 'border-slate-500/40 bg-slate-600/25 text-slate-300'
-              )}>
-                {hideUnrelatedActive ? '◐ Hiding unrelated' : '○ Show all'}
+          {/* XKT clash focus hint */}
+          {(xktModels?.length ?? 0) > 0 && xktIsolation !== 'off' && (
+            <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[min(100%,20rem)] rounded-lg border border-slate-600/60 bg-[#0d1117]/90 px-2.5 py-1.5 text-[10px] text-slate-400 backdrop-blur-sm">
+              <span className="inline-flex items-center gap-1 text-slate-300">
+                <Layers2 className="h-3 w-3 shrink-0 text-cyan-400/80" />
+                {xktIsolation === 'dim' ? 'Other elements dimmed — clash pair stays at full material color.' : 'Non-clash elements hidden in XKT.'}
               </span>
             </div>
           )}
+
           {!xeokitInteractive && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0a0e16] text-xs text-slate-400 backdrop-blur-sm">
               <div className="flex items-center gap-2">
@@ -703,32 +1161,6 @@ export default function Viewer3D({
           )}
         </div>
 
-        <div className="flex flex-col flex-1 min-h-0 gap-3">
-          {/* Footer: object info row */}
-          <div className="shrink-0 rounded-lg border border-[#2a3245] bg-[#131a2b] px-3 py-2">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
-              <span className="flex items-center gap-1.5 font-mono text-slate-400">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/80" />
-                <span className="text-slate-300" title={clash.objectA}>{clash.objectA}</span>
-              </span>
-              <span className="flex items-center gap-1.5 font-mono text-slate-400">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400/80" />
-                <span className="text-slate-300" title={clash.objectB}>{clash.objectB}</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <svg className="h-3 w-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span className="text-slate-300" title={clash.location}>{clash.location}</span>
-              </span>
-              <span className={cn('ml-auto text-[10px]', xeokitInteractive ? 'text-emerald-400/70' : 'text-slate-500')}>
-                {xeokitInteractive ? '✓ 3D navigation ready' : '⟳ loading...'}
-              </span>
-            </div>
-          </div>
-        </div>
-
         {showMeasureToolbar && showMeasurePanel && xeokitInteractive && (
           <MeasurePanel
             measurements={measurements}
@@ -737,6 +1169,55 @@ export default function Viewer3D({
             formatDistance={formatDistance}
           />
         )}
+        </div>
+
+        {/* Footer: clash pair ids + location — full width under canvas */}
+        <div className="shrink-0 rounded-lg border border-[#2a3245] bg-[#131a2b] px-3 py-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+            <span className="flex max-w-full flex-wrap items-center gap-1.5 font-mono text-slate-400">
+              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/80" />
+              <span className="truncate text-slate-300" title={clash.objectA}>
+                {clash.objectA}
+              </span>
+              {(xktModels?.length ?? 0) > 0 && xktPairPresence && !xktPairPresence.a && (
+                <span className="shrink-0 rounded bg-amber-500/25 px-1.5 py-0.5 text-[9px] font-sans font-medium text-amber-200">
+                  Not in XKT
+                </span>
+              )}
+            </span>
+            <span className="flex max-w-full flex-wrap items-center gap-1.5 font-mono text-slate-400">
+              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/80" />
+              <span className="truncate text-slate-300" title={clash.objectB}>
+                {clash.objectB}
+              </span>
+              {(xktModels?.length ?? 0) > 0 && xktPairPresence && !xktPairPresence.b && (
+                <span className="shrink-0 rounded bg-amber-500/25 px-1.5 py-0.5 text-[9px] font-sans font-medium text-amber-200">
+                  Not in XKT
+                </span>
+              )}
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-400">
+              <svg className="h-3 w-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span className="text-slate-300" title={clash.location}>{clash.location}</span>
+            </span>
+            <span className={cn('ml-auto text-[10px]', xeokitInteractive ? 'text-emerald-400/70' : 'text-slate-500')}>
+              {xeokitInteractive ? '✓ 3D navigation ready' : '⟳ loading...'}
+            </span>
+          </div>
+          {(xktModels?.length ?? 0) > 0 && xktPairPresence && (!xktPairPresence.a || !xktPairPresence.b) && (
+            <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-snug text-amber-100/95">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden />
+              <span>
+                The clash is still valid in project data (two elements overlap). The viewer only draws geometry present in the XKT file — one IFC id may be absent from export, merged into a parent, or renamed.
+                {' '}
+                Switch isolation to <strong className="font-semibold text-amber-50">All</strong> to see the full model.
+              </span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

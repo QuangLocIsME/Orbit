@@ -1,8 +1,14 @@
+const { Types } = require('mongoose');
 const { buildBCFDocument } = require('./bcfExport.service');
 const { createId, readWorkspace, updateWorkspace, defaultWorkspace } = require('./navisworksStorage.service');
 const modelService = require('./model.service');
 const selectionSetService = require('./selectionSet.service');
 const meshNarrowPhase = require('./meshNarrowPhase.service');
+const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const NotificationRepository = require('../repositories/NotificationRepository');
+const User = require('../models/User');
+const Project = require('../models/Project');
+const socketService = require('./socketService');
 
 const DEFAULT_CELL_SIZE = 4;
 const DEFAULT_DUPLICATE_TOLERANCE = 0.001;
@@ -38,6 +44,150 @@ const distanceBetweenAabbs = (a, b) => {
 };
 
 const nearlyEqual = (a, b, tolerance = DEFAULT_DUPLICATE_TOLERANCE) => Math.abs(a - b) <= tolerance;
+
+/** Align with Frontend `memberLabel`: fullName, else email, else "Unknown member". */
+function assigneeLabelFromUserDoc(user) {
+    if (!user) return 'Unknown member';
+    const name = user.fullName && String(user.fullName).trim();
+    if (name) return name;
+    const email = user.email && String(user.email).trim();
+    if (email) return email;
+    return 'Unknown member';
+}
+
+async function resolveMemberMongoIdByAssigneeLabel(projectId, assigneeLabel) {
+    const label = String(assigneeLabel || '').trim();
+    if (!label || /^unassigned$/i.test(label)) return null;
+
+    const rawMembers = await ProjectMemberRepository.getMembersWithUsers(projectId);
+    const userIds = [...new Set(rawMembers.map((m) => m.userId).filter(Boolean))];
+    const validObjectIds = userIds.filter((id) => /^[a-f\d]{24}$/i.test(String(id)));
+    const publicIds = userIds.filter((id) => !/^[a-f\d]{24}$/i.test(String(id)));
+
+    const userDocsById = validObjectIds.length
+        ? await User.find({ _id: { $in: validObjectIds.map((id) => new Types.ObjectId(id)) } })
+            .select('_id publicId fullName email')
+            .lean()
+        : [];
+    const userDocsByPublicId = publicIds.length
+        ? await User.find({ publicId: { $in: publicIds } }).select('_id publicId fullName email').lean()
+        : [];
+
+    const userMap = new Map();
+    [...userDocsById, ...userDocsByPublicId].forEach((u) => {
+        userMap.set(String(u._id), u);
+        userMap.set(u.publicId, u);
+    });
+
+    for (const m of rawMembers) {
+        const u = userMap.get(m.userId);
+        if (!u) continue;
+        if (assigneeLabelFromUserDoc(u) === label) {
+            return String(u._id);
+        }
+    }
+    return null;
+}
+
+async function resolveActorMongoId(actorUserId) {
+    if (!actorUserId) return null;
+    const id = String(actorUserId);
+    let u = await User.findById(id).select('_id').lean();
+    if (!u) u = await User.findOne({ publicId: id }).select('_id').lean();
+    return u ? String(u._id) : null;
+}
+
+const CLASH_RESOLVE_FORBIDDEN_MSG =
+    'Only project owners, admins, managers, or the assignee can mark this clash as resolved.';
+
+const CLASH_NOTE_ASSIGNEE_FORBIDDEN_MSG =
+    'Only project owners, admins, or managers can update the coordination note or assignee.';
+
+async function assertActorMayMarkClashResolved(projectSlug, actorUserId, assigneeRaw) {
+    if (!actorUserId) {
+        const e = new Error(CLASH_RESOLVE_FORBIDDEN_MSG);
+        e.code = 'CLASH_RESOLVE_FORBIDDEN';
+        throw e;
+    }
+    const member = await ProjectMemberRepository.findMember(projectSlug, actorUserId);
+    if (!member || member.status !== 'accepted') {
+        const e = new Error(CLASH_RESOLVE_FORBIDDEN_MSG);
+        e.code = 'CLASH_RESOLVE_FORBIDDEN';
+        throw e;
+    }
+    const role = String(member.role || '').toLowerCase();
+    if (role === 'owner' || role === 'admin' || role === 'manager') return;
+
+    const label = String(assigneeRaw || '').trim();
+    if (!label || /^unassigned$/i.test(label)) {
+        const e = new Error(CLASH_RESOLVE_FORBIDDEN_MSG);
+        e.code = 'CLASH_RESOLVE_FORBIDDEN';
+        throw e;
+    }
+
+    const assigneeMongoId = await resolveMemberMongoIdByAssigneeLabel(projectSlug, label);
+    const actorMongoId = await resolveActorMongoId(actorUserId);
+    if (!assigneeMongoId || !actorMongoId || assigneeMongoId !== actorMongoId) {
+        const e = new Error(CLASH_RESOLVE_FORBIDDEN_MSG);
+        e.code = 'CLASH_RESOLVE_FORBIDDEN';
+        throw e;
+    }
+}
+
+async function resolveActorDisplayName(actorUserId) {
+    if (!actorUserId) return 'Someone';
+    const id = String(actorUserId);
+    let user = await User.findById(id).select('fullName email').lean();
+    if (!user) {
+        user = await User.findOne({ publicId: id }).select('fullName email').lean();
+    }
+    if (!user) return 'Someone';
+    return (user.fullName && String(user.fullName).trim()) || (user.email && String(user.email).trim()) || 'Someone';
+}
+
+/**
+ * In-app + realtime notification when a clash is assigned to a project member (by dropdown label).
+ */
+async function notifyClashAssigneeAssigned({
+    projectSlug,
+    sourceTestId,
+    clashId,
+    clashTitle,
+    targetUserMongoId,
+    actorUserId,
+}) {
+    const project = await Project.findOne({ publicId: projectSlug }).select('name').lean();
+    const projectName = project?.name || 'Project';
+    const assignerName = await resolveActorDisplayName(actorUserId);
+
+    const linkPath = `/projects/${encodeURIComponent(projectSlug)}?tab=clashes&clashView=workspace&clashTestId=${encodeURIComponent(
+        sourceTestId || ''
+    )}&clashId=${encodeURIComponent(clashId || '')}`;
+    const title = 'Clash assigned to you';
+    const safeTitle = clashTitle && String(clashTitle).trim() ? String(clashTitle).trim() : 'Clash';
+    const message = `${assignerName} assigned you to "${safeTitle}" in ${projectName}.`;
+
+    const notification = await NotificationRepository.create({
+        userId: targetUserMongoId,
+        type: 'info',
+        title,
+        message,
+        link: linkPath,
+        read: false,
+        refType: 'clash',
+        refId: clashId,
+    });
+
+    socketService.notifyUser(targetUserMongoId, 'notification:new', {
+        id: String(notification._id),
+        type: 'info',
+        title,
+        message,
+        link: linkPath,
+        read: false,
+        createdAt: notification.createdAt.toISOString(),
+    });
+}
 
 const isDuplicate = (a, b, tolerance = DEFAULT_DUPLICATE_TOLERANCE) => {
     const values = [
@@ -437,12 +587,72 @@ class NavisworksClashService {
         };
     }
 
-    async updateClashStatus(projectSlug, clashId, patch = {}) {
+    async updateClashStatus(projectSlug, clashId, patch = {}, options = {}) {
+        const actorUserId = options.actorUserId ?? null;
+
+        const workspaceSnapshot = await readWorkspace(projectSlug);
+        let priorResult = null;
+        for (const run of workspaceSnapshot.clashRuns || []) {
+            const found = (run.results || []).find((r) => r.clashId === clashId);
+            if (found) {
+                priorResult = found;
+                break;
+            }
+        }
+        if (!priorResult) {
+            throw new Error(`Clash result not found: ${clashId}`);
+        }
+
+        const prevResolved = normalizeStatus(priorResult.status) === 'resolved';
+        const patchRequestsResolved =
+            patch.status !== undefined && normalizeStatus(patch.status) === 'resolved';
+
+        const normalizeAssigneeStr = (s) => {
+            const t = String(s ?? '').trim();
+            return /^unassigned$/i.test(t) ? 'Unassigned' : t;
+        };
+        const priorNote = typeof priorResult.note === 'string' ? priorResult.note : '';
+        const patchHasNote = typeof patch.note === 'string';
+        const noteChanged = patchHasNote && patch.note !== priorNote;
+
+        const priorAssigneeNorm = normalizeAssigneeStr(priorResult.assignee);
+        const patchHasAssignee = typeof patch.assignee === 'string';
+        const patchAssigneeNorm = patchHasAssignee ? normalizeAssigneeStr(patch.assignee) : priorAssigneeNorm;
+        const assigneeChanged = patchHasAssignee && patchAssigneeNorm !== priorAssigneeNorm;
+        const noteOrAssignChanged = noteChanged || assigneeChanged;
+
+        const actorMember = actorUserId
+            ? await ProjectMemberRepository.findMember(projectSlug, actorUserId)
+            : null;
+        const actorRole = String(actorMember?.role || '').toLowerCase();
+        const isNoteAssignPrivileged = ['owner', 'admin', 'manager'].includes(actorRole);
+
+        if (noteOrAssignChanged && !isNoteAssignPrivileged) {
+            if (!prevResolved && patchRequestsResolved) {
+                const assigneeForResolve =
+                    typeof patch.assignee === 'string' ? patch.assignee : priorResult.assignee;
+                await assertActorMayMarkClashResolved(projectSlug, actorUserId, assigneeForResolve);
+            } else {
+                const e = new Error(CLASH_NOTE_ASSIGNEE_FORBIDDEN_MSG);
+                e.code = 'CLASH_NOTE_ASSIGNEE_FORBIDDEN';
+                throw e;
+            }
+        } else if (!prevResolved && patchRequestsResolved) {
+            const assigneeForResolve =
+                typeof patch.assignee === 'string' ? patch.assignee : priorResult.assignee;
+            await assertActorMayMarkClashResolved(projectSlug, actorUserId, assigneeForResolve);
+        }
+
+        let previousAssignee = 'Unassigned';
         let updatedRun = null;
         await updateWorkspace(projectSlug, (current) => {
             const nextRuns = current.clashRuns.map((run) => {
                 const nextResults = run.results.map((result) => {
                     if (result.clashId !== clashId) return result;
+                    previousAssignee =
+                        result.assignee != null && String(result.assignee).trim() !== ''
+                            ? String(result.assignee).trim()
+                            : 'Unassigned';
                     const next = {
                         ...result,
                         status: normalizeStatus(patch.status || result.status),
@@ -476,6 +686,38 @@ class NavisworksClashService {
         const hit = updatedRun.results.find((result) => result.clashId === clashId);
         if (!hit) {
             throw new Error(`Clash result not found after update: ${clashId}`);
+        }
+
+        const newAssigneeRaw = hit.assignee != null && String(hit.assignee).trim() !== '' ? String(hit.assignee).trim() : 'Unassigned';
+        const normalizeAssignee = (s) => {
+            const t = String(s || '').trim();
+            return /^unassigned$/i.test(t) ? 'Unassigned' : t;
+        };
+        const prevN = normalizeAssignee(previousAssignee);
+        const newN = normalizeAssignee(newAssigneeRaw);
+        const assigneeChangedToMember =
+            prevN !== newN && newN !== 'Unassigned' && !/^unassigned$/i.test(newAssigneeRaw);
+
+        if (assigneeChangedToMember) {
+            setImmediate(() => {
+                void (async () => {
+                    try {
+                        const targetId = await resolveMemberMongoIdByAssigneeLabel(projectSlug, newAssigneeRaw);
+                        if (!targetId) return;
+                        if (actorUserId && String(targetId) === String(actorUserId)) return;
+                        await notifyClashAssigneeAssigned({
+                            projectSlug,
+                            sourceTestId: hit.sourceTestId,
+                            clashId,
+                            clashTitle: hit.title || '',
+                            targetUserMongoId: targetId,
+                            actorUserId,
+                        });
+                    } catch (err) {
+                        console.warn('[navisworksClash] assignee notification failed:', err?.message || err);
+                    }
+                })();
+            });
         }
 
         /** Avoid getRun() → getFederatedModel() on every PATCH (very slow on large federated models). Client merges this + invalidates queries. */

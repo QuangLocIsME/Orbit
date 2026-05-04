@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { NewProjectButton } from './CreateProjectModal';
 import type { CreatedProjectPayload } from './CreateProjectModal';
 import { loadCustomIndustriesRaw } from './CreateProjectModal';
-import { ProjectsSkeleton } from '@/components/ui/skeletons';
+import { ProjectsSkeleton } from '../ui/skeletons';
 import { useAppStore } from '@/stores/appStore';
 
 // Types
@@ -891,9 +891,11 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
   const status = STATUS_COLORS[project.status || 'active'] || STATUS_COLORS.active;
   const progress = project.progress || 0;
 
-  const handleCardClick = () => {
-    if (isSortableDragging) return;
-    window.location.assign(`/projects/${project.id}`);
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Only skip real control elements — sortable `{...attributes}` sets role="button" on this card,
+    // so `[role="button"]` would match the whole card and block navigation entirely.
+    if ((e.target as HTMLElement).closest('button, a[href]')) return;
+    window.location.href = `/projects/${project.id}`;
   };
 
   return (

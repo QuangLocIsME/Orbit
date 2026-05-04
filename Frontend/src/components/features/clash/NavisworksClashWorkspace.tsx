@@ -19,7 +19,7 @@ import { apiFetch } from '@/lib/api-client';
 import Viewer2D from '../clash/viewer/Viewer2D';
 import Viewer3D from '../clash/viewer/Viewer3D';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { buildOverviewSceneFromFederated } from './lib/clashScene';
+import { buildOverviewSceneFromFederated, layoutOverviewMarkersFor2DPlan } from './lib/clashScene';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -49,6 +49,7 @@ interface IfcDocument {
   createdAt: string;
 }
 import { memberLabel, useProjectMembers } from './hooks/useProjectMembers';
+import { useAppStore } from '@/stores/appStore';
 
 type SidebarTab = 'select' | 'tests' | 'results' | 'report';
 
@@ -194,7 +195,7 @@ function SidebarActionBanner({ banner, className }: { banner: ActionBanner | nul
 interface NavisworksClashWorkspaceProps {
   projectSlug: string;
   onBack?: () => void;
-  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer';
+  currentUserRole?: 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
   /** From landing "View 3D" — selects this clash test and row in Results */
   initialTestId?: string | null;
   initialClashId?: string | null;
@@ -308,6 +309,10 @@ export default function NavisworksClashWorkspace({
   /** When false, main viewer shows federated overview only. When true, show clash geometry for the selected test (first last-run result if any). Set true when picking a test, after Run, or when choosing a row in Results. */
   const [showClashInMainViewer, setShowClashInMainViewer] = useState(() => openFromLanding);
   const canManageClash = currentUserRole !== 'viewer';
+  const canEditClashNoteAndAssignee =
+    currentUserRole === 'owner' ||
+    currentUserRole === 'admin' ||
+    currentUserRole === 'manager';
   const denyViewerEdits = () => {
     const msg = 'Viewer can only view clash data.';
     setError(msg);
@@ -459,15 +464,25 @@ export default function NavisworksClashWorkspace({
     showClashInMainViewer && selectedResult ? resultToViewerClash(selectedResult) : null;
 
   /** Models served as XKT use xeokit mesh; skip per-element box/mesh overlay in 3D to avoid double geometry. */
-  const modelIdsWithXkt = useMemo(
-    () =>
-      new Set(models.filter((m) => m.sourceFormat === 'xkt' && m.xktFile).map((m) => m.id)),
-    [models]
-  );
+  const modelKeysWithXkt = useMemo(() => {
+    const keys = new Set<string>();
+    models
+      .filter((m) => m.sourceFormat === 'xkt' && m.xktFile)
+      .forEach((m) => {
+        if (m.id) keys.add(String(m.id));
+        if (m.name) keys.add(String(m.name));
+      });
+    return keys;
+  }, [models]);
 
   const objectsForOverviewScene3d = useMemo(
-    () => allObjects.filter((o) => !modelIdsWithXkt.has(o.sourceModelId)),
-    [allObjects, modelIdsWithXkt]
+    () =>
+      allObjects.filter((o) => {
+        const byId = o.sourceModelId ? modelKeysWithXkt.has(String(o.sourceModelId)) : false;
+        const byName = o.sourceModel ? modelKeysWithXkt.has(String(o.sourceModel)) : false;
+        return !(byId || byName);
+      }),
+    [allObjects, modelKeysWithXkt]
   );
 
   const federatedOverviewScene3d = useMemo(
@@ -480,14 +495,16 @@ export default function NavisworksClashWorkspace({
     [objectsForOverviewScene3d, hiddenCategories, hiddenModelIds]
   );
 
-  /** 2D plan view uses bbox from federated metadata (still stored for IFC→XKT imports); not filtered by XKT. */
+  /** 2D plan: metres → plan layout px so cards do not all stack at the centre of the div. */
   const federatedOverviewScene2d = useMemo(
     () =>
-      buildOverviewSceneFromFederated(allObjects, {
-        hiddenModelIds,
-        hiddenCategories,
-        maxObjects: allObjects.length,
-      }),
+      layoutOverviewMarkersFor2DPlan(
+        buildOverviewSceneFromFederated(allObjects, {
+          hiddenModelIds,
+          hiddenCategories,
+          maxObjects: allObjects.length,
+        })
+      ),
     [allObjects, hiddenCategories, hiddenModelIds]
   );
 
@@ -522,6 +539,29 @@ export default function NavisworksClashWorkspace({
       .filter((m) => m.sourceFormat === 'xkt' && m.xktFile && neededModelIds.has(m.id))
       .map((m) => ({ id: m.id }));
   }, [allObjects, models, viewerClash, activeTestScopeObjectIds]);
+
+  /**
+   * Clash 3D: prefer loading only models that contain A/B. If that list is empty (scope mismatch,
+   * object not in `allObjects`, etc.) but the project still has XKT, fall back to all XKT models
+   * so xeokit has real geometry and Viewer3D can keep bbox overlay off.
+   */
+  const xktModelsForClashViewer = useMemo(() => {
+    if (!viewerClash) return xktModelsForViewer;
+    if (xktModelsForClashDetail.length > 0) return xktModelsForClashDetail;
+    return xktModelsForViewer;
+  }, [viewerClash, xktModelsForClashDetail, xktModelsForViewer]);
+
+  const projectUsesXktGeometry = useMemo(
+    () => models.some((m) => m.sourceFormat === 'xkt' && Boolean(m.xktFile)),
+    [models]
+  );
+
+  /** While workspace is unresolved or refetching without cached data, omit bbox until model list is known (avoids red overlay before XKT path applies). */
+  const deferClashBboxOverlay = Boolean(
+    viewerClash &&
+      (workspaceQuery.isPending ||
+        (workspaceQuery.fetchStatus === 'fetching' && workspaceQuery.data === undefined))
+  );
 
   const hasXktOnlyOverview = Boolean(
     !viewerClash &&
@@ -606,6 +646,35 @@ export default function NavisworksClashWorkspace({
   );
   const assigneeKnownOption =
     assigneeDraft === 'Unassigned' || memberAssigneeLabels.includes(assigneeDraft);
+
+  const auth = useAppStore((s) => s.auth);
+
+  /** Owners/admins/managers always; other members only if assignee (draft) is themselves. Unassigned → only privileged roles. */
+  const canMarkClashResolved = useMemo(() => {
+    if (!canManageClash) return false;
+    if (!selectedResult || selectedResult.status === 'resolved') return false;
+    if (currentUserRole === 'owner' || currentUserRole === 'admin' || currentUserRole === 'manager')
+      return true;
+    const t = assigneeDraft.trim();
+    if (!t || /^unassigned$/i.test(t)) return false;
+    const row = projectMembers.find((m) => memberLabel(m) === t);
+    if (!row) return false;
+    const uid = auth?.id;
+    const pub = auth?.publicId;
+    if (!uid && !pub) return false;
+    return row.userId === uid || row.userId === pub;
+  }, [
+    canManageClash,
+    selectedResult?.clashId,
+    selectedResult?.status,
+    currentUserRole,
+    assigneeDraft,
+    projectMembers,
+    auth?.id,
+    auth?.publicId,
+  ]);
+
+  const noteAssignReadOnly = canManageClash && !canEditClashNoteAndAssignee;
 
   const toggleArrayValue = (values: string[], nextValue: string) =>
     values.includes(nextValue) ? values.filter((value) => value !== nextValue) : [...values, nextValue];
@@ -907,6 +976,12 @@ export default function NavisworksClashWorkspace({
   const markSelectedClashResolved = () => {
     if (!canManageClash) return denyViewerEdits();
     if (!selectedResult) return;
+    if (!canMarkClashResolved) {
+      toast.error(
+        'Only project owners, admins, managers, or the assignee can mark this clash as resolved.'
+      );
+      return;
+    }
     setError(null);
     updateClashStatus.mutate(
       {
@@ -954,6 +1029,10 @@ export default function NavisworksClashWorkspace({
   /** Persist note & assignee; also sets Reviewed when not resolved (keeps workflow in sync). */
   const saveClashInspectorDetails = async () => {
     if (!canManageClash) return denyViewerEdits();
+    if (!canEditClashNoteAndAssignee) {
+      toast.error('Only project owners, admins, or managers can save the coordination note or assignee.');
+      return;
+    }
     if (!selectedResult) {
       const msg = 'Select a clash in the list before saving.';
       toast.error(msg);
@@ -993,22 +1072,6 @@ export default function NavisworksClashWorkspace({
       toast.error(msg);
       showTimedBanner(setInspectorActionBanner, inspectorBannerTimer, { variant: 'error', message: msg });
     }
-  };
-
-  const hideObject = (objectId: string) => {
-    if (!canManageClash) return denyViewerEdits();
-    setError(null);
-    applyObjectActions.mutate(
-      { action: 'hide', objectIds: [objectId] },
-      {
-        onSuccess: () => toast.success('Object hidden for clash tests.'),
-        onError: (hideError) => {
-          const msg = hideError instanceof Error ? hideError.message : 'Failed to hide object';
-          setError(msg);
-          toast.error(msg);
-        },
-      }
-    );
   };
 
   const showObjects = (objectIds: string[]) => {
@@ -2104,56 +2167,26 @@ export default function NavisworksClashWorkspace({
                                   'group relative rounded-xl border p-4 transition-all duration-150',
                                   aHidden ? 'border-amber-200 bg-amber-50/50' : 'border-[#E5E7EB] hover:border-[#9CA3AF]'
                                 )}>
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="inline-flex size-5 items-center justify-center rounded-md bg-emerald-500 text-[10px] font-bold text-white">A</span>
-                                        <p className="text-xs font-medium uppercase tracking-wide text-[#6A7282]">Object A</p>
-                                      </div>
-                                      <p className="mt-1.5 text-sm font-medium text-[#101828]">{selectedResult.objectA}</p>
-                                      <p className="mt-0.5 text-xs text-[#6A7282]">{selectedResult.objectAType} · {selectedResult.objectAModel}</p>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="inline-flex size-5 items-center justify-center rounded-md bg-emerald-500 text-[10px] font-bold text-white">A</span>
+                                      <p className="text-xs font-medium uppercase tracking-wide text-[#6A7282]">Object A</p>
                                     </div>
-                                    <button
-                                      type="button"
-                                      disabled={!canManageClash}
-                                      onClick={() => void (aHidden ? showObjects([selectedResult.objectA]) : hideObject(selectedResult.objectA))}
-                                      className={cn(
-                                        'shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150',
-                                        aHidden
-                                          ? 'border-amber-300 bg-amber-100 text-amber-700 hover:bg-amber-200'
-                                          : 'border-[#D1D5DC] bg-white text-[#6A7282] hover:border-[#9CA3AF] hover:text-[#374151]'
-                                      )}
-                                    >
-                                      {aHidden ? '👁 Show' : '🙈 Hide'}
-                                    </button>
+                                    <p className="mt-1.5 text-sm font-medium text-[#101828]">{selectedResult.objectA}</p>
+                                    <p className="mt-0.5 text-xs text-[#6A7282]">{selectedResult.objectAType} · {selectedResult.objectAModel}</p>
                                   </div>
                                 </div>
                                 <div className={cn(
                                   'group relative rounded-xl border p-4 transition-all duration-150',
                                   bHidden ? 'border-amber-200 bg-amber-50/50' : 'border-[#E5E7EB] hover:border-[#9CA3AF]'
                                 )}>
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="inline-flex size-5 items-center justify-center rounded-md bg-amber-500 text-[10px] font-bold text-white">B</span>
-                                        <p className="text-xs font-medium uppercase tracking-wide text-[#6A7282]">Object B</p>
-                                      </div>
-                                      <p className="mt-1.5 text-sm font-medium text-[#101828]">{selectedResult.objectB}</p>
-                                      <p className="mt-0.5 text-xs text-[#6A7282]">{selectedResult.objectBType} · {selectedResult.objectBModel}</p>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="inline-flex size-5 items-center justify-center rounded-md bg-amber-500 text-[10px] font-bold text-white">B</span>
+                                      <p className="text-xs font-medium uppercase tracking-wide text-[#6A7282]">Object B</p>
                                     </div>
-                                    <button
-                                      type="button"
-                                      disabled={!canManageClash}
-                                      onClick={() => void (bHidden ? showObjects([selectedResult.objectB]) : hideObject(selectedResult.objectB))}
-                                      className={cn(
-                                        'shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-150',
-                                        bHidden
-                                          ? 'border-amber-300 bg-amber-100 text-amber-700 hover:bg-amber-200'
-                                          : 'border-[#D1D5DC] bg-white text-[#6A7282] hover:border-[#9CA3AF] hover:text-[#374151]'
-                                      )}
-                                    >
-                                      {bHidden ? '👁 Show' : '🙈 Hide'}
-                                    </button>
+                                    <p className="mt-1.5 text-sm font-medium text-[#101828]">{selectedResult.objectB}</p>
+                                    <p className="mt-0.5 text-xs text-[#6A7282]">{selectedResult.objectBType} · {selectedResult.objectBModel}</p>
                                   </div>
                                 </div>
                               </div>
@@ -2171,7 +2204,7 @@ export default function NavisworksClashWorkspace({
                               className="w-full resize-none rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none transition-colors focus:border-[#155DFC] focus:ring-2 focus:ring-blue-500/10"
                               placeholder="Add coordination notes..."
                               value={noteDraft}
-                              disabled={!canManageClash}
+                              disabled={!canManageClash || !canEditClashNoteAndAssignee}
                               maxLength={INSPECTOR_NOTE_MAX_LEN}
                               onChange={(event) => {
                                 clearInspectorActionBanner();
@@ -2190,7 +2223,7 @@ export default function NavisworksClashWorkspace({
                             <select
                               className="w-full cursor-pointer rounded-lg border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm outline-none transition-colors focus:border-[#155DFC] focus:ring-2 focus:ring-blue-500/10"
                               value={assigneeDraft}
-                              disabled={!canManageClash}
+                              disabled={!canManageClash || !canEditClashNoteAndAssignee}
                               onChange={(event) => {
                                 clearInspectorActionBanner();
                                 setAssigneeDraft(event.target.value);
@@ -2216,12 +2249,21 @@ export default function NavisworksClashWorkspace({
                             {!projectMembersLoading && projectMembers.length === 0 && (
                               <p className="mt-2 text-[11px] text-[#6A7282]">No members returned for this project; you can still use Unassigned or a stored assignee.</p>
                             )}
+                            {noteAssignReadOnly && (
+                              <p className="mt-2 text-[11px] text-[#6A7282]">
+                                Only project owners, admins, and managers can edit the coordination note or assignee.
+                              </p>
+                            )}
                           </div>
                           <SidebarActionBanner banner={inspectorActionBanner} />
                           <button
                             type="button"
                             onClick={() => void saveClashInspectorDetails()}
-                            disabled={!canManageClash || updateClashStatus.isPending}
+                            disabled={
+                              !canManageClash ||
+                              !canEditClashNoteAndAssignee ||
+                              updateClashStatus.isPending
+                            }
                             className={cn(
                               'flex w-full items-center justify-center gap-2 rounded-xl border border-[#155DFC] px-4 py-3 text-sm font-semibold text-[#155DFC] transition-all duration-150 hover:bg-[#EFF6FF] active:scale-[0.98]',
                               updateClashStatus.isPending && 'cursor-wait opacity-70'
@@ -2232,20 +2274,49 @@ export default function NavisworksClashWorkspace({
                             </svg>
                             {updateClashStatus.isPending ? 'Saving…' : 'Save note and assignee'}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setResolveDialogOpen(true)}
-                            disabled={!canManageClash || selectedResult.status === 'resolved'}
-                            className={cn(
-                              'flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#009966] to-[#059669] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-500/20 transition-all duration-150 hover:shadow-lg hover:shadow-emerald-500/30 active:scale-[0.98]',
-                              selectedResult.status === 'resolved' && 'cursor-not-allowed bg-emerald-300 hover:bg-emerald-300 hover:shadow-none'
-                            )}
-                          >
-                            <svg className="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            {selectedResult.status === 'resolved' ? '✓ Resolved' : 'Mark as resolved'}
-                          </button>
+                          {canManageClash &&
+                          selectedResult.status !== 'resolved' &&
+                          !canMarkClashResolved ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="block w-full">
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#009966]/50 to-[#059669]/50 px-4 py-3 text-sm font-semibold text-white opacity-80 shadow-none"
+                                  >
+                                    <svg className="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                      />
+                                    </svg>
+                                    Mark as resolved
+                                  </button>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-xs text-left">
+                                Only project owners, admins, managers, or the assignee can mark this clash as resolved.
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setResolveDialogOpen(true)}
+                              disabled={!canManageClash || selectedResult.status === 'resolved' || !canMarkClashResolved}
+                              className={cn(
+                                'flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#009966] to-[#059669] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-500/20 transition-all duration-150 hover:shadow-lg hover:shadow-emerald-500/30 active:scale-[0.98]',
+                                selectedResult.status === 'resolved' && 'cursor-not-allowed bg-emerald-300 hover:bg-emerald-300 hover:shadow-none'
+                              )}
+                            >
+                              <svg className="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              {selectedResult.status === 'resolved' ? '✓ Resolved' : 'Mark as resolved'}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2409,8 +2480,6 @@ export default function NavisworksClashWorkspace({
                       objectMeshPositions={objectMeshPositions}
                       testScopeObjectIds={activeTestScopeObjectIds}
                       deEmphasizeUnrelated={shouldHighlightActiveScope}
-                      showScopeBadge={shouldHighlightActiveScope}
-                      hideUnrelatedActive={hideUnrelatedToActiveTest}
                       hasXktOnlyOverview={hasXktOnlyOverview}
                     />
                   </div>
@@ -2419,6 +2488,7 @@ export default function NavisworksClashWorkspace({
                 <div className="flex min-h-0 flex-1 flex-col bg-[#111827] p-1.5 md:p-2">
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#111827]">
                     <Viewer3D
+                      key={viewerClash ? 'xeokit-clash-detail' : 'xeokit-overview'}
                       clash={viewerClash}
                       selectedObjectId={selectedObjectId}
                       onSelectObject={setSelectedObjectId}
@@ -2427,10 +2497,10 @@ export default function NavisworksClashWorkspace({
                       allowObjectMove={false}
                       testScopeObjectIds={activeTestScopeObjectIds}
                       deEmphasizeUnrelated={shouldHighlightActiveScope}
-                      showScopeBadge={shouldHighlightActiveScope}
-                      hideUnrelatedActive={hideUnrelatedToActiveTest}
                       projectSlug={projectSlug}
-                      xktModels={viewerClash ? xktModelsForClashDetail : xktModelsForViewer}
+                      xktModels={viewerClash ? xktModelsForClashViewer : xktModelsForViewer}
+                      projectUsesXktGeometry={projectUsesXktGeometry}
+                      deferClashBboxOverlay={deferClashBboxOverlay}
                       objectMeshPositions={objectMeshPositions}
                     />
                   </div>
@@ -2473,6 +2543,7 @@ export default function NavisworksClashWorkspace({
             <AlertDialogCancel className="border-[#D1D5DC]">Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-[#009966] text-white hover:bg-emerald-700"
+              disabled={!canMarkClashResolved}
               onClick={() => {
                 setResolveDialogOpen(false);
                 void markSelectedClashResolved();
