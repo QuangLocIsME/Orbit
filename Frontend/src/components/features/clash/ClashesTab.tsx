@@ -7,6 +7,7 @@ import { apiUrl } from '@/config/api';
 import { apiFetch } from '@/lib/api-client';
 import NavisworksClashWorkspace from './NavisworksClashWorkspace';
 import { clashesOverviewKey } from './hooks/useNavisworksWorkspace';
+import { onProjectTabInvalidated } from '@/lib/project-tab-realtime';
 
 interface ClashesTabProps {
   projectPublicId: string;
@@ -109,6 +110,12 @@ function ClashOverview({
     },
     staleTime: 30_000,
   });
+
+  useEffect(() => {
+    return onProjectTabInvalidated(projectPublicId, ['clashes'], () => {
+      refetch();
+    });
+  }, [projectPublicId, refetch]);
 
   const clashes = data?.clashes ?? [];
   const summary = data?.summary;

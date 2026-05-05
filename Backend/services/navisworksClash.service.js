@@ -9,6 +9,7 @@ const NotificationRepository = require('../repositories/NotificationRepository')
 const User = require('../models/User');
 const Project = require('../models/Project');
 const socketService = require('./socketService');
+const { resolveUserDisplayName } = require('../utils/userDisplayName');
 
 const DEFAULT_CELL_SIZE = 4;
 const DEFAULT_DUPLICATE_TOLERANCE = 0.001;
@@ -135,14 +136,7 @@ async function assertActorMayMarkClashResolved(projectSlug, actorUserId, assigne
 }
 
 async function resolveActorDisplayName(actorUserId) {
-    if (!actorUserId) return 'Someone';
-    const id = String(actorUserId);
-    let user = await User.findById(id).select('fullName email').lean();
-    if (!user) {
-        user = await User.findOne({ publicId: id }).select('fullName email').lean();
-    }
-    if (!user) return 'Someone';
-    return (user.fullName && String(user.fullName).trim()) || (user.email && String(user.email).trim()) || 'Someone';
+    return resolveUserDisplayName(actorUserId, 'Someone');
 }
 
 /**

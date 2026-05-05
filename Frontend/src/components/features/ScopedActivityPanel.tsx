@@ -11,6 +11,8 @@ import {
 import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { onProjectTabInvalidated } from '@/lib/project-tab-realtime';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 
 export interface ScopedActivityScope {
   type: 'project' | 'package';
@@ -30,6 +32,10 @@ interface ActivityItem {
   targetId?: string | null;
   projectId?: string | null;
   packageId?: string | null;
+}
+
+interface ActivityFeedBlock {
+  items: ActivityItem[];
 }
 
 interface ScopedActivityPanelProps {
@@ -448,6 +454,32 @@ export default function ScopedActivityPanel({
   const [filterUser, setFilterUser] = useState('');
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
+  const loadActivitiesRef = useRef<() => Promise<void>>(async () => {});
+  const blockId = 'feed';
+
+  useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchProjectBlock<ActivityFeedBlock>(
+      scope.projectId,
+      'activity',
+      blockId,
+      { packageId: scope.packageId || null }
+    ).then((block) => {
+      if (cancelled || !block?.items) return;
+      setActivities(block.items);
+      setLoading(false);
+      setCurrentPage(1);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [blockId, scope.packageId, scope.projectId, scope.type]);
 
   useEffect(() => {
     let cancelled = false;
@@ -477,6 +509,7 @@ export default function ScopedActivityPanel({
         }
       }
     };
+    loadActivitiesRef.current = load;
 
     const cached = getProjectTabCache<{ activities?: ActivityItem[] }>(cacheProjectId, 'activity');
     if (cached?.data?.activities) {
@@ -491,6 +524,20 @@ export default function ScopedActivityPanel({
       cancelled = true;
     };
   }, [cacheProjectId, scope.packageId, scope.projectId, scope.type]);
+
+  useEffect(() => {
+    return onProjectBlockUpdated<ActivityFeedBlock>(cacheProjectId, 'activity', blockId, ({ data }) => {
+      setActivities(data?.items || []);
+      setLoading(false);
+      setCurrentPage(1);
+    });
+  }, [blockId, cacheProjectId]);
+
+  useEffect(() => {
+    return onProjectTabInvalidated(cacheProjectId, ['activity'], () => {
+      loadActivitiesRef.current().catch(() => {});
+    });
+  }, [cacheProjectId]);
 
   // Derive unique users from activities
   const uniqueUsers = useMemo(() => {

@@ -5,7 +5,9 @@ const ProjectRepository = require('../repositories/ProjectRepository');
 const UserRepository = require('../repositories/UserRepository');
 const NotificationRepository = require('../repositories/NotificationRepository');
 const socketService = require('../services/socketService');
+const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const emailService = require('../services/emailService');
+const { resolveUserDisplayName } = require('../utils/userDisplayName');
 const { errorResponse } = require('../utils/response');
 
 const INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
@@ -72,6 +74,7 @@ class InviteController {
             // Real-time notification if invitee has an account
             if (inviteeProfile) {
                 const inviterProfile = await UserRepository.getProfileById(callerId);
+                const inviterName = normalizeString(inviterProfile?.fullName) || await resolveUserDisplayName(callerId);
                 const project = await ProjectRepository.findByPublicId(normalizedProjectId);
                 const notificationData = {
                     inviteId: String(invite._id),
@@ -80,7 +83,7 @@ class InviteController {
                     projectName: project?.name || 'a project',
                     projectAvatar: project?.coverImageUrl || undefined,
                     role: invite.role,
-                    inviterName: inviterProfile?.fullName || 'Someone',
+                    inviterName,
                     acceptUrl,
                 };
 
@@ -88,7 +91,7 @@ class InviteController {
                 await NotificationRepository.create({
                     userId: String(inviteeProfile._id),
                     type: 'info',
-                    title: `${inviterProfile?.fullName || 'Someone'} invited you`,
+                    title: `${inviterName} invited you`,
                     message: `Join "${project?.name || 'a project'}" as ${invite.role}`,
                     link: acceptUrl,
                     read: false,
@@ -101,12 +104,26 @@ class InviteController {
                 socketService.notifyUser(String(inviteeProfile._id), 'invite:new', notificationData);
             }
 
+            socketService.broadcastProject(normalizedProjectId, 'invite:project-created', {
+                projectId: normalizedProjectId,
+                inviteId: String(invite._id),
+                email: normalizedEmail,
+                role: invite.role,
+            });
+            await publishProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId: callerId,
+            });
+
             // Send invite email (fire-and-forget — don't block the response)
             const inviterProfile = await UserRepository.getProfileById(callerId);
+            const inviterName = normalizeString(inviterProfile?.fullName) || await resolveUserDisplayName(callerId);
             const project = await ProjectRepository.findByPublicId(normalizedProjectId);
             emailService.sendInviteEmail({
                 toEmail: normalizedEmail,
-                inviterName: inviterProfile?.fullName || 'Someone',
+                inviterName,
                 projectName: project?.name || 'a project',
                 role: invite.role,
                 acceptUrl,
@@ -185,6 +202,12 @@ class InviteController {
                 projectId: invite.projectId,
                 userId,
                 fullName: profile.fullName,
+            });
+            await publishProjectBlockUpdate({
+                projectId: invite.projectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId,
             });
 
             return res.status(200).json({
@@ -289,6 +312,12 @@ class InviteController {
             socketService.broadcastProject(invite.projectId, 'invite:revoked', {
                 projectId: invite.projectId,
                 inviteId: normalizedInviteId,
+            });
+            await publishProjectBlockUpdate({
+                projectId: invite.projectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId: callerId,
             });
 
             return res.status(200).json({

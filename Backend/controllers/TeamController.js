@@ -2,6 +2,7 @@ const TeamRepository = require('../repositories/TeamRepository');
 const TeamMemberRepository = require('../repositories/TeamMemberRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const socketService = require('../services/socketService');
+const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -102,6 +103,7 @@ class TeamController {
                 teamId: team.publicId,
                 team: data,
             });
+            await publishProjectBlockUpdate({ projectId, scope: 'teams', blockId: 'roster', userId });
 
             return res.status(201).json({
                 success: true,
@@ -135,6 +137,7 @@ class TeamController {
                 action: 'deleted',
                 teamId,
             });
+            await publishProjectBlockUpdate({ projectId: team.projectId, scope: 'teams', blockId: 'roster', userId });
 
             return res.json({ success: true, message: 'Team deleted' });
         } catch (err) {
@@ -175,6 +178,7 @@ class TeamController {
                 teamId,
                 userId: targetUserId,
             });
+            await publishProjectBlockUpdate({ projectId: team.projectId, scope: 'teams', blockId: 'roster', userId });
 
             return res.status(201).json({ success: true, message: 'Member added to team' });
         } catch (err) {
@@ -207,6 +211,7 @@ class TeamController {
                 teamId,
                 userId: targetUserId,
             });
+            await publishProjectBlockUpdate({ projectId: team.projectId, scope: 'teams', blockId: 'roster', userId });
 
             return res.json({ success: true, message: 'Member removed from team' });
         } catch (err) {

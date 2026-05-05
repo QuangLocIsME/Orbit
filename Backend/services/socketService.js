@@ -17,11 +17,12 @@ const { Server } = require('socket.io');
 const cookie = require('cookie');
 const { createClient } = require('redis');
 const { verifyToken } = require('../utils/jwt');
+const { normalizeRedisUrl } = require('../utils/redisUrl');
 
 // ── Singleton state ───────────────────────────────────────────────────────────
 let io = null;
 const REALTIME_CHANNEL = 'orbit:realtime';
-const redisUrl = process.env.REDIS_URL;
+const redisUrl = normalizeRedisUrl(process.env.REDIS_URL);
 let realtimeSubscriber = null;
 let realtimePublisher = null;
 let realtimePublisherPromise = null;

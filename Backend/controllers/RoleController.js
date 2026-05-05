@@ -1,6 +1,7 @@
 const ProjectRoleRepository = require('../repositories/ProjectRoleRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const socketService = require('../services/socketService');
+const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 
@@ -169,6 +170,7 @@ class RoleController {
                 action: 'created',
                 roleId: role.id,
             });
+            await publishProjectBlockUpdate({ projectId, scope: 'teams', blockId: 'roster', userId });
 
             return res.status(201).json({
                 success: true,
@@ -226,6 +228,12 @@ class RoleController {
                 action: 'updated',
                 roleId,
             });
+            await publishProjectBlockUpdate({
+                projectId: existingRole.projectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId,
+            });
 
             return res.json({
                 success: true,
@@ -269,6 +277,12 @@ class RoleController {
                 projectId: existingRole.projectId,
                 action: 'deleted',
                 roleId,
+            });
+            await publishProjectBlockUpdate({
+                projectId: existingRole.projectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId,
             });
 
             return res.json({

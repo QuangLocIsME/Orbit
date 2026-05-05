@@ -7,6 +7,7 @@ import { useAppStore } from '@/stores/appStore';
 import { toast } from '@/components/ui/sonner';
 import AddMemberModal, { type TeamOption } from './AddMemberModal';
 import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 
 type MemberRole = 'admin' | 'owner' | 'member' | 'viewer';
 type MemberStatus = 'invited' | 'accepted' | 'blocked';
@@ -183,6 +184,13 @@ interface Team extends TeamOption {
   memberIds: string[];
 }
 
+interface TeamsRosterBlock {
+  members: MemberWithUser[];
+  invites: PendingInvite[];
+  roles: Role[];
+  teams: Team[];
+}
+
 const TEAM_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-purple-500',
   'bg-teal-500', 'bg-pink-500', 'bg-indigo-500', 'bg-amber-500',
@@ -322,6 +330,38 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
   };
 
   useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchProjectBlock<TeamsRosterBlock>(projectPublicId, 'teams', 'roster').then((block) => {
+      if (cancelled || !block) return;
+      setMembers(block.members || []);
+      setPendingInvites(block.invites || []);
+      setRoles(block.roles || []);
+      setTeams(block.teams || []);
+      setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPublicId]);
+
+  useEffect(() => {
+    return onProjectBlockUpdated<TeamsRosterBlock>(projectPublicId, 'teams', 'roster', ({ data }) => {
+      if (!data) return;
+      setMembers(data.members || []);
+      setPendingInvites(data.invites || []);
+      setRoles(data.roles || []);
+      setTeams(data.teams || []);
+      setLoading(false);
+    });
+  }, [projectPublicId]);
+
+  useEffect(() => {
     const cached = getProjectTabCache<{
       members?: MemberWithUser[];
       pendingInvites?: PendingInvite[];
@@ -362,6 +402,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
 
     const isThisProject = (payload?: { projectId?: string }) => payload?.projectId === projectPublicId;
     const handleInviteNew = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchInvites(); };
+    const handleProjectInviteCreated = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchInvites(); };
     const handleInviteAccepted = (payload?: { projectId?: string }) => { if (isThisProject(payload)) { fetchMembers(); fetchInvites(); fetchTeams(); fetchRoles(); } };
     const handleInviteRevoked = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchInvites(); };
     const handleMemberChanged = (payload?: { projectId?: string }) => { if (isThisProject(payload)) { fetchMembers(); fetchTeams(); fetchRoles(); } };
@@ -369,6 +410,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
     const handleRolesChanged = (payload?: { projectId?: string }) => { if (isThisProject(payload)) fetchRoles(); };
 
     socket.on('invite:new', handleInviteNew);
+    socket.on('invite:project-created', handleProjectInviteCreated);
     socket.on('invite:accepted', handleInviteAccepted);
     socket.on('invite:revoked', handleInviteRevoked);
     socket.on('project:member:joined', handleMemberChanged);
@@ -380,6 +422,7 @@ export default function TeamsTab({ projectPublicId, currentUserRole: initialRole
 
     return () => {
       socket.off('invite:new', handleInviteNew);
+      socket.off('invite:project-created', handleProjectInviteCreated);
       socket.off('invite:accepted', handleInviteAccepted);
       socket.off('invite:revoked', handleInviteRevoked);
       socket.off('project:member:joined', handleMemberChanged);

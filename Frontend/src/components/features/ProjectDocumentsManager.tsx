@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dialog';
 import VersionHistoryModal from './VersionHistoryModal';
 import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 
 // Helper function to download file from URL
 const handleDownloadFile = async (url: string, filename: string) => {
@@ -80,6 +81,10 @@ interface TreeNode {
   isPackage?: boolean;
   icon?: string;
   approvalStatus?: 'pending' | 'approved' | 'rejected';
+}
+
+interface DocumentsTreeBlock {
+  tree: TreeNode | null;
 }
 
 function findNodeById(node: TreeNode | null, id: string): TreeNode | null {
@@ -201,6 +206,7 @@ function deriveLocation(
 
 export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true, initialFileId = null, projectRole = 'member' }: ProjectDocumentsManagerProps) {
   const cacheProjectId = packageId ? `${projectId}:package:${packageId}` : projectId;
+  const documentsBlockId = 'tree';
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
@@ -243,6 +249,10 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const registerProjectCallback = useAppStore((s) => s.registerProjectCallback);
+
+  useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
 
   // Real-time: refresh documents when another user creates/upload/deletes
   useEffect(() => {
@@ -309,16 +319,38 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   };
 
   useEffect(() => {
+    let cancelled = false;
+    fetchProjectBlock<DocumentsTreeBlock>(projectId, 'documents', documentsBlockId, {
+      packageId,
+      cacheKey: cacheProjectId,
+    }).then((block) => {
+      if (cancelled || !block) return;
+      setRootTree(block.tree || null);
+      setLoading(false);
+    });
+
     const cached = getProjectTabCache<{ rootTree: TreeNode | null }>(cacheProjectId, 'documents');
     if (cached?.data) {
       setRootTree(cached.data.rootTree || null);
       setLoading(false);
       loadDocuments().catch(() => {});
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     refresh();
+    return () => {
+      cancelled = true;
+    };
   }, [cacheProjectId, projectId, packageId]);
+
+  useEffect(() => {
+    return onProjectBlockUpdated<DocumentsTreeBlock>(cacheProjectId, 'documents', documentsBlockId, ({ data }) => {
+      setRootTree(data?.tree || null);
+      setLoading(false);
+    });
+  }, [cacheProjectId]);
 
   useEffect(() => {
     let cancelled = false;

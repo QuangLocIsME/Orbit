@@ -85,7 +85,7 @@ class ProjectMemberRepository {
 
     async getMembersWithUsers(projectId) {
         return await ProjectMember.find({ projectId }).select(
-            '-_id projectId userId role status invitedBy createdAt isFavorite'
+            'publicId projectId userId role status invitedBy createdAt isFavorite'
         ).lean();
     }
 

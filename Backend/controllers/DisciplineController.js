@@ -1,6 +1,7 @@
 const DisciplineRepository = require('../repositories/DisciplineRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const socketService = require('../services/socketService');
+const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { errorResponse } = require('../utils/response');
 
 const normalizeString = (val) => {
@@ -86,6 +87,7 @@ class DisciplineController {
                 action: 'created',
                 disciplineId: discipline.publicId,
             });
+            await publishProjectBlockUpdate({ projectId, scope: 'changes', blockId: 'meta', userId });
 
             return res.status(201).json({
                 success: true,
@@ -155,6 +157,7 @@ class DisciplineController {
                 action: 'updated',
                 disciplineId,
             });
+            await publishProjectBlockUpdate({ projectId: discipline.projectId, scope: 'changes', blockId: 'meta', userId });
 
             return res.status(200).json({
                 success: true,
@@ -206,6 +209,7 @@ class DisciplineController {
                 action: 'deleted',
                 disciplineId,
             });
+            await publishProjectBlockUpdate({ projectId: discipline.projectId, scope: 'changes', blockId: 'meta', userId });
 
             return res.status(200).json({
                 success: true,

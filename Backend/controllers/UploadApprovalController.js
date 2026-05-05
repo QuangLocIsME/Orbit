@@ -9,6 +9,7 @@ const ProjectMemberRepository = require('../repositories/ProjectMemberRepository
 const User = require('../models/User');
 const ActivityService = require('../services/activityService');
 const { broadcastProject } = require('../services/socketService');
+const { publishProjectBlockRefresh, publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
@@ -260,6 +261,7 @@ class UploadApprovalController {
                 approvalId: normalizedApprovalId,
                 status: 'approved',
             });
+            await publishProjectBlockUpdate({ projectId: normalizedProjectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({
                 success: true,
@@ -331,6 +333,7 @@ class UploadApprovalController {
                 approvalId: normalizedApprovalId,
                 status: 'rejected',
             });
+            await publishProjectBlockUpdate({ projectId: normalizedProjectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({
                 success: true,
@@ -450,6 +453,12 @@ class UploadApprovalController {
                     updatedAt: comment.updatedAt,
                 },
             });
+            await publishProjectBlockRefresh({
+                projectId: approval.projectId,
+                scope: 'versions',
+                blockId: `comments:approval:${normalizedApprovalId}`,
+            });
+            await publishProjectBlockUpdate({ projectId: approval.projectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(201).json({
                 success: true,
@@ -501,6 +510,12 @@ class UploadApprovalController {
                 approvalId: comment.approvalId,
                 commentId: normalizedCommentId,
             });
+            await publishProjectBlockRefresh({
+                projectId: comment.projectId,
+                scope: 'versions',
+                blockId: `comments:approval:${comment.approvalId}`,
+            });
+            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({ success: true, message: 'Comment deleted' });
         } catch (error) {
@@ -539,6 +554,7 @@ class UploadApprovalController {
                 documentId: normalizedDocumentId,
                 status: approval?.status || null,
             });
+            await publishProjectBlockUpdate({ projectId: normalizedProjectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({ success: true, message: 'Upload approval deleted', data: { deleted } });
         } catch (error) {
@@ -621,6 +637,7 @@ class UploadApprovalController {
                 approvalId: approval.publicId,
                 status: 'approved',
             });
+            await publishProjectBlockUpdate({ projectId: normalizedProjectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({
                 success: true,
@@ -692,6 +709,7 @@ class UploadApprovalController {
                 approvalId: approval.publicId,
                 status: 'rejected',
             });
+            await publishProjectBlockUpdate({ projectId: normalizedProjectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({
                 success: true,

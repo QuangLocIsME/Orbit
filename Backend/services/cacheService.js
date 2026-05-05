@@ -1,7 +1,8 @@
 const { createClient } = require('redis');
+const { normalizeRedisUrl } = require('../utils/redisUrl');
 
 const DEFAULT_TTL_SECONDS = Number(process.env.REDIS_CACHE_TTL_SECONDS) || 60;
-const redisUrl = process.env.REDIS_URL;
+const redisUrl = normalizeRedisUrl(process.env.REDIS_URL);
 
 let client = null;
 let enabled = Boolean(redisUrl);

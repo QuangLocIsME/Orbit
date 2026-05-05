@@ -24,6 +24,10 @@
 
 import { create } from 'zustand';
 import { getSocket, type OrbitSocket } from '@/lib/socket';
+import {
+  invalidateProjectTabsForSocketEvent,
+  type ProjectTabInvalidationSource,
+} from '@/lib/project-tab-realtime';
 
 const PROJECTS_CACHE_KEY = 'orbit:projects:me';
 const FOLDERS_CACHE_KEY = 'orbit:folders:me';
@@ -122,6 +126,11 @@ export type PrefetchStatus = 'idle' | 'loading' | 'done' | 'error';
 // ── Callback registry types ──────────────────────────────────────────────────────
 
 type ProjectEvent =
+  | 'cache:block:update'
+  | 'invite:project-created'
+  | 'invite:accepted'
+  | 'invite:revoked'
+  | 'invite:declined'
   | 'documents:refresh'
   | 'package:created'
   | 'package:updated'
@@ -141,13 +150,38 @@ type ProjectEvent =
   | 'roles:changed'
   | 'disciplines:changed'
   | 'share-links:changed'
-  | 'invite:accepted'
-  | 'invite:revoked'
-  | 'invite:declined'
   | 'workflow-template:changed'
-  | 'document:conversion-updated';
+  | 'document:conversion-updated'
+  | 'approval:new'
+  | 'approval:updated'
+  | 'approval:deleted'
+  | 'approval:comment_added'
+  | 'approval:comment_deleted'
+  | 'clash:updated'
+  | 'cr:created'
+  | 'cr:updated'
+  | 'cr:status-changed'
+  | 'cr:deleted'
+  | 'cr:comment_added'
+  | 'cr:comment_updated'
+  | 'cr:comment_deleted'
+  | 'cr:version_created'
+  | 'cr:version_updated'
+  | 'task:created'
+  | 'task:updated'
+  | 'task:deleted'
+  | 'task:status-changed'
+  | 'task:commented'
+  | 'task:comment_updated'
+  | 'task:comment_deleted'
+  | 'package:task-count-changed';
 
 type ProjectEventData = {
+  'cache:block:update': { projectId: string; scope: string; blockId: string; data: unknown; updatedAt: number };
+  'invite:project-created': { projectId: string; inviteId: string; email: string; role: string };
+  'invite:accepted': { projectId: string; inviteId: string; acceptedBy: string };
+  'invite:revoked': { projectId: string; inviteId: string };
+  'invite:declined': { projectId: string; inviteId: string; declinedBy: string };
   'documents:refresh': { projectId: string; packageId: string | null; action?: string; documentId?: string; versionGroupId?: string };
   'package:created': { publicId: string; projectId: string; name: string; description: string; packageType: string; status: string; dueDate: string | null; creatorId: string; teamMemberIds: string[]; archivedAt: string | null; createdAt: string; updatedAt: string; actorId: string };
   'package:updated': { packageId: string; projectId: string; changes: Record<string, unknown> };
@@ -167,11 +201,31 @@ type ProjectEventData = {
   'roles:changed': { projectId: string; action: string; roleId?: string };
   'disciplines:changed': { projectId: string; action: string; disciplineId?: string };
   'share-links:changed': { projectId: string; action: string; shareId?: string; packageId?: string };
-  'invite:accepted': { projectId: string; inviteId: string; acceptedBy: string };
-  'invite:revoked': { projectId: string; inviteId: string };
-  'invite:declined': { projectId: string; inviteId: string; declinedBy: string };
   'workflow-template:changed': { action: string; templateId?: string; sourceTemplateId?: string; authorId?: string; userId?: string; isPrivate?: boolean };
   'document:conversion-updated': { projectId: string; packageId: string | null; documentId: string; versionId: string; status: string; conversionStatus: string; conversionError?: string; xktUrl?: string };
+  'approval:new': { projectId: string; approvalId: string };
+  'approval:updated': { projectId: string; approvalId: string; status: string };
+  'approval:deleted': { projectId: string; approvalId: string; documentId?: string; status?: string | null };
+  'approval:comment_added': { projectId: string; approvalId: string; comment?: unknown };
+  'approval:comment_deleted': { projectId: string; approvalId: string; commentId: string };
+  'clash:updated': { projectId: string };
+  'cr:created': { projectId: string; crId: string };
+  'cr:updated': { projectId: string; crId: string };
+  'cr:status-changed': { projectId: string; crId: string; status: string };
+  'cr:deleted': { projectId: string; crId: string };
+  'cr:comment_added': { projectId: string; crId: string; commentId?: string; comment?: unknown };
+  'cr:comment_updated': { projectId: string; crId: string; commentId: string };
+  'cr:comment_deleted': { projectId: string; crId: string; commentId: string };
+  'cr:version_created': { projectId: string; crId: string; versionId: string; version?: Record<string, unknown> };
+  'cr:version_updated': { projectId: string; crId: string; versionId: string; status: string };
+  'task:created': { projectId: string; packageId: string | null; taskId: string };
+  'task:updated': { projectId: string; packageId: string | null; taskId: string; changes?: Record<string, unknown> };
+  'task:deleted': { projectId: string; packageId: string | null; taskId: string };
+  'task:status-changed': { projectId: string; packageId: string | null; taskId: string; status: string };
+  'task:commented': { projectId: string; packageId: string | null; taskId: string; commentId: string };
+  'task:comment_updated': { projectId: string; packageId: string | null; taskId: string; commentId: string };
+  'task:comment_deleted': { projectId: string; packageId: string | null; taskId: string; commentId: string };
+  'package:task-count-changed': { projectId: string; packageId: string; action: string; taskId?: string; status?: string };
 };
 
 // ── Store ────────────────────────────────────────────────────────────────────────
@@ -394,6 +448,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // ── Project-scoped events — dispatch to registered callbacks ───────────────
     const projectEvents: ProjectEvent[] = [
+      'cache:block:update',
+      'invite:project-created',
+      'invite:accepted',
+      'invite:revoked',
+      'invite:declined',
       'documents:refresh',
       'package:created',
       'package:updated',
@@ -413,17 +472,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       'roles:changed',
       'disciplines:changed',
       'share-links:changed',
-      'invite:accepted',
-      'invite:revoked',
-      'invite:declined',
       'workflow-template:changed',
       'document:conversion-updated',
+      'approval:new',
+      'approval:updated',
+      'approval:deleted',
+      'approval:comment_added',
+      'approval:comment_deleted',
+      'clash:updated',
+      'cr:created',
+      'cr:updated',
+      'cr:status-changed',
+      'cr:deleted',
+      'cr:comment_added',
+      'cr:comment_updated',
+      'cr:comment_deleted',
+      'cr:version_created',
+      'cr:version_updated',
+      'task:created',
+      'task:updated',
+      'task:deleted',
+      'task:status-changed',
+      'task:commented',
+      'task:comment_updated',
+      'task:comment_deleted',
+      'package:task-count-changed',
     ];
 
     for (const event of projectEvents) {
       (socket.on as (event: string, handler: (data: unknown) => void) => void)(event, (data: unknown) => {
         const payload = data as { projectId?: string };
         if (!payload?.projectId) return;
+        if (event !== 'cache:block:update') {
+          invalidateProjectTabsForSocketEvent(
+            payload.projectId,
+            event as ProjectTabInvalidationSource,
+            data
+          );
+        }
         _dispatchEvent(payload.projectId, event, data);
       });
     }

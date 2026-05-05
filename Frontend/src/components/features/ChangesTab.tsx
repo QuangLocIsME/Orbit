@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { getSocket } from '@/lib/socket';
 import { refreshApiCache } from '@/lib/sw-utils';
 import { getProjectTabCache, mergeProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 import { FileIcon, fmtSize, MAX_ATTACH_SIZE, Avatar } from './TaskFormShared';
 import { MemberPicker, AttachPicker } from './TaskFormShared';
 import { CommentSection, type CommentItem } from './TaskFormShared';
@@ -30,6 +31,15 @@ interface StructuredSections {
     affectedModels: string[];
     clashCheckRequired: boolean;
   };
+}
+
+interface ChangesListBlock {
+  items: ChangeRequest[];
+}
+
+interface ChangesMetaBlock {
+  disciplines: Discipline[];
+  teamMembers: TeamMember[];
 }
 
 interface ResultAttachment {
@@ -146,6 +156,51 @@ function fmtRel(d: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function isValidMemberRef(id: string) {
+  const normalized = String(id || '').trim().toLowerCase();
+  return Boolean(normalized) && normalized !== 'undefined' && normalized !== 'null';
+}
+
+function getChangeRequestKey(cr: Pick<ChangeRequest, 'publicId' | 'crId'>) {
+  return String(cr.publicId || cr.crId || '').trim();
+}
+
+function normalizeChangeRequest(cr: ChangeRequest): ChangeRequest {
+  return {
+    ...cr,
+    affectedModels:      Array.isArray(cr.affectedModels)  ? cr.affectedModels  : [],
+    assignedTo:          Array.isArray(cr.assignedTo)      ? cr.assignedTo      : [],
+    reviewers:           Array.isArray(cr.reviewers)       ? cr.reviewers       : [],
+    attachments:         Array.isArray(cr.attachments)     ? cr.attachments     : [],
+    estimatedImpact:     cr.estimatedImpact  ?? null,
+    estimatedCost:       cr.estimatedCost    ?? null,
+    estimatedDuration:   cr.estimatedDuration ?? '',
+    deadline:            cr.deadline         ?? null,
+    detailedDescription: cr.detailedDescription ?? '',
+    linkedTaskIds:       Array.isArray(cr.linkedTaskIds)   ? cr.linkedTaskIds   : [],
+    primaryTaskId:       cr.primaryTaskId ?? null,
+    affectedDocuments:   Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
+    derivedPackageIds:   Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
+    structuredSections:  cr.structuredSections ?? null,
+    resultAttachments:   Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
+  };
+}
+
+function dedupeChangeRequests(items: ChangeRequest[]) {
+  const seen = new Set<string>();
+  const deduped: ChangeRequest[] = [];
+
+  for (const item of items) {
+    const normalized = normalizeChangeRequest(item);
+    const key = getChangeRequestKey(normalized);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    deduped.push(normalized);
+  }
+
+  return deduped;
+}
+
 // ─── Small reusable pieces ────────────────────────────────────────────────────
 
 function CrIcon({ status }: { status: ChangeRequest['status'] }) {
@@ -188,6 +243,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
   const [reviewers, setReviewers]                 = useState<string[]>([]);
   const [attachments, setAttachments]              = useState<File[]>([]);
   const [submitting, setSubmitting]               = useState(false);
+  const submittingRef = useRef(false);
 
   const toggleModel = (id: string) =>
     setAffectedModels(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
@@ -196,6 +252,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
     if (!title.trim())       { toast.error('Title is required'); return; }
     if (!description.trim()) { toast.error('Description is required'); return; }
     if (!estimatedImpact)    { toast.error('Estimated Impact is required'); return; }
+    if (submittingRef.current) return;
 
     const structuredSections = {
       context: description.trim(),
@@ -208,6 +265,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
       },
     };
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       let res: Response;
@@ -263,6 +321,7 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
     } catch {
       toast.error('Failed to create change request');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -445,8 +504,8 @@ function CreateModal({ projectPublicId, disciplines, modelFiles, teamMembers, lo
 
           {/* ── Assignees + Reviewers — 2 col ─────────────────────── */}
           <div className="grid grid-cols-2 gap-4">
-            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} />
-            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers}  />
+            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} valueKey="userId" />
+            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers} valueKey="userId" />
           </div>
 
           {/* ── Estimated Cost + Duration — 2 col ─────────────────── */}
@@ -721,8 +780,8 @@ function EditModal({ cr, disciplines, modelFiles, teamMembers, loadingFiles, onC
 
           {/* Assignees + Reviewers */}
           <div className="grid grid-cols-2 gap-4">
-            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} />
-            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers}  />
+            <MemberPicker label="Assigned To" members={teamMembers} selected={assignedTo} onChange={setAssignedTo} valueKey="userId" />
+            <MemberPicker label="Reviewers"   members={teamMembers} selected={reviewers}  onChange={setReviewers} valueKey="userId" />
           </div>
 
           {/* Affected Models */}
@@ -1221,7 +1280,7 @@ function DetailModal({
                   <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Assigned To</p>
                   <div className="flex flex-wrap gap-1.5">
                     {cr.assignedTo?.map(id => {
-                      const m = teamMembers.find(x => x.userId === id);
+                      const m = isValidMemberRef(id) ? teamMembers.find(x => x.userId === id || x.publicId === id) : undefined;
                       return m ? (
                         <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] pl-1 pr-2 py-0.5 text-[12px] text-[#1D4ED8]">
                           <Avatar name={m.user?.fullName} color="#3B82F6" avatarSrc={m.user?.avatar} />{m.user?.fullName}
@@ -1236,7 +1295,7 @@ function DetailModal({
                   <p className="text-[12px] font-semibold uppercase tracking-wide text-[#6A7282] mb-1.5">Reviewers</p>
                   <div className="flex flex-wrap gap-1.5">
                     {cr.reviewers?.map(id => {
-                      const m = teamMembers.find(x => x.userId === id);
+                      const m = isValidMemberRef(id) ? teamMembers.find(x => x.userId === id || x.publicId === id) : undefined;
                       return m ? (
                         <span key={id} className="inline-flex items-center gap-1 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] pl-1 pr-2 py-0.5 text-[12px] text-[#166534]">
                           <Avatar name={m.user?.fullName} color="#22C55E" avatarSrc={m.user?.avatar} />{m.user?.fullName}
@@ -1621,6 +1680,12 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
   const [editCR, setEditCR]                 = useState<ChangeRequest | null>(null);
   const [deleteCR, setDeleteCR]             = useState<ChangeRequest | null>(null);
   const [workflowStages, setWorkflowStages] = useState<{ id: string; name: string; color?: string }[]>([]);
+  const changesListBlockId = 'list';
+  const changesMetaBlockId = 'meta';
+
+  useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
 
   // Open detail modal when initialCrId is provided via URL
   useEffect(() => {
@@ -1637,25 +1702,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
       const res = await apiFetch(`/api/projects/${projectPublicId}/change-requests`);
       if (res.ok) {
         const d = await res.json();
-        const normalized = (d?.data ?? []).map((cr: ChangeRequest) => ({
-          ...cr,
-          affectedModels:      Array.isArray(cr.affectedModels)  ? cr.affectedModels  : [],
-          assignedTo:          Array.isArray(cr.assignedTo)      ? cr.assignedTo      : [],
-          reviewers:           Array.isArray(cr.reviewers)       ? cr.reviewers       : [],
-          attachments:         Array.isArray(cr.attachments)     ? cr.attachments     : [],
-          estimatedImpact:     cr.estimatedImpact  ?? null,
-          estimatedCost:       cr.estimatedCost    ?? null,
-          estimatedDuration:   cr.estimatedDuration ?? '',
-          deadline:            cr.deadline         ?? null,
-          detailedDescription: cr.detailedDescription ?? '',
-          linkedTaskIds:       Array.isArray(cr.linkedTaskIds)   ? cr.linkedTaskIds   : [],
-          primaryTaskId:       cr.primaryTaskId ?? null,
-          affectedDocuments:   Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
-          derivedPackageIds:   Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
-          structuredSections:  cr.structuredSections ?? null,
-          resultAttachments:   Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
-        }));
-        setChangeRequests(normalized);
+        setChangeRequests(dedupeChangeRequests(d?.data ?? []));
       }
     } catch { /* silent */ }
     finally { setLoadingCR(false); }
@@ -1742,6 +1789,19 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
   }, [projectPublicId]);
 
   useEffect(() => {
+    let cancelled = false;
+    fetchProjectBlock<ChangesListBlock>(projectPublicId, 'changes', changesListBlockId).then((block) => {
+      if (cancelled || !block?.items) return;
+      setChangeRequests(dedupeChangeRequests(block.items));
+      setLoadingCR(false);
+    });
+    fetchProjectBlock<ChangesMetaBlock>(projectPublicId, 'changes', changesMetaBlockId).then((block) => {
+      if (cancelled || !block) return;
+      if (block.disciplines) setDisciplines(block.disciplines);
+      if (block.teamMembers) setTeamMembers(block.teamMembers);
+      setLoadingFiles(false);
+    });
+
     const cached = getProjectTabCache<{
       changeRequests?: ChangeRequest[];
       disciplines?: Discipline[];
@@ -1753,7 +1813,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
     }>(projectPublicId, 'changes');
 
     if (cached?.data) {
-      if (cached.data.changeRequests) setChangeRequests(cached.data.changeRequests);
+      if (cached.data.changeRequests) setChangeRequests(dedupeChangeRequests(cached.data.changeRequests));
       if (cached.data.disciplines) setDisciplines(cached.data.disciplines);
       if (cached.data.modelFiles) setModelFiles(cached.data.modelFiles);
       if (cached.data.teamMembers) setTeamMembers(cached.data.teamMembers);
@@ -1764,12 +1824,32 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
       setLoadingFiles(false);
       loadCR().catch(() => {});
       loadMeta().catch(() => {});
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     loadCR();
     loadMeta();
+    return () => {
+      cancelled = true;
+    };
   }, [loadCR, loadMeta, projectPublicId]);
+
+  useEffect(() => {
+    return onProjectBlockUpdated<ChangesListBlock>(projectPublicId, 'changes', changesListBlockId, ({ data }) => {
+      setChangeRequests(dedupeChangeRequests(data?.items || []));
+      setLoadingCR(false);
+    });
+  }, [projectPublicId]);
+
+  useEffect(() => {
+    return onProjectBlockUpdated<ChangesMetaBlock>(projectPublicId, 'changes', changesMetaBlockId, ({ data }) => {
+      if (data?.disciplines) setDisciplines(data.disciplines);
+      if (data?.teamMembers) setTeamMembers(data.teamMembers);
+      setLoadingFiles(false);
+    });
+  }, [projectPublicId]);
 
   useEffect(() => {
     mergeProjectTabCache(projectPublicId, 'changes', {
@@ -1838,7 +1918,9 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
             updatedAt: c.updatedAt ? String(c.updatedAt) : undefined,
             isEdited: Boolean(c.isEdited),
           }));
-          window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', { detail: list }));
+          window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', {
+            detail: { action: 'replace', comments: list },
+          }));
         })
         .catch(() => {});
     };
@@ -1862,10 +1944,20 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
         isEdited: Boolean(comment.isEdited),
       };
 
-      window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', { detail: [incoming] }));
+      window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', {
+        detail: { action: 'append', comments: [incoming] },
+      }));
     };
 
-    const handleCrCommentChanged = ({ projectId, crId }: { projectId: string; crId: string }) => {
+    const handleCrCommentChanged = ({ projectId, crId, commentId }: { projectId: string; crId: string; commentId: string }) => {
+      if (projectId !== projectPublicId) return;
+      if (detailCR?.publicId !== crId) return;
+      window.dispatchEvent(new CustomEvent('orbit:comments:/api/change-requests/comments/list', {
+        detail: { action: 'delete', commentId },
+      }));
+    };
+
+    const handleCrCommentUpdated = ({ projectId, crId }: { projectId: string; crId: string }) => {
       if (projectId !== projectPublicId) return;
       if (detailCR?.publicId !== crId) return;
       dispatchCommentsToDetail(crId);
@@ -1889,7 +1981,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
     socket.on('cr:status-changed', handleCrStatusChanged);
     socket.on('cr:deleted', handleCrDeleted);
     socket.on('cr:comment_added', handleCrCommentAdded);
-    socket.on('cr:comment_updated', handleCrCommentChanged);
+    socket.on('cr:comment_updated', handleCrCommentUpdated);
     socket.on('cr:comment_deleted', handleCrCommentChanged);
     socket.on('cr:version_created', handleCrUpdated);
     socket.on('cr:version_updated', handleCrUpdated);
@@ -1906,7 +1998,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
       socket.off('cr:status-changed', handleCrStatusChanged);
       socket.off('cr:deleted', handleCrDeleted);
       socket.off('cr:comment_added', handleCrCommentAdded);
-      socket.off('cr:comment_updated', handleCrCommentChanged);
+      socket.off('cr:comment_updated', handleCrCommentUpdated);
       socket.off('cr:comment_deleted', handleCrCommentChanged);
       socket.off('cr:version_created', handleCrUpdated);
       socket.off('cr:version_updated', handleCrUpdated);
@@ -1934,7 +2026,7 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
       const crs = Array.isArray(data) ? data : (data as any)?.data;
       if (!Array.isArray(crs)) return;
 
-      setChangeRequests(crs);
+      setChangeRequests(dedupeChangeRequests(crs));
       setFilter('all');
     };
 
@@ -1956,8 +2048,9 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
   });
 
   const handleUpdated = (updated: ChangeRequest) => {
-    setChangeRequests(p => p.map(c => c.publicId === updated.publicId ? updated : c));
-    if (detailCR?.publicId === updated.publicId) setDetailCR(updated);
+    const safe = normalizeChangeRequest(updated);
+    setChangeRequests(p => dedupeChangeRequests(p.map(c => c.publicId === safe.publicId ? safe : c)));
+    if (detailCR?.publicId === safe.publicId) setDetailCR(safe);
   };
 
   const handleDeleted = (publicId: string) => {
@@ -1966,31 +2059,14 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
   };
 
   const handleCreated = (cr: ChangeRequest) => {
-    // Normalize all array fields so the list never crashes on missing data
-    const safe: ChangeRequest = {
-      ...cr,
-      affectedModels:      Array.isArray(cr.affectedModels)      ? cr.affectedModels      : [],
-      assignedTo:         Array.isArray(cr.assignedTo)         ? cr.assignedTo         : [],
-      reviewers:           Array.isArray(cr.reviewers)           ? cr.reviewers           : [],
-      attachments:        Array.isArray(cr.attachments)         ? cr.attachments         : [],
-      estimatedImpact:    cr.estimatedImpact ?? null,
-      estimatedCost:      cr.estimatedCost   ?? null,
-      estimatedDuration:  cr.estimatedDuration ?? '',
-      deadline:          cr.deadline        ?? null,
-      detailedDescription: cr.detailedDescription ?? '',
-      linkedTaskIds:     Array.isArray(cr.linkedTaskIds)     ? cr.linkedTaskIds     : [],
-      primaryTaskId:      cr.primaryTaskId ?? null,
-      affectedDocuments:  Array.isArray(cr.affectedDocuments) ? cr.affectedDocuments : [],
-      derivedPackageIds:  Array.isArray(cr.derivedPackageIds) ? cr.derivedPackageIds : [],
-      structuredSections: cr.structuredSections ?? null,
-      resultAttachments:  Array.isArray(cr.resultAttachments) ? cr.resultAttachments : [],
-    };
-    setChangeRequests(p => [safe, ...p]);
+    const safe = normalizeChangeRequest(cr);
+    const key = getChangeRequestKey(safe);
+    setChangeRequests(p => dedupeChangeRequests([safe, ...p.filter(item => getChangeRequestKey(item) !== key)]));
     // Notify parent to refresh activities
     if (typeof onActivityAdded === 'function') onActivityAdded();
   };
   const handleStatusChange = (id: string, status: ChangeRequest['status']) => {
-    setChangeRequests(p => p.map(c => c.publicId === id ? { ...c, status } : c));
+    setChangeRequests(p => dedupeChangeRequests(p.map(c => c.publicId === id ? { ...c, status } : c)));
     setDetailCR(p => p?.publicId === id ? { ...p, status } : p);
   };
 
@@ -2087,8 +2163,8 @@ export default function ChangesTab({ projectPublicId, onActivityAdded, initialCr
             const sc   = STATUS_CFG[cr.status] ?? { label: cr.status, bg: 'bg-gray-100', text: 'text-gray-700' };
             const pc   = PRIORITY_CFG[cr.priority] ?? { label: cr.priority, bg: 'bg-gray-100', text: 'text-gray-700' };
             const disc = disciplines.find(d => d.id === cr.disciplineId);
-            const assigneeMembers  = cr.assignedTo?.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
-            const reviewerMembers  = cr.reviewers?.map(id => teamMembers.find(m => m.publicId === id || m.userId === id)).filter(Boolean) as TeamMember[];
+            const assigneeMembers  = cr.assignedTo?.map(id => isValidMemberRef(id) ? teamMembers.find(m => m.publicId === id || m.userId === id) : undefined).filter(Boolean) as TeamMember[];
+            const reviewerMembers  = cr.reviewers?.map(id => isValidMemberRef(id) ? teamMembers.find(m => m.publicId === id || m.userId === id) : undefined).filter(Boolean) as TeamMember[];
             const canEdit = currentRole === 'admin' || cr.createdBy === currentUserId;
 
             return (

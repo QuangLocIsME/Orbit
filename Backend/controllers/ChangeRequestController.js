@@ -7,8 +7,10 @@ const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../conf
 const CRVersionRepository = require('../repositories/CRVersionRepository');
 const Task = require('../models/Task');
 const socketService = require('../services/socketService');
+const { publishProjectBlockRefresh, publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const NotificationRepository = require('../repositories/NotificationRepository');
 const User = require('../models/User');
+const { resolveUserDisplayName } = require('../utils/userDisplayName');
 
 const MAX_ATTACH_SIZE_MB = Number(process.env.CR_ATTACHMENT_MAX_SIZE_MB) || 50;
 const MAX_ATTACH_SIZE_BYTES = MAX_ATTACH_SIZE_MB * 1024 * 1024;
@@ -65,6 +67,57 @@ function getArrayField(body, key, arrayKey) {
     if (Array.isArray(val)) return val;
     if (val !== undefined) return [val];
     return undefined;
+}
+
+async function notifyCrParticipants({
+    projectId,
+    actorUserId,
+    assignedTo = [],
+    reviewers = [],
+    title,
+    message,
+    link,
+    refId,
+}) {
+    const actor = actorUserId
+        ? await User.findById(actorUserId).select('publicId').lean()
+        : null;
+    const actorPublicId = normalizeString(actor?.publicId);
+
+    const targets = [...new Set([...(assignedTo || []), ...(reviewers || [])])]
+        .map((id) => normalizeString(id))
+        .filter((id) => id && id !== actorUserId && id !== actorPublicId);
+
+    if (targets.length === 0) return;
+
+    const userDocs = await User.find({ publicId: { $in: targets } }).select('_id publicId').lean();
+    const mongoIdMap = new Map(userDocs.map((user) => [user.publicId, String(user._id)]));
+
+    for (const targetPublicId of targets) {
+        const mongoId = mongoIdMap.get(targetPublicId);
+        if (!mongoId) continue;
+
+        const notification = await NotificationRepository.create({
+            userId: mongoId,
+            type: 'info',
+            title,
+            message,
+            link,
+            read: false,
+            refType: 'cr',
+            refId,
+        });
+
+        socketService.notifyUser(mongoId, 'notification:new', {
+            id: String(notification._id),
+            type: 'info',
+            title,
+            message,
+            link,
+            read: false,
+            createdAt: notification.createdAt.toISOString(),
+        });
+    }
 }
 
 class ChangeRequestController {
@@ -323,41 +376,22 @@ class ChangeRequestController {
                 createdBy: changeRequest.createdBy,
                 createdAt: changeRequest.createdAt,
             });
+            await publishProjectBlockUpdate({ projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
 
             // Notify assignees and reviewers (excluding the creator)
             const crLink = `/projects/${projectId}/change-requests/${changeRequest.publicId}`;
-            const creator = await User.findById(userId).select('fullName').lean();
-            const creatorName = creator?.fullName || 'Unknown';
-            const notifyTargets = [...new Set([...normalizedAssignedTo, ...normalizedReviewers])].filter(id => id !== userId);
-
-            // Resolve publicIds to MongoDB _ids for notifications
-            const userDocs = await User.find({ publicId: { $in: notifyTargets } }).select('_id publicId').lean();
-            const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
-
-            for (const targetPublicId of notifyTargets) {
-                const mongoId = mongoIdMap.get(targetPublicId);
-                if (!mongoId) continue;
-                const isAssignee = normalizedAssignedTo.includes(targetPublicId);
-                const notification = await NotificationRepository.create({
-                    userId: mongoId,
-                    type: 'info',
-                    title: isAssignee ? 'New CR assigned to you' : 'You are a reviewer',
-                    message: `${creatorName} created CR "${changeRequest.title}" (${changeRequest.crId})`,
-                    link: crLink,
-                    read: false,
-                    refType: 'cr',
-                    refId: changeRequest.publicId,
-                });
-                socketService.notifyUser(mongoId, 'notification:new', {
-                    id: String(notification._id),
-                    type: 'info',
-                    title: isAssignee ? 'New CR assigned to you' : 'You are a reviewer',
-                    message: `${creatorName} created CR "${changeRequest.title}" (${changeRequest.crId})`,
-                    link: crLink,
-                    read: false,
-                    createdAt: notification.createdAt.toISOString(),
-                });
-            }
+            const creatorName = await resolveUserDisplayName(userId, 'Unknown');
+            await notifyCrParticipants({
+                projectId,
+                actorUserId: userId,
+                assignedTo: normalizedAssignedTo,
+                reviewers: normalizedReviewers,
+                title: 'New change request assigned',
+                message: `${creatorName} created CR "${changeRequest.title}" (${changeRequest.crId})`,
+                link: crLink,
+                refId: changeRequest.publicId,
+            });
 
             return res.status(201).json({
                 success: true,
@@ -448,40 +482,22 @@ class ChangeRequestController {
                 reviewers: updated.reviewers,
                 updatedAt: updated.updatedAt,
             });
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'tasks', blockId: 'list', userId });
 
             // Notify assignees and reviewers (excluding the editor)
             const crLink = `/projects/${changeRequest.projectId}/change-requests/${updated.publicId}`;
-            const editor = await User.findById(userId).select('fullName').lean();
-            const editorName = editor?.fullName || 'Unknown';
-            const allTargets = [...new Set([...(updated.assignedTo || []), ...(updated.reviewers || [])])].filter(id => id !== userId);
-
-            const userDocs = await User.find({ publicId: { $in: allTargets } }).select('_id publicId').lean();
-            const mongoIdMap = new Map(userDocs.map(u => [u.publicId, String(u._id)]));
-
-            for (const targetPublicId of allTargets) {
-                const mongoId = mongoIdMap.get(targetPublicId);
-                if (!mongoId) continue;
-                const isAssignee = (updated.assignedTo || []).includes(targetPublicId);
-                const notification = await NotificationRepository.create({
-                    userId: mongoId,
-                    type: 'info',
-                    title: 'CR updated',
-                    message: `${editorName} updated CR "${updated.title}" (${updated.crId})`,
-                    link: crLink,
-                    read: false,
-                    refType: 'cr',
-                    refId: updated.publicId,
-                });
-                socketService.notifyUser(mongoId, 'notification:new', {
-                    id: String(notification._id),
-                    type: 'info',
-                    title: 'CR updated',
-                    message: `${editorName} updated CR "${updated.title}" (${updated.crId})`,
-                    link: crLink,
-                    read: false,
-                    createdAt: notification.createdAt.toISOString(),
-                });
-            }
+            const editorName = await resolveUserDisplayName(userId, 'Unknown');
+            await notifyCrParticipants({
+                projectId: changeRequest.projectId,
+                actorUserId: userId,
+                assignedTo: updated.assignedTo || [],
+                reviewers: updated.reviewers || [],
+                title: 'Change request updated',
+                message: `${editorName} updated CR "${updated.title}" (${updated.crId})`,
+                link: crLink,
+                refId: updated.publicId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -598,6 +614,21 @@ class ChangeRequestController {
                 publicId: updated.publicId,
                 status: updated.status,
             });
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'tasks', blockId: 'list', userId });
+
+            const crLink = `/projects/${changeRequest.projectId}/change-requests/${updated.publicId}`;
+            const actorName = await resolveUserDisplayName(userId, 'Unknown');
+            await notifyCrParticipants({
+                projectId: changeRequest.projectId,
+                actorUserId: userId,
+                assignedTo: changeRequest.assignedTo || [],
+                reviewers: changeRequest.reviewers || [],
+                title: 'Change request moved to next stage',
+                message: `${actorName} changed CR "${changeRequest.title}" (${changeRequest.crId}) to ${updated.status}`,
+                link: crLink,
+                refId: updated.publicId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -702,6 +733,13 @@ class ChangeRequestController {
                     createdAt: comment.createdAt,
                 },
             });
+            await publishProjectBlockRefresh({
+                projectId,
+                scope: 'changes',
+                blockId: `comments:change-request:${crId}`,
+            });
+            await publishProjectBlockUpdate({ projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
 
             // Notify CR assignees and reviewers (excluding the comment author)
             const crLink = `/projects/${projectId}/change-requests/${crId}`;
@@ -783,7 +821,23 @@ class ChangeRequestController {
                 projectId: comment.projectId,
                 crId: comment.crId,
                 commentId,
+                comment: {
+                    publicId: comment.publicId,
+                    authorId: comment.authorId,
+                    authorName,
+                    content: comment.content,
+                    createdAt: comment.createdAt,
+                    updatedAt: comment.updatedAt,
+                    isEdited: comment.isEdited,
+                },
             });
+            await publishProjectBlockRefresh({
+                projectId: comment.projectId,
+                scope: 'changes',
+                blockId: `comments:change-request:${comment.crId}`,
+            });
+            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'tasks', blockId: 'list', userId });
 
             return res.status(200).json({
                 success: true,
@@ -828,6 +882,13 @@ class ChangeRequestController {
                 crId: comment.crId,
                 commentId,
             });
+            await publishProjectBlockRefresh({
+                projectId: comment.projectId,
+                scope: 'changes',
+                blockId: `comments:change-request:${comment.crId}`,
+            });
+            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'tasks', blockId: 'list', userId });
 
             return res.status(200).json({
                 success: true,
@@ -868,6 +929,20 @@ class ChangeRequestController {
             socketService.broadcastProject(changeRequest.projectId, 'cr:deleted', {
                 projectId: changeRequest.projectId,
                 crId: normalizedCrId,
+            });
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'changes', blockId: 'list', userId });
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'tasks', blockId: 'list', userId });
+
+            const actorName = await resolveUserDisplayName(userId, 'Unknown');
+            await notifyCrParticipants({
+                projectId: changeRequest.projectId,
+                actorUserId: userId,
+                assignedTo: changeRequest.assignedTo || [],
+                reviewers: changeRequest.reviewers || [],
+                title: 'Change request deleted',
+                message: `${actorName} deleted CR "${changeRequest.title}" (${changeRequest.crId})`,
+                link: `/projects/${changeRequest.projectId}?tab=changes`,
+                refId: changeRequest.publicId,
             });
 
             return res.status(200).json({

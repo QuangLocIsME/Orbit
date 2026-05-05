@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const ProjectController = require('../controllers/ProjectController');
+const ProjectBlockController = require('../controllers/ProjectBlockController');
 const { authenticate } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
@@ -22,6 +23,7 @@ router.post('/workflow/apply-template', authenticate, (req, res) => ProjectContr
 router.post('/integrations/update', authenticate, (req, res) => ProjectController.updateIntegrations(req, res));
 router.post('/touch', authenticate, (req, res) => ProjectController.touchProject(req, res));
 router.post('/favorite/toggle', authenticate, (req, res) => ProjectController.toggleFavorite(req, res));
+router.post('/blocks/get', authenticate, (req, res) => ProjectBlockController.getBlock(req, res));
 router.post('/order/save', authenticate, (req, res) => ProjectController.saveProjectOrder(req, res));
 router.get('/favorites', authenticate, (req, res) => ProjectController.getFavoriteProjects(req, res));
 router.post('/trash', authenticate, (req, res) => ProjectController.trashProject(req, res));

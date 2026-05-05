@@ -9,9 +9,12 @@
  */
 
 import { io, type Socket } from 'socket.io-client';
+import type { ProjectBlockScope } from '@/stores/projectBlockCacheStore';
 
 // Server-emitted events (typed for intellisense)
 export interface ServerToClientEvents {
+  'cache:block:refresh': (data: { projectId: string; cacheKey?: string; scope: ProjectBlockScope; blockId: string; packageId?: string | null; updatedAt?: number }) => void;
+  'cache:block:update': (data: { projectId: string; scope: ProjectBlockScope; blockId: string; data: unknown; updatedAt: number }) => void;
   'user:online': (data: { userId: string }) => void;
   'user:offline': (data: { userId: string }) => void;
   'user:avatar:updated': (data: { userId: string; avatar: string }) => void;

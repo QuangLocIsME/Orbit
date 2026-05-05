@@ -21,8 +21,10 @@ const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath, uploadProjectFileBuffer, buildProjectFilePath, SUPABASE_URL } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
 const { broadcastProject, broadcastPackage, notifyUser } = require('../services/socketService');
+const { publishProjectBlockUpdate, publishScopedProjectBlockUpdate, publishProjectBlockRefresh } = require('../services/blockRealtimePublisher.service');
 const ActivityService = require('../services/activityService');
 const DiscordService = require('../services/discordService');
+const { resolveUserDisplayName } = require('../utils/userDisplayName');
 const User = require('../models/User');
 const Task = require('../models/Task');
 const Document = require('../models/Document');
@@ -689,6 +691,14 @@ class PackageController {
                 documentId: newDoc.publicId,
                 versionGroupId: newDoc.versionGroupId,
             });
+            await publishScopedProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                cacheKey: newDoc.packageId ? `${normalizedProjectId}:package:${newDoc.packageId}` : normalizedProjectId,
+                scope: 'documents',
+                blockId: 'tree',
+                userId,
+                packageId: newDoc.packageId || null,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -859,11 +869,15 @@ class PackageController {
                 ...packageData,
                 actorId: userId,
             });
+            await publishProjectBlockRefresh({
+                projectId: normalizedProjectId,
+                scope: 'packages',
+                blockId: 'summary',
+            });
 
             // Notify package members
             if (normalizedTeamMemberIds.length > 0) {
-                const creator = await User.findById(userId).select('fullName').lean();
-                const creatorName = creator?.fullName || 'Someone';
+                const creatorName = await resolveUserDisplayName(userId);
                 const packageLink = `/projects/${normalizedProjectId}/packages/${packageDoc.publicId}`;
 
                 const userDocs = await User.find({ publicId: { $in: normalizedTeamMemberIds } }).select('_id publicId').lean();
@@ -1353,6 +1367,11 @@ class PackageController {
                 changes: updatedData,
                 actorId: userId,
             });
+            await publishProjectBlockRefresh({
+                projectId: normalizedProjectId,
+                scope: 'packages',
+                blockId: 'summary',
+            });
 
             // Notify newly added package members
             if (updateFields.teamMemberIds !== undefined) {
@@ -1361,8 +1380,7 @@ class PackageController {
                 const addedMembers = newMembers.filter(id => !oldMembers.has(id));
 
                 if (addedMembers.length > 0) {
-                    const editor = await User.findById(userId).select('fullName').lean();
-                    const editorName = editor?.fullName || 'Someone';
+                    const editorName = await resolveUserDisplayName(userId);
                     const packageLink = `/projects/${normalizedProjectId}/packages/${normalizedPackageId}`;
 
                     const userDocs = await User.find({ publicId: { $in: addedMembers } }).select('_id publicId').lean();
@@ -1465,6 +1483,11 @@ class PackageController {
                 projectId: normalizedProjectId,
                 packageId: updated.publicId,
             });
+            await publishProjectBlockRefresh({
+                projectId: normalizedProjectId,
+                scope: 'packages',
+                blockId: 'summary',
+            });
 
             return res.status(200).json({
                 success: true,
@@ -1552,6 +1575,14 @@ class PackageController {
             broadcastProject(normalizedProjectId, 'documents:refresh', {
                 projectId: normalizedProjectId,
                 packageId: created.packageId,
+            });
+            await publishScopedProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                cacheKey: created.packageId ? `${normalizedProjectId}:package:${created.packageId}` : normalizedProjectId,
+                scope: 'documents',
+                blockId: 'tree',
+                userId,
+                packageId: created.packageId || null,
             });
 
             await ActivityService.log({
@@ -1935,6 +1966,14 @@ class PackageController {
                 projectId: normalizedProjectId,
                 packageId: updated.packageId || null,
             });
+            await publishScopedProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                cacheKey: updated.packageId ? `${normalizedProjectId}:package:${updated.packageId}` : normalizedProjectId,
+                scope: 'documents',
+                blockId: 'tree',
+                userId,
+                packageId: updated.packageId || null,
+            });
 
             return res.status(200).json({ success: true, data: updated });
         } catch (error) {
@@ -1988,6 +2027,14 @@ class PackageController {
 
             broadcastProject(normalizedProjectId, 'documents:refresh', {
                 projectId: normalizedProjectId,
+                packageId: deletedPackageId || null,
+            });
+            await publishScopedProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                cacheKey: deletedPackageId ? `${normalizedProjectId}:package:${deletedPackageId}` : normalizedProjectId,
+                scope: 'documents',
+                blockId: 'tree',
+                userId,
                 packageId: deletedPackageId || null,
             });
             broadcastProject(normalizedProjectId, 'approval:deleted', {
@@ -2106,6 +2153,14 @@ class PackageController {
                 projectId: normalizedProjectId,
                 packageId: folder.packageId || null,
             });
+            await publishScopedProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                cacheKey: folder.packageId ? `${normalizedProjectId}:package:${folder.packageId}` : normalizedProjectId,
+                scope: 'documents',
+                blockId: 'tree',
+                userId,
+                packageId: folder.packageId || null,
+            });
 
             return res.status(200).json({ success: true, message: 'Folder renamed' });
         } catch (error) {
@@ -2196,6 +2251,14 @@ class PackageController {
 
             broadcastProject(normalizedProjectId, 'documents:refresh', {
                 projectId: normalizedProjectId,
+                packageId: packageId || null,
+            });
+            await publishScopedProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                cacheKey: packageId ? `${normalizedProjectId}:package:${packageId}` : normalizedProjectId,
+                scope: 'documents',
+                blockId: 'tree',
+                userId,
                 packageId: packageId || null,
             });
 
@@ -2426,7 +2489,7 @@ class PackageController {
             );
             if (!pkg) return notFound(res, 'Package not found');
 
-            if (pkg.status !== 'Archived') {
+            if (pkg.status !== 'Archived' && !['owner', 'admin'].includes(member.role)) {
                 return badRequest(
                     res,
                     'Only archived packages can be deleted. Archive the package first.'
@@ -2444,6 +2507,11 @@ class PackageController {
             broadcastProject(normalizedProjectId, 'package:deleted', {
                 projectId: normalizedProjectId,
                 packageId: normalizedPackageId,
+            });
+            await publishProjectBlockRefresh({
+                projectId: normalizedProjectId,
+                scope: 'packages',
+                blockId: 'summary',
             });
 
             return res.status(200).json({

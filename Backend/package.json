@@ -2,6 +2,7 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
+    "worker:cdc": "node start-cdc-sync.js",
     "worker:uploads": "node workers/packageUploadWorker.js",
     "worker:ifc": "node workers/ifcConversionWorker.js",
     "test": "jest --runInBand",

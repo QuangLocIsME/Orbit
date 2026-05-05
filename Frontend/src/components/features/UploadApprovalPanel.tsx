@@ -6,6 +6,7 @@ import { apiFetch } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { getSocket, joinProject, leaveProject } from '@/lib/socket';
 import { getProjectTabCache, mergeProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 import {
   CheckCircle, XCircle, Clock, FileText, Image as ImageIcon,
   Download, Eye, ChevronDown, ChevronUp, Loader2,
@@ -214,6 +215,12 @@ interface ChangeRequest {
   description: string;
 }
 
+interface VersionsSummaryBlock {
+  approvals: ApprovalItem[];
+  changeRequests: ChangeRequest[];
+  crVersions: any[];
+}
+
 export default function UploadApprovalPanel({ projectId, projectRole }: UploadApprovalPanelProps) {
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [crVersions, setCrVersions] = useState<any[]>([]);
@@ -243,9 +250,14 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
   // CR version action state
   const [crVersionActionLoading, setCrVersionActionLoading] = useState<string | null>(null);
   const [crVersionRejectReason, setCrVersionRejectReason] = useState<{ id: string; reason: string } | null>(null);
+  const versionsBlockId = 'summary';
 
   // CR version file conversion status: Record<sourceDocumentId, conversionStatus>
   const [crFileConversionStatus, setCrFileConversionStatus] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
 
   const fetchCrFileConversionStatus = async (documentId: string, fileName?: string): Promise<{ fileId: string; status: string } | null> => {
     const cacheKey = documentId || fileName || '';
@@ -376,6 +388,15 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
 
   useEffect(() => {
     if (projectId) {
+      let cancelled = false;
+      fetchProjectBlock<VersionsSummaryBlock>(projectId, 'versions', versionsBlockId).then((block) => {
+        if (cancelled || !block) return;
+        if (block.approvals) setApprovals(block.approvals);
+        if (block.crVersions) setCrVersions(block.crVersions);
+        if (block.changeRequests) setChangeRequests(block.changeRequests);
+        setLoading(false);
+      });
+
       const cached = getProjectTabCache<{
         approvals?: ApprovalItem[];
         crVersions?: any[];
@@ -388,11 +409,26 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
         if (cached.data.changeRequests) setChangeRequests(cached.data.changeRequests);
         setLoading(false);
         loadAll().catch(() => {});
-        return;
+        return () => {
+          cancelled = true;
+        };
       }
 
       loadAll();
+      return () => {
+        cancelled = true;
+      };
     }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    return onProjectBlockUpdated<VersionsSummaryBlock>(projectId, 'versions', versionsBlockId, ({ data }) => {
+      if (data?.approvals) setApprovals(data.approvals);
+      if (data?.crVersions) setCrVersions(data.crVersions);
+      if (data?.changeRequests) setChangeRequests(data.changeRequests);
+      setLoading(false);
+    });
   }, [projectId]);
 
   useEffect(() => {
@@ -402,7 +438,29 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
     const handleApprovalNew = () => { fetchApprovals(); };
     const handleApprovalUpdated = () => { fetchApprovals(); };
     const handleApprovalDeleted = () => { fetchApprovals(); };
-    const handleApprovalCommentChanged = () => { fetchApprovals(); };
+    const handleApprovalCommentAdded = (payload: { approvalId: string; comment?: { publicId: string; author?: { id?: string; name?: string; avatar?: string | null } | null; content?: string; createdAt?: string; updatedAt?: string } }) => {
+      if (!payload?.comment) return;
+      window.dispatchEvent(new CustomEvent('orbit:comments:/api/approvals/comments/list', {
+        detail: {
+          action: 'append',
+          comments: [{
+            id: String(payload.comment.publicId || ''),
+            authorId: String(payload.comment.author?.id || ''),
+            authorName: String(payload.comment.author?.name || 'Unknown'),
+            avatar: payload.comment.author?.avatar || null,
+            content: String(payload.comment.content || ''),
+            createdAt: String(payload.comment.createdAt || ''),
+            updatedAt: payload.comment.updatedAt ? String(payload.comment.updatedAt) : undefined,
+          }],
+        },
+      }));
+    };
+    const handleApprovalCommentDeleted = (payload: { commentId: string }) => {
+      if (!payload?.commentId) return;
+      window.dispatchEvent(new CustomEvent('orbit:comments:/api/approvals/comments/list', {
+        detail: { action: 'delete', commentId: payload.commentId },
+      }));
+    };
     const handleConversionUpdated = (payload: { projectId: string; documentId: string; versionId: string; conversionStatus?: string; status?: string; conversionError?: string }) => {
       if (payload.projectId !== projectId) return;
       const nextStatus = payload.conversionStatus || payload.status;
@@ -416,15 +474,15 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
     socket.on('approval:new', handleApprovalNew);
     socket.on('approval:updated', handleApprovalUpdated);
     socket.on('approval:deleted', handleApprovalDeleted);
-    socket.on('approval:comment_added', handleApprovalCommentChanged);
-    socket.on('approval:comment_deleted', handleApprovalCommentChanged);
+    socket.on('approval:comment_added', handleApprovalCommentAdded);
+    socket.on('approval:comment_deleted', handleApprovalCommentDeleted);
     socket.on('document:conversion-updated', handleConversionUpdated);
     return () => {
       socket.off('approval:new', handleApprovalNew);
       socket.off('approval:updated', handleApprovalUpdated);
       socket.off('approval:deleted', handleApprovalDeleted);
-      socket.off('approval:comment_added', handleApprovalCommentChanged);
-      socket.off('approval:comment_deleted', handleApprovalCommentChanged);
+      socket.off('approval:comment_added', handleApprovalCommentAdded);
+      socket.off('approval:comment_deleted', handleApprovalCommentDeleted);
       socket.off('document:conversion-updated', handleConversionUpdated);
       leaveProject(projectId);
     };

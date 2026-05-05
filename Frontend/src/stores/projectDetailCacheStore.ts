@@ -1,4 +1,16 @@
-type CacheScope = 'documents' | 'packages' | 'tasks' | 'changes' | 'versions' | 'teams' | 'activity';
+export const PROJECT_TAB_CACHE_SCOPES = [
+  'documents',
+  'packages',
+  'tasks',
+  'changes',
+  'versions',
+  'teams',
+  'activity',
+  'clashes',
+  'settings',
+] as const;
+
+export type CacheScope = (typeof PROJECT_TAB_CACHE_SCOPES)[number];
 
 type CacheEnvelope<T> = {
   data: T;

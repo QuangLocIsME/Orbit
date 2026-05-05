@@ -12,6 +12,7 @@ import TaskDetailPage from './TaskDetailPage';
 import WorkflowTemplatesDropdown from './WorkflowTemplatesDropdown';
 import { getSocket } from '@/lib/socket';
 import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 
 type ProjectRole = 'owner' | 'admin' | 'manager' | 'member' | 'viewer';
 
@@ -60,6 +61,10 @@ interface TaskItem {
   affectedModels?: string[];
 }
 
+interface TasksListBlock {
+  items: TaskItem[];
+}
+
 interface EditTaskData {
   id: string;
   title: string;
@@ -106,6 +111,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   const cacheProjectId = scope.type === 'package' && scope.packageId
     ? `${scope.projectId}:package:${scope.packageId}`
     : scope.projectId;
+  const taskBlockId = 'list';
   const formatRelativeDate = (dueDate: string) => {
     const now = new Date();
     const due = new Date(dueDate);
@@ -165,6 +171,10 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     }),
     [scope.packageId, scope.projectId, scope.type]
   );
+
+  useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -352,16 +362,37 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   }, [cacheProjectId, scope.packageId, scope.type, scopeRequestBody]);
 
   useEffect(() => {
+    let cancelled = false;
+    fetchProjectBlock<TasksListBlock>(scope.projectId, 'tasks', taskBlockId, {
+      packageId: scope.packageId || null,
+    }).then((block) => {
+      if (cancelled || !block?.items) return;
+      setTasksData(block.items);
+      setIsTasksLoading(false);
+    });
+
     const cached = getProjectTabCache<{ tasksData: TaskItem[] }>(cacheProjectId, 'tasks');
     if (cached?.data?.tasksData) {
       setTasksData(cached.data.tasksData);
       setIsTasksLoading(false);
       loadTasks().catch(() => {});
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     loadTasks();
+    return () => {
+      cancelled = true;
+    };
   }, [cacheProjectId, loadTasks]);
+
+  useEffect(() => {
+    return onProjectBlockUpdated<TasksListBlock>(scope.projectId, 'tasks', taskBlockId, ({ data }) => {
+      setTasksData(data?.items || []);
+      setIsTasksLoading(false);
+    });
+  }, [scope.projectId]);
 
   // WebSocket realtime — refresh task board when task events occur
   useEffect(() => {

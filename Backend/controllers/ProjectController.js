@@ -8,6 +8,7 @@ const ProjectRoleRepository = require('../repositories/ProjectRoleRepository');
 const { getJson, setJson, delKeys } = require('../services/cacheService');
 const socketService = require('../services/socketService');
 const { invalidateUserCache } = socketService;
+const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
 const { buildSupabaseThumbnailPath, buildSupabaseAvatarPath, uploadProjectThumbnailBuffer, uploadAvatarBuffer, deleteAvatarFile } = require('../services/supabaseStorageService');
@@ -342,7 +343,7 @@ class ProjectController {
             });
 
             const members = rawMembers.map((m) => ({
-                publicId: String(m._id),
+                publicId: String(m.publicId || ''),
                 userId: m.userId,
                 role: m.role,
                 status: m.status,
@@ -845,6 +846,18 @@ class ProjectController {
                 userId: normalizedTargetUserId,
                 role: normalizedRole,
             });
+            await publishProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId,
+            });
+            await publishProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                scope: 'changes',
+                blockId: 'meta',
+                userId,
+            });
 
             return res.status(200).json({
                 success: true,
@@ -927,6 +940,18 @@ class ProjectController {
             socketService.broadcastProject(normalizedProjectId, 'project:member:left', {
                 projectId: normalizedProjectId,
                 userId: normalizedTargetUserId,
+            });
+            await publishProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                scope: 'teams',
+                blockId: 'roster',
+                userId,
+            });
+            await publishProjectBlockUpdate({
+                projectId: normalizedProjectId,
+                scope: 'changes',
+                blockId: 'meta',
+                userId,
             });
 
             return res.status(200).json({

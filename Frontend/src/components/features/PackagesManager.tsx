@@ -9,6 +9,7 @@ import { cn, getTodayLocalDateString, localDateStringToUTCDate, utcDateStringToL
 import { PackagesSkeleton } from '@/components/ui/skeletons';
 import { Search, LayoutGrid, List, Plus, Calendar, Users, Pencil, Trash2 } from 'lucide-react';
 import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockRefresh, onProjectBlockUpdated } from '@/lib/project-block-realtime';
 
 type PackageStatus = 'Draft' | 'Active' | 'Archived';
 
@@ -50,6 +51,11 @@ interface PackageItem {
   taskIds?: string[];
   creatorId: string;
   updatedAt: string;
+}
+
+interface PackagesSummaryBlock {
+  items: PackageItem[];
+  total: number;
 }
 
 const statusBadge: Record<PackageStatus, string> = {
@@ -114,6 +120,10 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingPackage, setDeletingPackage] = useState<PackageItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    initProjectBlockRealtime();
+  }, []);
   const [updating, setUpdating] = useState(false);
   const [newPackage, setNewPackage] = useState({
     name: '',
@@ -271,6 +281,14 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     if (!fixedProjectId) {
       localStorage.setItem(SELECTED_PROJECT_KEY, selectedProjectId);
     }
+
+    let cancelled = false;
+    fetchProjectBlock<PackagesSummaryBlock>(selectedProjectId, 'packages', 'summary').then((block) => {
+      if (cancelled || !block?.items) return;
+      setPackages(block.items);
+      setLoading(false);
+    });
+
     const cached = getProjectTabCache<{
       packages?: PackageItem[];
       projectMembers?: ProjectMemberOption[];
@@ -289,7 +307,30 @@ export default function PackagesManager({ fixedProjectId, fixedProjectName }: Pa
     refreshData(selectedProjectId)
       .catch((err) => toast.error(err?.message || 'Failed to load packages'))
       .finally(() => setLoading(false));
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProjectId, fixedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    return onProjectBlockUpdated<PackagesSummaryBlock>(selectedProjectId, 'packages', 'summary', ({ data }) => {
+      if (!data || !Array.isArray(data.items)) return;
+      setPackages(data.items);
+      setLoading(false);
+    });
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    return onProjectBlockRefresh<PackagesSummaryBlock>(selectedProjectId, 'packages', 'summary', ({ data }) => {
+      if (!data || typeof data !== 'object') return;
+      const block = data as PackagesSummaryBlock;
+      if (!Array.isArray(block.items)) return;
+      setPackages(block.items);
+      setLoading(false);
+    });
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId) return;
