@@ -682,14 +682,25 @@ export default function Viewer3D({
           xeokitAdapter.applyClashPairIsolation(isolationRef.current, objectA, objectB);
         }
         applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashRef.current);
-        const hasA = xeokitAdapter.hasXktEntity(objectA);
-        const hasB = xeokitAdapter.hasXktEntity(objectB);
-        if ((!hasA || !hasB) && missingPairToastForClashRef.current !== c.id) {
-          missingPairToastForClashRef.current = c.id;
-          toast.warning(
-            'Only part of this clash pair appears in the viewer. One IFC id may be missing from the XKT export, merged into another object, or use a different identifier than the clash result.'
-          );
-        }
+        /**
+         * xeokit may register meta-objects into `scene.models` one frame after XKT load — immediate `hasXktEntity`
+         * causes false “missing pair” toasts. Re-check after the next animation frames.
+         */
+        const clashIdForToast = c.id;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const cur = clashRef.current;
+            if (!cur || cur.id !== clashIdForToast || !xeokitAdapter) return;
+            const hasA = xeokitAdapter.hasXktEntity(cur.objectA);
+            const hasB = xeokitAdapter.hasXktEntity(cur.objectB);
+            if ((!hasA || !hasB) && missingPairToastForClashRef.current !== cur.id) {
+              missingPairToastForClashRef.current = cur.id;
+              toast.warning(
+                'Only part of this clash pair appears in the viewer. One IFC id may be missing from the XKT export, merged into another object, or use a different identifier than the clash result.'
+              );
+            }
+          });
+        });
         /**
          * Default camera fits the *entire* XKT — often jumps inside a wall (white slab). Frame the clash region instead.
          */

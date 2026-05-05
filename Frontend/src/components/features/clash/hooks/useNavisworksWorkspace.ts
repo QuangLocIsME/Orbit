@@ -502,6 +502,7 @@ export function useNavisworksWorkspace(projectSlug: string) {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: workspaceKeys.workspace(projectSlug) });
       await queryClient.invalidateQueries({ queryKey: clashesOverviewKey(projectSlug) });
+      await queryClient.removeQueries({ queryKey: ['navisworks', projectSlug, 'results'] });
     },
   });
 

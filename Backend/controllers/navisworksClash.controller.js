@@ -317,6 +317,8 @@ class NavisworksClashController {
                             originalName: doc.originalName.replace(/\.ifc$/i, '.xkt'),
                             sourceFormat: 'xkt',
                             sourceModel: doc.originalName.replace(/\.ifc$/i, ''),
+                            fallbackIfcUrl: doc.s3Url || null,
+                            fallbackOriginalName: doc.originalName,
                         });
                         console.info(`[importFromDocuments] Using existing XKT for "${doc.originalName}"`);
                         continue;

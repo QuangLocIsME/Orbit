@@ -265,6 +265,7 @@ export default function NavisworksClashWorkspace({
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
   const [pendingDeleteTestId, setPendingDeleteTestId] = useState<string | null>(null);
   const [pendingDeleteSetId, setPendingDeleteSetId] = useState<string | null>(null);
+  const [clearModelsDialogOpen, setClearModelsDialogOpen] = useState(false);
   const [clashTestFormErrors, setClashTestFormErrors] = useState<ClashTestFormErrors>({});
   const [clashTestActionBanner, setClashTestActionBanner] = useState<ActionBanner | null>(null);
   const [selectionSetActionBanner, setSelectionSetActionBanner] = useState<ActionBanner | null>(null);
@@ -1195,6 +1196,60 @@ export default function NavisworksClashWorkspace({
     }
   };
 
+  const confirmClearModels = async () => {
+    const prevTestId = selectedTestId;
+    const prevClashId = selectedClashId;
+    const prevShowViewer = showClashInMainViewer;
+    setError(null);
+    flushSync(() => {
+      setSelectedTestId(null);
+      setSelectedClashId(null);
+      setShowClashInMainViewer(false);
+    });
+    try {
+      await clearModels.mutateAsync();
+      setHiddenModelIds([]);
+      setHiddenCategories([]);
+      setClearModelsDialogOpen(false);
+      setSidebarTab('select');
+      setSelectedObjectId(null);
+      setStatusFilter('all');
+      setHideUnrelatedToActiveTest(false);
+      setSearch('');
+      setSelectionSetDraft({
+        name: '',
+        description: '',
+        modelIds: [],
+        categories: [],
+        types: [],
+        manualIncludeIds: '',
+        manualExcludeIds: '',
+      });
+      setClashTestDraft({
+        name: '',
+        description: '',
+        setAId: '',
+        setBId: '',
+        softThreshold: '0.05',
+        duplicateTolerance: '0.001',
+      });
+      setSelectionSetFormErrors({});
+      setClashTestFormErrors({});
+      setNoteDraft('');
+      setAssigneeDraft('Unassigned');
+      toast.success('All models, selection sets, and clash tests were cleared.');
+    } catch (clearError) {
+      flushSync(() => {
+        setSelectedTestId(prevTestId);
+        setSelectedClashId(prevClashId);
+        setShowClashInMainViewer(prevShowViewer);
+      });
+      const msg = clearError instanceof Error ? clearError.message : 'Failed to clear models';
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
   const pickTab = (tab: SidebarTab) => {
     if (sidebarOpen && sidebarTab === tab) {
       setSidebarOpen(false);
@@ -1706,14 +1761,10 @@ export default function NavisworksClashWorkspace({
                         <button
                           type="button"
                           disabled={models.length === 0 || clearModels.isPending}
-                          onClick={() => {
-                            setHiddenModelIds([]);
-                            setHiddenCategories([]);
-                            clearModels.mutate();
-                          }}
+                          onClick={() => setClearModelsDialogOpen(true)}
                           className="shrink-0 rounded-full bg-[#FEE2E2] px-2 py-0.5 text-[10px] font-medium text-[#B91C1C] hover:bg-[#FECACA] disabled:cursor-not-allowed disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
                         >
-                          {clearModels.isPending ? 'Clearing…' : 'Clear'}
+                          Clear
                         </button>
                       </div>
                       <div className="mt-3 space-y-3">
@@ -2584,6 +2635,32 @@ export default function NavisworksClashWorkspace({
             <AlertDialogCancel className="border-[#D1D5DC]">Cancel</AlertDialogCancel>
             <AlertDialogAction className="bg-[#DC2626] text-white hover:bg-red-700" onClick={() => void confirmDeleteSelectionSet()}>
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={clearModelsDialogOpen} onOpenChange={setClearModelsDialogOpen}>
+        <AlertDialogContent className="border-[#E5E7EB] bg-white text-[#101828] sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all models?</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#6A7282]">
+              This removes every imported model from the tree and deletes all selection sets, clash tests, and stored clash results for this project. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#D1D5DC]" disabled={clearModels.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-[#DC2626] text-white hover:bg-red-700"
+              disabled={clearModels.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmClearModels();
+              }}
+            >
+              {clearModels.isPending ? 'Clearing…' : 'Clear everything'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
