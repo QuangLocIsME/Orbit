@@ -346,6 +346,30 @@ function mapCreatedProjectToUiProject(project: CreatedProjectPayload): Project {
   };
 }
 
+function mapCreatedProjectToApiProject(project: CreatedProjectPayload): ApiProject {
+  return {
+    publicId: project.publicId,
+    name: project.name,
+    description: project.description,
+    industry: project.industry,
+    coverImageUrl: project.coverImageUrl,
+    role: project.role,
+    status: project.status,
+    sortOrder: project.sortOrder,
+  };
+}
+
+function normalizeCachedProjects(data: unknown[]): Project[] {
+  return data
+    .map((item) => {
+      const project = item as Partial<Project & ApiProject>;
+      if (project.publicId) return mapApiProjectToUiProject(project as ApiProject);
+      if (project.id) return project as Project;
+      return null;
+    })
+    .filter((item): item is Project => Boolean(item));
+}
+
 // Folder Icon Component
 function FolderIcon({ className }: { className?: string }) {
   return (
@@ -1045,8 +1069,8 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     try {
       const raw = sessionStorage.getItem('orbit:projects:me');
       if (!raw) return [];
-      const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
-      if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) return parsed.data;
+      const parsed = JSON.parse(raw) as { data: unknown[]; expiresAt: number };
+      if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) return normalizeCachedProjects(parsed.data);
     } catch { /* ignore */ }
     return [];
   };
@@ -1267,9 +1291,32 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
   }, []);
 
   const handleProjectCreated = async (project: CreatedProjectPayload) => {
-    upsertProject(mapCreatedProjectToUiProject(project));
+    const createdProject = mapCreatedProjectToUiProject(project);
+    const createdApiProject = mapCreatedProjectToApiProject(project);
+    upsertProject(createdProject);
+    useAppStore.getState().setProjects([
+      createdApiProject,
+      ...useAppStore.getState().projects.filter((item) => item.publicId !== createdApiProject.publicId),
+    ]);
     const updatedProjects = await loadProjects(false, { force: true });
-    await loadFolders(updatedProjects, { force: true });
+    const nextProjects = updatedProjects.some((item) => item.id === createdProject.id)
+      ? updatedProjects
+      : [createdProject, ...updatedProjects];
+    const cacheValue = { data: nextProjects, expiresAt: Date.now() + PROJECTS_CACHE_TTL_MS };
+    projectsCacheRef.current = cacheValue;
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheValue));
+    }
+    setProjects(nextProjects);
+    useAppStore.getState().setProjects([
+      createdApiProject,
+      ...useAppStore.getState().projects.filter((item) => item.publicId !== createdApiProject.publicId),
+    ]);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheValue));
+    }
+    await loadFolders(nextProjects, { force: true });
+    await loadMemberCounts(nextProjects);
   };
 
   const loadProjects = useCallback(async (
@@ -1298,11 +1345,13 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       try {
         const raw = sessionStorage.getItem(PROJECTS_CACHE_KEY);
         if (raw) {
-          const parsed = JSON.parse(raw) as { data: Project[]; expiresAt: number };
+          const parsed = JSON.parse(raw) as { data: unknown[]; expiresAt: number };
           if (parsed.expiresAt > Date.now() && Array.isArray(parsed.data)) {
-            projectsCacheRef.current = parsed;
-            setProjects(parsed.data);
-            return parsed.data;
+            const cached = normalizeCachedProjects(parsed.data);
+            const normalized = { data: cached, expiresAt: parsed.expiresAt };
+            projectsCacheRef.current = normalized;
+            setProjects(cached);
+            return cached;
           }
         }
       } catch {
@@ -1711,12 +1760,28 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
     const handleCacheInvalidate = (payload: { data: { cacheTypes: string[]; userId: string } }) => {
       const { cacheTypes } = payload.data ?? {};
       if (!Array.isArray(cacheTypes)) return;
+
       if (cacheTypes.includes('projects')) {
         projectsCacheRef.current = null;
+        memberCountsCacheRef.current = null;
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem(PROJECTS_CACHE_KEY);
+        }
         refreshApiCache(['/api/projects/me', '/api/folders/me']);
       }
       if (cacheTypes.includes('folders')) {
         foldersCacheRef.current = null;
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem(FOLDERS_CACHE_KEY);
+        }
+      }
+
+      if (cacheTypes.includes('projects') || cacheTypes.includes('folders')) {
+        void (async () => {
+          const updatedProjects = await loadProjects(false, { force: true });
+          await loadFolders(updatedProjects, { force: true });
+          await loadMemberCounts(updatedProjects);
+        })();
       }
     };
 

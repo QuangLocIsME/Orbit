@@ -44,6 +44,24 @@ function extractIfcMetadata(buffer) {
     }
 }
 
+async function publishProjectBlockRefresh({ projectId, cacheKey, scope, blockId, packageId = null }) {
+    if (!projectId || !scope || !blockId) return;
+
+    await publishRealtime({
+        target: 'project',
+        id: projectId,
+        event: 'cache:block:refresh',
+        data: {
+            projectId,
+            cacheKey: cacheKey || projectId,
+            scope,
+            blockId,
+            packageId,
+            updatedAt: Date.now(),
+        },
+    });
+}
+
 async function processJob(jobId) {
     const job = await UploadJobRepository.findByPublicId(jobId);
     if (!job) return;
@@ -176,6 +194,8 @@ async function processJob(jobId) {
             data: {
                 projectId: job.projectId,
                 approvalId: approval.publicId,
+                packageId: job.packageId || null,
+                documentId: document.publicId,
             },
         });
         await publishRealtime({
@@ -186,6 +206,18 @@ async function processJob(jobId) {
                 projectId: job.projectId,
                 packageId: job.packageId || null,
             },
+        });
+        await publishProjectBlockRefresh({
+            projectId: job.projectId,
+            scope: 'versions',
+            blockId: 'summary',
+        });
+        await publishProjectBlockRefresh({
+            projectId: job.projectId,
+            cacheKey: job.packageId ? `${job.projectId}:package:${job.packageId}` : job.projectId,
+            scope: 'documents',
+            blockId: 'tree',
+            packageId: job.packageId || null,
         });
 
         if (isIfcFile) {

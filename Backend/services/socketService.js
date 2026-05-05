@@ -150,6 +150,7 @@ function attachSocket(httpServer) {
     const frontendOrigins = Array.from(new Set([
         process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
         process.env.FRONTEND_URI_LAN || process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
+        process.env.FRONTEND_URI_PUBLIC || process.env.FRONTEND_URI || 'http://localhost:4321',
     ].filter(Boolean)));
 
     io = new Server(httpServer, {

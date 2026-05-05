@@ -49,3 +49,7 @@ Thumbs.db
 .idea/
 *.suo
 *.sw?
+.vercel
+
+# Local Netlify folder
+.netlify

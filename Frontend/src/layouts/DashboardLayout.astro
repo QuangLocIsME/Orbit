@@ -49,6 +49,7 @@ const { title, pageTitle = 'Home' } = Astro.props;
           const route = payload?.route || '';
           const data = payload?.data;
           const isStale = payload?.isStale;
+          const projectId = payload?.projectId || null;
 
           if (!route || !data) return;
 
@@ -59,7 +60,7 @@ const { title, pageTitle = 'Home' } = Astro.props;
           // Dispatch a typed event that React components can listen to
           // This lets components patch state directly instead of re-fetching
           window.dispatchEvent(new CustomEvent('sw:data', {
-            detail: { route: path, data, isStale },
+            detail: { route: path, data, isStale, projectId },
           }));
 
           // Keep sessionStorage in sync for SSR/hydration
@@ -75,6 +76,7 @@ const { title, pageTitle = 'Home' } = Astro.props;
           const route = payload?.route || '';
           const data = payload?.data;
           const isStale = payload?.isStale;
+          const projectId = payload?.projectId || null;
 
           if (!route || !data) return;
 
@@ -82,7 +84,7 @@ const { title, pageTitle = 'Home' } = Astro.props;
           try { path = new URL(route).pathname; } catch (_) { /* use as-is */ }
 
           window.dispatchEvent(new CustomEvent('sw:data', {
-            detail: { route: path, data, isStale },
+            detail: { route: path, data, isStale, projectId },
           }));
         }
 

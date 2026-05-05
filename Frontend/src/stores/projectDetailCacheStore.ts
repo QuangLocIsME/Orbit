@@ -67,6 +67,15 @@ export function getProjectTabCache<T>(
 
   const maxAgeMs = options?.maxAgeMs ?? DEFAULT_TTL_MS;
   if (Date.now() - entry.updatedAt > maxAgeMs) return null;
+
+  const data = entry.data as Record<string, unknown>;
+  if (data && typeof data === 'object' && 'projectId' in data) {
+    if (String(data.projectId) !== String(projectId)) {
+      clearProjectTabCache(projectId, scope);
+      return null;
+    }
+  }
+
   return entry;
 }
 

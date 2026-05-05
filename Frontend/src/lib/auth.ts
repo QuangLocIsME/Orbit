@@ -1,6 +1,7 @@
 // Auth utility functions for ORBIT
 
 import { dispatchAuthExpired, dispatchSignOut } from './auth-helpers';
+import { clearClientAuthState } from './client-cache';
 
 export interface User {
   id: string;
@@ -33,13 +34,11 @@ function sanitizeStoredUser(raw: unknown): User | null {
   };
 }
 
-// Check if user is authenticated (token lives in httpOnly cookie — check user data in localStorage)
 export function isAuthenticated(): boolean {
   if (typeof window === 'undefined') return false;
   return !!localStorage.getItem('orbit_user');
 }
 
-// Get current user synchronously from localStorage
 export function getCurrentUser(): User | null {
   if (typeof window === 'undefined') return null;
   const userStr = localStorage.getItem('orbit_user');
@@ -48,7 +47,6 @@ export function getCurrentUser(): User | null {
     const parsed = JSON.parse(userStr);
     const sanitized = sanitizeStoredUser(parsed);
     if (!sanitized) return null;
-    // self-heal older payloads that still contain extra fields
     localStorage.setItem('orbit_user', JSON.stringify(sanitized));
     return sanitized;
   } catch {
@@ -56,8 +54,6 @@ export function getCurrentUser(): User | null {
   }
 }
 
-// Attempt to refresh the access token using the httpOnly refreshToken cookie.
-// Returns true on success, false on failure. On failure, dispatches an auth-expired event.
 export async function refreshAccessToken(): Promise<boolean> {
   try {
     const res = await fetch('/api/auth/refresh-token', {
@@ -66,39 +62,17 @@ export async function refreshAccessToken(): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
     });
     if (res.ok) return true;
-  // Refresh failed — clear local state and dispatch auth-expired event
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('orbit:')) keysToRemove.push(key);
-  }
-  keysToRemove.push('orbit_user');
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('orbit-open-projects')) keysToRemove.push(key);
-  }
-  keysToRemove.forEach(k => localStorage.removeItem(k));
-  dispatchAuthExpired();
+
+    await clearClientAuthState();
+    dispatchAuthExpired();
     return false;
   } catch {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('orbit:')) keysToRemove.push(key);
-    }
-    keysToRemove.push('orbit_user');
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('orbit-open-projects')) keysToRemove.push(key);
-    }
-    keysToRemove.forEach(k => localStorage.removeItem(k));
+    await clearClientAuthState();
     dispatchAuthExpired();
     return false;
   }
 }
 
-// fetch wrapper that automatically retries once after a 401 by refreshing tokens.
-// All protected API calls should use this instead of raw fetch.
 export async function fetchWithAuth(
   url: string,
   init?: RequestInit
@@ -108,37 +82,28 @@ export async function fetchWithAuth(
 
   if (res.status !== 401) return res;
 
-  // Access token expired — try to refresh
   const refreshed = await refreshAccessToken();
-  if (!refreshed) {
-    // refreshAccessToken already called signOut()
-    return res;
-  }
+  if (!refreshed) return res;
 
-  // Retry original request with new tokens
   return fetch(url, opts);
 }
 
-// Refresh user info from backend /api/auth/me and update localStorage
 export async function syncCurrentUser(): Promise<User | null> {
   try {
     const res = await fetchWithAuth('/api/auth/me');
     if (!res.ok) return null;
     const { data } = await res.json();
-    if (data) {
-      const sanitized = sanitizeStoredUser(data);
-      if (!sanitized) return null;
-      localStorage.setItem('orbit_user', JSON.stringify(sanitized));
-      return sanitized;
-    }
-    return null;
+    if (!data) return null;
+
+    const sanitized = sanitizeStoredUser(data);
+    if (!sanitized) return null;
+    localStorage.setItem('orbit_user', JSON.stringify(sanitized));
+    return sanitized;
   } catch {
     return null;
   }
 }
 
-// Sign out — call backend to clear httpOnly cookies, then clear local state.
-// Navigation to /login is handled by DashboardLayout listening for 'orbit:sign-out'.
 export async function signOut(): Promise<void> {
   if (typeof window === 'undefined') return;
   try {
@@ -147,28 +112,10 @@ export async function signOut(): Promise<void> {
     // ignore network errors
   }
 
-  // Clear all ORBIT localStorage keys to prevent stale data on next login
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('orbit:')) {
-      keysToRemove.push(key);
-    }
-  }
-  // Also remove the legacy orbit_user and open-projects keys
-  keysToRemove.push('orbit_user');
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('orbit-open-projects')) {
-      keysToRemove.push(key);
-    }
-  }
-  keysToRemove.forEach(k => localStorage.removeItem(k));
-
+  await clearClientAuthState();
   dispatchSignOut();
 }
 
-// Redirect to login if not authenticated
 export function requireAuth(): void {
   if (typeof window === 'undefined') return;
   if (!isAuthenticated()) {
@@ -176,7 +123,6 @@ export function requireAuth(): void {
   }
 }
 
-// Redirect to dashboard if already authenticated
 export function redirectIfAuthenticated(): void {
   if (typeof window === 'undefined') return;
   if (isAuthenticated()) {

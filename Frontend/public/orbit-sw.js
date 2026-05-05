@@ -23,10 +23,10 @@
  *   CACHE_READY      { routes }                — announced after prefetch completes
  */
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v4';
 const STATIC_CACHE = `orbit-static-${CACHE_VERSION}`;
 const API_CACHE = `orbit-api-${CACHE_VERSION}`;
-const API_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+const API_CACHE_TTL_MS = 30 * 1000; // fallback only; API fetches are network-first
 
 // Routes to always cache
 const ALWAYS_CACHE_ROUTES = [
@@ -42,11 +42,7 @@ const inflightRequests = new Map();
 
 // ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => {
-      return cache.addAll(['/']).catch(() => {});
-    })
-  );
+  event.waitUntil(caches.open(STATIC_CACHE));
   self.skipWaiting();
 });
 
@@ -78,13 +74,56 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (request.destination === 'document' || request.destination === 'script' || request.destination === 'style' || request.destination === 'image') {
+  if (request.destination === 'image') {
     event.respondWith(handleStaticRequest(request));
   }
 });
 
 // ── API Handler ───────────────────────────────────────────────────────────────
 async function handleApiRequest(request) {
+  {
+  if (request.method !== 'GET') {
+    return fetch(request);
+  }
+
+  const cache = await caches.open(API_CACHE);
+  const cacheKey = request.url;
+
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      await cacheResponse(cache, cacheKey, response.clone());
+      const json = await response.clone().json().catch(() => null);
+      if (json !== null) {
+        deliverToClients({
+          type: 'REFRESH_RESPONSE',
+          payload: { route: request.url, data: json, isStale: false },
+        });
+      }
+    }
+    return response;
+  } catch {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      const cachedTime = cached.headers.get('x-cached-at');
+      const isStale = cachedTime ? Date.now() - parseInt(cachedTime) > API_CACHE_TTL_MS : true;
+      const json = await cached.clone().json().catch(() => null);
+      if (json !== null) {
+        deliverToClients({
+          type: 'REFRESH_RESPONSE',
+          payload: { route: request.url, data: json, isStale },
+        });
+      }
+      return cached;
+    }
+  }
+
+  return new Response(JSON.stringify({ success: false, message: 'Network unavailable' }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  }
+
   const cache = await caches.open(API_CACHE);
   const cacheKey = request.url;
   const cached = await cache.match(cacheKey);
@@ -166,19 +205,49 @@ async function refreshInBackground(request, cache) {
   }
 }
 
+// ── Extract projectId from route ─────────────────────────────────────────────────
+async function cacheResponse(cache, cacheKey, response) {
+  const headers = new Headers(response.headers);
+  headers.set('x-cached-at', String(Date.now()));
+  const timedResponse = new Response(await response.clone().text(), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  await cache.put(cacheKey, timedResponse).catch(() => {});
+}
+
+function extractProjectId(url) {
+  const match = String(url).match(/\/api\/projects\/([^/?#]+)/);
+  return match ? match[1] : null;
+}
+
 // ── Deliver data to all clients via postMessage ────────────────────────────────
 // Tries structured clone first (efficient), falls back to JSON for Response objects
 async function deliverToClients(message) {
   const clients = await self.clients.matchAll({ type: 'window' });
   for (const client of clients) {
     try {
-      // For REFRESH_RESPONSE, we need to send the cloned response properly
       if (message.type === 'REFRESH_RESPONSE' && message.payload.data) {
-        const data = await message.payload.data.clone().json();
+        let data;
+        let transferables = [];
+        if (typeof message.payload.data === 'object' && message.payload.data !== null) {
+          data = message.payload.data;
+        } else {
+          data = message.payload.data;
+        }
+        const projectId = extractProjectId(message.payload.route);
         client.postMessage(
-          { type: 'REFRESH_RESPONSE', payload: { route: message.payload.route, data, isStale: message.payload.isStale } },
-          // Transfer the ArrayBuffer for zero-copy (helps with large payloads)
-          [await message.payload.data.clone().arrayBuffer()].filter(Boolean)
+          {
+            type: 'REFRESH_RESPONSE',
+            payload: {
+              route: message.payload.route,
+              data,
+              isStale: message.payload.isStale,
+              projectId,
+            },
+          },
+          transferables
         );
       } else {
         client.postMessage(message);
@@ -289,9 +358,9 @@ async function prefetchApiRoutes(routes) {
             statusText: cloned.statusText,
             headers,
           });
-          await cache.put(route, timedResponse);
+          await cache.put(location.origin + route, timedResponse);
           const json = await cloned.json();
-          await syncToSessionStorage(new Request(route), cloned, json);
+          await syncToSessionStorage(new Request(location.origin + route), cloned, json);
           results.push(route);
         }
       } catch {
@@ -337,7 +406,7 @@ async function refreshApiRoutes(routes) {
             await cache.put(cacheKey, timedResponse);
 
             const json = await cloned.json();
-            await syncToSessionStorage(new Request(route), cloned, json);
+            await syncToSessionStorage(new Request(cacheKey), cloned, json);
 
             // Deliver to UI
             deliverToClients({

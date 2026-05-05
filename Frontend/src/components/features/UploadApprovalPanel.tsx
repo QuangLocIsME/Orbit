@@ -216,6 +216,7 @@ interface ChangeRequest {
 }
 
 interface VersionsSummaryBlock {
+  projectId?: string;
   approvals: ApprovalItem[];
   changeRequests: ChangeRequest[];
   crVersions: any[];
@@ -314,6 +315,16 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
 
   const canApprove = projectRole === 'owner' || projectRole === 'admin' || projectRole === 'manager';
 
+  const resetVersionState = () => {
+    setApprovals([]);
+    setCrVersions([]);
+    setChangeRequests([]);
+    setCrFileConversionStatus({});
+    setExpandedId(null);
+    setCurrentPage(1);
+    setLoading(true);
+  };
+
   const fetchApprovals = async () => {
     try {
       const res = await apiFetch('/api/approvals/list', {
@@ -332,6 +343,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
         });
         setApprovals(deduped);
         mergeProjectTabCache(projectId, 'versions', {
+          projectId,
           approvals: deduped,
           crVersions,
           changeRequests,
@@ -351,6 +363,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       if (data.success) {
         setCrVersions(data.data || []);
         mergeProjectTabCache(projectId, 'versions', {
+          projectId,
           approvals,
           crVersions: data.data || [],
           changeRequests,
@@ -371,6 +384,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       if (data.success) {
         setChangeRequests(data.data || []);
         mergeProjectTabCache(projectId, 'versions', {
+          projectId,
           approvals,
           crVersions,
           changeRequests: data.data || [],
@@ -389,8 +403,10 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
   useEffect(() => {
     if (projectId) {
       let cancelled = false;
-      fetchProjectBlock<VersionsSummaryBlock>(projectId, 'versions', versionsBlockId).then((block) => {
+      resetVersionState();
+      fetchProjectBlock<VersionsSummaryBlock>(projectId, 'versions', versionsBlockId, { force: true }).then((block) => {
         if (cancelled || !block) return;
+        if (block.projectId && block.projectId !== projectId) return;
         if (block.approvals) setApprovals(block.approvals);
         if (block.crVersions) setCrVersions(block.crVersions);
         if (block.changeRequests) setChangeRequests(block.changeRequests);
@@ -398,12 +414,13 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
       });
 
       const cached = getProjectTabCache<{
+        projectId?: string;
         approvals?: ApprovalItem[];
         crVersions?: any[];
         changeRequests?: ChangeRequest[];
       }>(projectId, 'versions');
 
-      if (cached?.data) {
+      if (cached?.data?.projectId === projectId) {
         if (cached.data.approvals) setApprovals(cached.data.approvals);
         if (cached.data.crVersions) setCrVersions(cached.data.crVersions);
         if (cached.data.changeRequests) setChangeRequests(cached.data.changeRequests);
@@ -424,6 +441,7 @@ export default function UploadApprovalPanel({ projectId, projectRole }: UploadAp
   useEffect(() => {
     if (!projectId) return;
     return onProjectBlockUpdated<VersionsSummaryBlock>(projectId, 'versions', versionsBlockId, ({ data }) => {
+      if (data?.projectId && data.projectId !== projectId) return;
       if (data?.approvals) setApprovals(data.approvals);
       if (data?.crVersions) setCrVersions(data.crVersions);
       if (data?.changeRequests) setChangeRequests(data.changeRequests);

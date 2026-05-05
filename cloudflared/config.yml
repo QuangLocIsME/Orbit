@@ -1,0 +1,15 @@
+tunnel: 9c2417a0-2043-466f-9707-8980e34341cc
+credentials-file: /etc/cloudflared/9c2417a0-2043-466f-9707-8980e34341cc.json
+
+ingress:
+  - hostname: quangloc.online
+    path: ^/api/.*
+    service: http://backend:3000
+  - hostname: quangloc.online
+    path: ^/socket\.io/.*
+    service: http://backend:3000
+  - hostname: quangloc.online
+    service: http://frontend:4321
+  - hostname: api.quangloc.online
+    service: http://backend:3000
+  - service: http_status:404

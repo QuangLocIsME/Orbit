@@ -7,22 +7,21 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const allowedHosts = process.env.ALLOWED_HOSTS
+  ? process.env.ALLOWED_HOSTS.split(',')
+  : ['localhost', '127.0.0.1'];
+
 export default defineConfig({
-  // This app is primarily authenticated and dynamic, so server output is the stable default.
   output: 'server',
-  adapter: node({ mode: 'middleware' }),
+  adapter: node({ mode: 'standalone' }),
   integrations: [react()],
   vite: {
     optimizeDeps: {
       include: ['react', 'react-dom', 'react-dom/client', 'socket.io-client'],
     },
     server: {
-      proxy: {
-        '/api': {
-          target: 'http://localhost:3000',
-          changeOrigin: true,
-        },
-      },
+      host: '0.0.0.0',
+      allowedHosts,
     },
     resolve: {
       alias: [

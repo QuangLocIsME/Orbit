@@ -27,8 +27,10 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import VersionHistoryModal from './VersionHistoryModal';
-import { getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { clearProjectTabCache, getProjectTabCache, setProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { clearProjectBlockCache } from '@/stores/projectBlockCacheStore';
 import { fetchProjectBlock, initProjectBlockRealtime, onProjectBlockUpdated } from '@/lib/project-block-realtime';
+import { invalidateProjectTabScopes } from '@/lib/project-tab-realtime';
 
 // Helper function to download file from URL
 const handleDownloadFile = async (url: string, filename: string) => {
@@ -65,6 +67,8 @@ interface TreeNode {
   category?: string;
   size?: string;
   author?: string;
+  projectId?: string;
+  packageId?: string | null;
   updatedAt?: string;
   s3Url?: string;
   mimeType?: string;
@@ -84,7 +88,10 @@ interface TreeNode {
 }
 
 interface DocumentsTreeBlock {
+  projectId?: string;
+  packageId?: string | null;
   tree: TreeNode | null;
+  total?: number;
 }
 
 function findNodeById(node: TreeNode | null, id: string): TreeNode | null {
@@ -207,6 +214,7 @@ function deriveLocation(
 export default function ProjectDocumentsManager({ projectId, packageId = null, canManage = true, initialFileId = null, projectRole = 'member' }: ProjectDocumentsManagerProps) {
   const cacheProjectId = packageId ? `${projectId}:package:${packageId}` : projectId;
   const documentsBlockId = 'tree';
+  const currentPackageId = packageId || null;
   const [loading, setLoading] = useState(true);
   const [rootTree, setRootTree] = useState<TreeNode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('');
@@ -302,7 +310,11 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
     const payload = await res.json();
     const nextTree = payload?.data?.tree || null;
     setRootTree(nextTree);
-    setProjectTabCache(cacheProjectId, 'documents', { rootTree: nextTree });
+    setProjectTabCache(cacheProjectId, 'documents', {
+      projectId,
+      packageId: currentPackageId,
+      rootTree: nextTree,
+    });
   };
   const loadDocumentsRef = useRef(loadDocuments);
   loadDocumentsRef.current = loadDocuments;
@@ -325,18 +337,27 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
       cacheKey: cacheProjectId,
     }).then((block) => {
       if (cancelled || !block) return;
+      if (block.projectId !== projectId || (block.packageId || null) !== currentPackageId) {
+        clearProjectBlockCache(cacheProjectId, 'documents', documentsBlockId);
+        loadDocuments().catch(() => {});
+        return;
+      }
       setRootTree(block.tree || null);
       setLoading(false);
     });
 
-    const cached = getProjectTabCache<{ rootTree: TreeNode | null }>(cacheProjectId, 'documents');
-    if (cached?.data) {
+    const cached = getProjectTabCache<{ projectId?: string; packageId?: string | null; rootTree: TreeNode | null }>(cacheProjectId, 'documents');
+    if (cached?.data?.projectId === projectId && (cached.data.packageId || null) === currentPackageId) {
       setRootTree(cached.data.rootTree || null);
       setLoading(false);
       loadDocuments().catch(() => {});
       return () => {
         cancelled = true;
       };
+    }
+
+    if (cached?.data) {
+      clearProjectTabCache(cacheProjectId, 'documents');
     }
 
     refresh();
@@ -347,10 +368,11 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
 
   useEffect(() => {
     return onProjectBlockUpdated<DocumentsTreeBlock>(cacheProjectId, 'documents', documentsBlockId, ({ data }) => {
+      if (data?.projectId !== projectId || (data?.packageId || null) !== currentPackageId) return;
       setRootTree(data?.tree || null);
       setLoading(false);
     });
-  }, [cacheProjectId]);
+  }, [cacheProjectId, projectId, currentPackageId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -501,6 +523,21 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
             ? `${file.name} updated to version ${payload.data.versionNumber}`
             : `Uploaded: ${file.name}`
     );
+
+    invalidateProjectTabScopes(projectId, ['versions', 'documents', 'activity'], 'approval:new', {
+      projectId,
+      packageId: packageId || null,
+      approvalId: payload?.data?.approvalId || null,
+      documentId: payload?.data?.documentPublicId || null,
+    });
+    if (packageId) {
+      invalidateProjectTabScopes(`${projectId}:package:${packageId}`, ['versions', 'documents', 'activity'], 'approval:new', {
+        projectId,
+        packageId,
+        approvalId: payload?.data?.approvalId || null,
+        documentId: payload?.data?.documentPublicId || null,
+      });
+    }
   };
 
   // Version info shared across all queued files (set from modal)
@@ -669,6 +706,13 @@ export default function ProjectDocumentsManager({ projectId, packageId = null, c
   };
 
   const openIfcViewer = (node: TreeNode) => {
+    if (node.projectId && node.projectId !== projectId) {
+      clearProjectTabCache(cacheProjectId, 'documents');
+      clearProjectBlockCache(cacheProjectId, 'documents', documentsBlockId);
+      toast.error('Document cache was stale. Reloading current project documents...');
+      refresh();
+      return;
+    }
     const targetVersionId = node.versionId || node.id;
     window.location.href = `/project/${projectId}/${node.id}/${targetVersionId}`;
   };

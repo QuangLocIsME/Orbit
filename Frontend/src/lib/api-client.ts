@@ -4,6 +4,7 @@
  */
 
 import { dispatchAuthExpired } from './auth-helpers';
+import { clearClientAuthState } from './client-cache';
 
 let isRefreshing = false;
 let waitQueue: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
@@ -71,7 +72,7 @@ export async function apiFetch(
     // Refresh failed — user must log in again.
     // Dispatch an event instead of window.location.href so Astro's ClientRouter
     // handles the redirect and the View Transitions pipeline stays intact.
-    localStorage.removeItem('orbit_user');
+    await clearClientAuthState();
     dispatchAuthExpired();
   } finally {
     isRefreshing = false;

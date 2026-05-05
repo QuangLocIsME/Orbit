@@ -3,6 +3,7 @@ const { publishRealtime } = require('./socketService');
 const { enqueueCdcJob } = require('./cdcQueue.service');
 
 const WATCHED_MODELS = {
+    Project: { scope: 'overview', blockId: 'summary', target: 'project' },
     ProjectInvite: { scope: 'teams', blockId: 'roster', target: 'project' },
     ProjectMember: { scope: 'teams', blockId: 'roster', target: 'project' },
     ProjectRole: { scope: 'teams', blockId: 'roster', target: 'project' },
@@ -16,11 +17,29 @@ const WATCHED_MODELS = {
 let started = false;
 const streams = [];
 
-function inferProjectId(change) {
+function inferProjectId(modelName, change) {
+    if (modelName === 'Project') {
+        return (
+            change?.fullDocument?.publicId ||
+            change?.documentKey?.publicId ||
+            change?.updateDescription?.updatedFields?.publicId ||
+            null
+        );
+    }
+
     return (
         change?.fullDocument?.projectId ||
         change?.documentKey?.projectId ||
         change?.updateDescription?.updatedFields?.projectId ||
+        null
+    );
+}
+
+function inferUserId(change) {
+    return (
+        change?.fullDocument?.userId ||
+        change?.documentKey?.userId ||
+        change?.updateDescription?.updatedFields?.userId ||
         null
     );
 }
@@ -43,11 +62,47 @@ async function publishBlockUpdate(job) {
     });
 }
 
+async function publishUserCacheInvalidate(job) {
+    if (!job.userId) return;
+
+    await publishRealtime({
+        target: 'user',
+        id: job.userId,
+        event: 'cache:invalidate',
+        data: {
+            type: 'cache:invalidate',
+            data: {
+                cacheTypes: job.cacheTypes || ['projects', 'folders'],
+                userId: job.userId,
+            },
+        },
+    });
+}
+
+function handleUserListChange(modelName, change) {
+    if (modelName !== 'ProjectMember') return;
+
+    const userId = inferUserId(change);
+    if (!userId) return;
+
+    enqueueCdcJob(
+        {
+            target: 'user',
+            userId,
+            cacheTypes: ['projects', 'folders'],
+        },
+        publishUserCacheInvalidate,
+        { debounceMs: 150 }
+    );
+}
+
 function handleChange(modelName, change) {
     const config = WATCHED_MODELS[modelName];
     if (!config) return;
 
-    const projectId = inferProjectId(change);
+    handleUserListChange(modelName, change);
+
+    const projectId = inferProjectId(modelName, change);
     if (!projectId) return;
 
     enqueueCdcJob(
@@ -72,6 +127,7 @@ function startModelWatcher(modelName) {
         console.error(`[CDC] ${modelName} stream error:`, error?.message || error);
     });
     streams.push(stream);
+    console.log(`[CDC] watching ${modelName}`);
 }
 
 function startCdcSyncService() {

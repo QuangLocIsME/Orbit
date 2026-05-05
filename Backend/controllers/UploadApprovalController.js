@@ -403,7 +403,7 @@ class UploadApprovalController {
             const userId = req.user?.id;
             if (!userId) return unauthorized(res);
 
-            const { approvalId } = req.body || {};
+            const approvalId = req.body?.approvalId || req.query?.approvalId || req.params?.approvalId;
             const normalizedApprovalId = normalizeString(approvalId);
 
             if (!normalizedApprovalId) {

@@ -11,6 +11,7 @@ export type ProjectBlockScope =
 
 export interface ProjectBlockEnvelope<T> {
   blockId: string;
+  projectId: string;
   data: T;
   updatedAt: number;
 }
@@ -57,14 +58,21 @@ export function getProjectBlockCache<T>(
   projectId: string,
   scope: ProjectBlockScope,
   blockId: string,
-  options?: { maxAgeMs?: number }
+  options?: { maxAgeMs?: number; storageKeyOverride?: string }
 ): ProjectBlockEnvelope<T> | null {
-  const cache = readProjectBlocks(projectId);
+  const key = options?.storageKeyOverride || projectId;
+  const cache = readProjectBlocks(key);
   const entry = cache[scope]?.[blockId] as ProjectBlockEnvelope<T> | undefined;
   if (!entry) return null;
 
   const maxAgeMs = options?.maxAgeMs ?? DEFAULT_TTL_MS;
   if (Date.now() - entry.updatedAt > maxAgeMs) return null;
+
+  if (String(entry.projectId) !== String(projectId)) {
+    clearProjectBlockCache(projectId, scope, blockId, key);
+    return null;
+  }
+
   return entry;
 }
 
@@ -72,31 +80,36 @@ export function setProjectBlockCache<T>(
   projectId: string,
   scope: ProjectBlockScope,
   blockId: string,
-  data: T
+  data: T,
+  storageKeyOverride?: string
 ): void {
-  const cache = readProjectBlocks(projectId);
+  const key = storageKeyOverride || projectId;
+  const cache = readProjectBlocks(key);
   const scopeEntries = cache[scope] || {};
   cache[scope] = {
     ...scopeEntries,
     [blockId]: {
       blockId,
+      projectId,
       data,
       updatedAt: Date.now(),
     },
   };
-  writeProjectBlocks(projectId, cache);
+  writeProjectBlocks(key, cache);
 }
 
 export function clearProjectBlockCache(
   projectId: string,
   scope?: ProjectBlockScope,
-  blockId?: string
+  blockId?: string,
+  storageKeyOverride?: string
 ): void {
+  const key = storageKeyOverride || projectId;
   if (!scope) {
-    memoryCache.delete(projectId);
+    memoryCache.delete(key);
     if (typeof window !== 'undefined') {
       try {
-        sessionStorage.removeItem(getStorageKey(projectId));
+        sessionStorage.removeItem(getStorageKey(key));
       } catch {
         // ignore
       }
@@ -104,10 +117,10 @@ export function clearProjectBlockCache(
     return;
   }
 
-  const cache = readProjectBlocks(projectId);
+  const cache = readProjectBlocks(key);
   if (!blockId) {
     delete cache[scope];
-    writeProjectBlocks(projectId, cache);
+    writeProjectBlocks(key, cache);
     return;
   }
 
@@ -115,5 +128,5 @@ export function clearProjectBlockCache(
   if (!scopeEntries) return;
   delete scopeEntries[blockId];
   cache[scope] = { ...scopeEntries };
-  writeProjectBlocks(projectId, cache);
+  writeProjectBlocks(key, cache);
 }

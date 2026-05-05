@@ -28,6 +28,14 @@ router.post('/approvals/comments/list', authenticate, (req, res) =>
     UploadApprovalController.listComments(req, res)
 );
 
+router.get('/approvals/comments/list', authenticate, (req, res) =>
+    UploadApprovalController.listComments(req, res)
+);
+
+router.get('/approvals/:approvalId/comments', authenticate, (req, res) =>
+    UploadApprovalController.listComments(req, res)
+);
+
 router.post('/approvals/comments/add', authenticate, (req, res) =>
     UploadApprovalController.addComment(req, res)
 );

@@ -149,6 +149,24 @@ async function runIfcConversion(inputIfcPath, outputXktPath) {
     });
 }
 
+async function publishDocumentsTreeRefresh(doc) {
+    if (!doc?.projectId) return;
+
+    await publishRealtime({
+        target: 'project',
+        id: doc.projectId,
+        event: 'cache:block:refresh',
+        data: {
+            projectId: doc.projectId,
+            cacheKey: doc.packageId ? `${doc.projectId}:package:${doc.packageId}` : doc.projectId,
+            scope: 'documents',
+            blockId: 'tree',
+            packageId: doc.packageId || null,
+            updatedAt: Date.now(),
+        },
+    });
+}
+
 async function processIfcJob(payload) {
     const versionId = payload?.versionId;
     if (!versionId) {
@@ -189,6 +207,7 @@ async function processIfcJob(payload) {
             conversionStatus: 'PROCESSING',
         },
     });
+    await publishDocumentsTreeRefresh(doc);
 
     const inputIfcPath = path.join(TEMP_DIR, `${doc.publicId}-${Date.now()}.ifc`);
     const outputXktPath = path.join(TEMP_DIR, `${doc.publicId}-${Date.now()}.xkt`);
@@ -241,6 +260,7 @@ async function processIfcJob(payload) {
                 xktUrl: uploaded.publicUrl,
             },
         });
+        await publishDocumentsTreeRefresh(doc);
         console.log(`[ifcConversionWorker] Uploaded XKT: ${uploaded.publicUrl}`);
     } catch (error) {
         console.error(`[ifcConversionWorker] Conversion failed: ${error.message}`);
@@ -262,6 +282,7 @@ async function processIfcJob(payload) {
                 conversionError: error?.message || 'IFC conversion failed',
             },
         });
+        await publishDocumentsTreeRefresh(doc);
     } finally {
         fs.unlink(inputIfcPath, () => {});
         fs.unlink(outputXktPath, () => {});

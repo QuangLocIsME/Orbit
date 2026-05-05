@@ -171,7 +171,7 @@ export async function hasSwCache(route: string): Promise<boolean> {
   if (typeof window === 'undefined' || !('caches' in window)) return false;
 
   try {
-    const cache = await caches.open('orbit-api-v2');
+    const cache = await caches.open('orbit-api-v4');
     const key = new Request(location.origin + route);
     const match = await cache.match(key);
     return !!match;
@@ -184,6 +184,13 @@ export async function hasSwCache(route: string): Promise<boolean> {
 
 export type SwMessageHandler = (data: SwMessage) => void;
 
+export interface RefreshResponsePayload {
+  route: string;
+  data: unknown;
+  isStale: boolean;
+  projectId: string | null;
+}
+
 export interface SwMessage {
   type:
     | 'REFRESH_RESPONSE'
@@ -191,7 +198,7 @@ export interface SwMessage {
     | 'SYNC_SESSION'
     | 'CACHE_READY'
     | 'CLEAR_SESSION';
-  payload?: Record<string, unknown>;
+  payload?: Record<string, unknown> | RefreshResponsePayload;
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   clearProjectTabCache,
   type CacheScope,
 } from '@/stores/projectDetailCacheStore';
+import { clearProjectBlockCache } from '@/stores/projectBlockCacheStore';
 
 export const PROJECT_TAB_INVALIDATED_EVENT = 'orbit:project-tab-cache-invalidated';
 
@@ -121,6 +122,31 @@ function invalidateKnownSwRoutes(projectId: string, scopes: CacheScope[]): void 
   }
 }
 
+function clearKnownProjectBlockCaches(projectId: string, scopes: CacheScope[]): void {
+  if (scopes.includes('documents')) {
+    clearProjectBlockCache(projectId, 'documents', 'tree');
+  }
+  if (scopes.includes('versions')) {
+    clearProjectBlockCache(projectId, 'versions', 'summary');
+  }
+  if (scopes.includes('packages')) {
+    clearProjectBlockCache(projectId, 'packages', 'summary');
+  }
+  if (scopes.includes('teams')) {
+    clearProjectBlockCache(projectId, 'teams', 'roster');
+  }
+  if (scopes.includes('activity')) {
+    clearProjectBlockCache(projectId, 'activity', 'feed');
+  }
+  if (scopes.includes('tasks')) {
+    clearProjectBlockCache(projectId, 'tasks', 'list');
+  }
+  if (scopes.includes('changes')) {
+    clearProjectBlockCache(projectId, 'changes', 'list');
+    clearProjectBlockCache(projectId, 'changes', 'meta');
+  }
+}
+
 export function invalidateProjectTabScopes(
   projectId: string,
   scopes: CacheScope[],
@@ -131,6 +157,7 @@ export function invalidateProjectTabScopes(
 
   const nextScopes = uniqueScopes(scopes);
   nextScopes.forEach((scope) => clearProjectTabCache(projectId, scope));
+  clearKnownProjectBlockCaches(projectId, nextScopes);
   invalidateKnownSwRoutes(projectId, nextScopes);
 
   if (typeof window === 'undefined') return;

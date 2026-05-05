@@ -47,9 +47,12 @@ class AuthController {
                 success: true,
                 message: 'Register success',
                 data: {
+                    id: user._id,
+                    publicId: user.publicId,
                     fullName: user.fullName,
                     email: user.email,
                     role: user.role,
+                    avatar: user.avatar || null,
                     createdAt: user.createdAt,
                 },
             });
@@ -89,8 +92,12 @@ class AuthController {
                 success: true,
                 message: 'Login success',
                 data: {
+                    id: user._id,
+                    publicId: user.publicId,
                     fullName: user.fullName,
                     email: user.email,
+                    role: user.role,
+                    avatar: user.avatar || null,
                 },
             });
         } catch (error) {
@@ -153,8 +160,12 @@ class AuthController {
                 success: true,
                 message: 'Login success',
                 data: {
+                    id: user._id,
+                    publicId: user.publicId,
                     fullName: user.fullName,
                     email: user.email,
+                    role: user.role,
+                    avatar: user.avatar || null,
                 },
             });
         } catch (error) {

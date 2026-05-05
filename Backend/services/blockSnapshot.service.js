@@ -186,6 +186,7 @@ async function buildVersionsSummaryBlock(projectId) {
     const crMap = new Map(changeRequests.map((cr) => [cr.publicId, cr]));
 
     return {
+        projectId,
         approvals,
         crVersions: crVersions.map((version) => ({
             ...version,
@@ -390,6 +391,8 @@ function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'r
             size: `${Math.round((doc.size || 0) / 1024)} KB`,
             updatedAt: doc.updatedAt,
             author: doc.uploadedBy,
+            projectId: doc.projectId,
+            packageId: doc.packageId || null,
             mimeType: doc.mimeType || '',
             folderPath: doc.folderPath || '',
             s3Key: doc.s3Key,
@@ -429,6 +432,8 @@ async function buildDocumentsTreeBlock(projectId, packageId = null) {
     const rootName = packageId ? 'Package Files' : 'All Files';
 
     return {
+        projectId,
+        packageId,
         tree: buildDocumentsTree({
             docs: approvedDocs,
             folders,

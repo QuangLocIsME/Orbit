@@ -21,6 +21,12 @@ import UploadApprovalPanel from './UploadApprovalPanel';
 import type { WorkflowStage } from './TaskBoard';
 import { getSocket } from '@/lib/socket';
 import { prefetchApiCache } from '@/lib/sw-utils';
+import { clearProjectTabCache } from '@/stores/projectDetailCacheStore';
+import { clearProjectBlockCache } from '@/stores/projectBlockCacheStore';
+import {
+  PROJECT_TAB_CACHE_SCOPES,
+  type CacheScope,
+} from '@/stores/projectDetailCacheStore';
 import {
   DndContext,
   DragOverlay,
@@ -435,7 +441,26 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   const isMounted = useRef(true);
   const cancelledRef = useRef(false);
   const coverUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const prevProjectIdRef = useRef<string | null>(null);
   const canEditProjectCover = project.role === 'owner' || project.role === 'admin';
+
+  // Clear all caches when navigating between projects within the same tab.
+  // Without this, sessionStorage and in-memory caches for the previous project
+  // persist and can cause data from one project to appear in another.
+  useEffect(() => {
+    if (prevProjectIdRef.current && prevProjectIdRef.current !== project.publicId) {
+      PROJECT_TAB_CACHE_SCOPES.forEach((scope: CacheScope) => {
+        clearProjectTabCache(prevProjectIdRef.current!, scope);
+      });
+      clearProjectTabCache(prevProjectIdRef.current!);
+      const blockScopes: Array<'documents' | 'versions' | 'packages' | 'teams' | 'activity' | 'tasks' | 'changes' | 'clashes' | 'settings'> = [
+        'documents', 'versions', 'packages', 'teams', 'activity', 'tasks', 'changes', 'clashes', 'settings',
+      ];
+      blockScopes.forEach((scope) => clearProjectBlockCache(prevProjectIdRef.current!, scope));
+      clearProjectBlockCache(prevProjectIdRef.current!);
+    }
+    prevProjectIdRef.current = project.publicId;
+  }, [project.publicId]);
 
   // Compute effective progress: dynamic (from API) overrides the SSR prop
   const effectiveProgress = dynamicProgress !== null ? dynamicProgress : project.progress;
@@ -576,6 +601,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
 
   // Fetch approved versions count
   useEffect(() => {
+    setApprovedVersionsCount(0);
     const fetchApprovedCount = async () => {
       try {
         const res = await apiFetch('/api/approvals/approved/count', {
@@ -1114,6 +1140,18 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
   }, [activeTab]);
 
   useEffect(() => {
+    setMountedTabs({ overview: true, [activeTab]: true });
+    setTeamMembers([]);
+    setDocumentsCount(0);
+    setClashCount(0);
+    setApprovedVersionsCount(0);
+    setActivities([]);
+    setLastActivity(null);
+    setLoadingActivities(true);
+    setDynamicProgress(null);
+  }, [project.publicId]);
+
+  useEffect(() => {
     prefetchApiCache([
       '/api/projects/me',
       `/api/projects/${project.publicId}/activities`,
@@ -1522,7 +1560,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {/* Packages Tab Content */}
         {mountedTabs.packages && (
           <div style={{ display: activeTab === 'packages' ? 'block' : 'none' }}>
-            <PackagesManager fixedProjectId={project.publicId} fixedProjectName={project.name} />
+            <PackagesManager key={`packages:${project.publicId}`} fixedProjectId={project.publicId} fixedProjectName={project.name} />
           </div>
         )}
 
@@ -1950,20 +1988,20 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {/* Documents Tab */}
         {mountedTabs.documents && (
           <div style={{ display: activeTab === 'documents' ? 'block' : 'none' }}>
-            <ProjectDocumentsManager projectId={project.publicId} initialFileId={initialDocFileId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
+            <ProjectDocumentsManager key={`documents:${project.publicId}`} projectId={project.publicId} initialFileId={initialDocFileId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
           </div>
         )}
 
         {/* Versions Tab */}
         {mountedTabs.versions && (
           <div style={{ display: activeTab === 'versions' ? 'block' : 'none' }}>
-            <UploadApprovalPanel projectId={project.publicId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
+            <UploadApprovalPanel key={`versions:${project.publicId}`} projectId={project.publicId} projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'} />
           </div>
         )}
         {/* Changes Tab */}
         {mountedTabs.changes && (
           <div style={{ display: activeTab === 'changes' ? 'block' : 'none' }}>
-            <ChangesTab projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} initialCrId={initialCrId} />
+            <ChangesTab key={`changes:${project.publicId}`} projectPublicId={project.publicId} onActivityAdded={() => setActivitiesVersion(v => v + 1)} initialCrId={initialCrId} />
           </div>
         )}
         {activeTab === 'changes_DISABLED_INLINE' && (
@@ -2190,6 +2228,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {mountedTabs.tasks && (
           <div style={{ display: activeTab === 'tasks' ? 'block' : 'none' }}>
             <ScopedTasksPanel
+              key={`tasks:${project.publicId}`}
               scope={{ type: 'project', projectId: project.publicId }}
               projectRole={project.role as 'owner' | 'admin' | 'member' | 'viewer'}
             />
@@ -3190,6 +3229,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {mountedTabs.clashes && (
           <div style={{ display: activeTab === 'clashes' ? 'block' : 'none' }}>
             <ClashesTab
+              key={`clashes:${project.publicId}`}
               projectPublicId={project.publicId}
               projectDisplayName={project.name}
               currentUserRole={
@@ -3202,7 +3242,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {/* Teams Tab */}
         {mountedTabs.teams && (
           <div style={{ display: activeTab === 'teams' ? 'block' : 'none' }}>
-            <TeamsTab projectPublicId={project.publicId} currentUserRole={project.role as 'admin' | 'member' | 'viewer'} />
+            <TeamsTab key={`teams:${project.publicId}`} projectPublicId={project.publicId} currentUserRole={project.role as 'admin' | 'member' | 'viewer'} />
           </div>
         )}
 
@@ -3220,6 +3260,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
             style={{ display: activeTab === 'activity' ? 'block' : 'none' }}
           >
             <ScopedActivityPanel
+              key={`activity:${project.publicId}`}
               scope={{ type: 'project', projectId: project.publicId }}
             />
           </div>
@@ -3229,6 +3270,7 @@ function ProjectDetailPageContent({ project }: ProjectDetailPageProps) {
         {mountedTabs.settings && (
           <div style={{ display: activeTab === 'settings' ? 'block' : 'none' }}>
             <SettingsTab
+              key={`settings:${project.publicId}`}
               projectName={project.name}
               projectCode={project.publicId}
               projectDescription={project.description}

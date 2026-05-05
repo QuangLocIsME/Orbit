@@ -57,6 +57,11 @@ export function initProjectBlockRealtime(): void {
     if (listener) {
       listener(detail);
     }
+
+    window.dispatchEvent(new CustomEvent<ProjectBlockUpdateDetail>(
+      PROJECT_BLOCK_UPDATED_EVENT,
+      { detail }
+    ));
   });
   socket.on('cache:block:update', (payload) => {
     if (!payload?.projectId || !payload?.scope || !payload?.blockId) return;
@@ -65,7 +70,7 @@ export function initProjectBlockRealtime(): void {
       ? payload.cacheKey.trim()
       : payload.projectId;
 
-    setProjectBlockCache(cacheKey, payload.scope, payload.blockId, payload.data);
+    setProjectBlockCache(payload.projectId, payload.scope, payload.blockId, payload.data, cacheKey);
     window.dispatchEvent(new CustomEvent<ProjectBlockUpdateDetail>(
       PROJECT_BLOCK_UPDATED_EVENT,
       {
@@ -91,7 +96,7 @@ export async function fetchProjectBlock<T>(
 ): Promise<T | null> {
   const cacheKey = options?.cacheKey || projectIdOrCacheKey;
   const projectId = options?.projectId || projectIdOrCacheKey;
-  const cached = options?.force ? null : getProjectBlockCache<T>(cacheKey, scope, blockId);
+  const cached = options?.force ? null : getProjectBlockCache<T>(projectId, scope, blockId, { storageKeyOverride: cacheKey });
   if (cached?.data) return cached.data;
 
   try {
@@ -113,7 +118,7 @@ export async function fetchProjectBlock<T>(
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload?.success || !payload?.data) return null;
 
-    setProjectBlockCache(cacheKey, scope, blockId, payload.data.data);
+    setProjectBlockCache(projectId, scope, blockId, payload.data.data, cacheKey);
     return payload.data.data as T;
   } catch {
     return null;

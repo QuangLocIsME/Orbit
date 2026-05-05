@@ -469,6 +469,8 @@ function buildDocumentsTree({ docs, folders, rootName = 'All Files', rootId = 'r
             size: `${Math.round((doc.size || 0) / 1024)} KB`,
             updatedAt: doc.updatedAt,
             author: doc.uploadedBy,
+            projectId: doc.projectId,
+            packageId: doc.packageId || null,
             mimeType: doc.mimeType || '',
             folderPath: doc.folderPath || '',
             s3Key: doc.s3Key,
@@ -1145,6 +1147,8 @@ class PackageController {
                     size: `${Math.round((doc.size || 0) / 1024)} KB`,
                     updatedAt: doc.updatedAt,
                     author: doc.uploadedBy,
+                    projectId: doc.projectId,
+                    packageId: doc.packageId || null,
                     mimeType: doc.mimeType || '',
                     folderPath: doc.folderPath || '',
                     s3Key: doc.s3Key,
@@ -1178,6 +1182,8 @@ class PackageController {
             return res.status(200).json({
                 success: true,
                 data: {
+                    projectId: normalizedProjectId,
+                    packageId: null,
                     tree: root,
                     total: filteredDocs.length,
                 },
@@ -1245,6 +1251,8 @@ class PackageController {
             return res.status(200).json({
                 success: true,
                 data: {
+                    projectId: normalizedProjectId,
+                    packageId: normalizedPackageId,
                     tree: root,
                     total: uniqueFileCount,
                 },
@@ -1807,6 +1815,13 @@ class PackageController {
                 broadcastProject(normalizedProjectId, 'approval:new', {
                     projectId: normalizedProjectId,
                     approvalId: newApproval.publicId,
+                    packageId: targetPackageId,
+                    documentId: document.publicId,
+                });
+                await publishProjectBlockRefresh({
+                    projectId: normalizedProjectId,
+                    scope: 'versions',
+                    blockId: 'summary',
                 });
 
                 if (targetPackageId) {
@@ -1834,6 +1849,7 @@ class PackageController {
                         versionGroupId,
                         versionLabel,
                         approvalStatus: 'pending',
+                        approvalId: newApproval.publicId,
                     },
                 });
             }
@@ -2291,12 +2307,12 @@ class PackageController {
             // Try lookup by fileId first, fallback to filename
             let doc = null;
             if (normalizedFileId) {
-                doc = await DocumentRepository.findByPublicId(normalizedFileId);
+                doc = await DocumentRepository.findByPublicIdInProject(normalizedFileId, normalizedProjectId);
             }
             if (!doc && normalizedFileName) {
                 doc = await DocumentRepository.findByNameInProject(normalizedProjectId, normalizedFileName);
             }
-            if (!doc || doc.projectId !== normalizedProjectId) {
+            if (!doc) {
                 return notFound(res, 'File version not found');
             }
 
@@ -2352,12 +2368,12 @@ class PackageController {
             // Try lookup by fileId first, fallback to filename
             let doc = null;
             if (normalizedFileId) {
-                doc = await DocumentRepository.findByPublicId(normalizedVersionId);
+                doc = await DocumentRepository.findByPublicIdInProject(normalizedVersionId, normalizedProjectId);
             }
             if (!doc && normalizedFileName) {
                 doc = await DocumentRepository.findByNameInProject(normalizedProjectId, normalizedFileName);
             }
-            if (!doc || doc.projectId !== normalizedProjectId) {
+            if (!doc) {
                 return notFound(res, 'File version not found');
             }
 
@@ -2422,16 +2438,12 @@ class PackageController {
                 return forbidden(res, 'Only project members can access viewer model');
             }
 
-            let doc = await DocumentRepository.findByPublicId(normalizedVersionId);
-            if (!doc || doc.projectId !== normalizedProjectId) {
-                doc = await DocumentRepository.findByPublicId(normalizedFileId);
+            let doc = await DocumentRepository.findByPublicIdInProject(normalizedVersionId, normalizedProjectId);
+            if (!doc) {
+                doc = await DocumentRepository.findByPublicIdInProject(normalizedFileId, normalizedProjectId);
             }
             if (!doc) {
                 console.error(`[getViewerModel] Document not found by versionId="${normalizedVersionId}" nor fileId="${normalizedFileId}"`);
-                return notFound(res, 'File version not found');
-            }
-            if (doc.projectId !== normalizedProjectId) {
-                console.error(`[getViewerModel] Document projectId mismatch: doc.projectId="${doc.projectId}" !== normalizedProjectId="${normalizedProjectId}"`);
                 return notFound(res, 'File version not found');
             }
 

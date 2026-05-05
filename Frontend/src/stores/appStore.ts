@@ -541,6 +541,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   // we receive fresh data from SW via postMessage and patch state in-place.
   // The route is the API path, e.g. '/api/projects/me'
   patchFromSW: (route: string, data: unknown) => {
+    if (!data || typeof data !== 'object') return;
+
     if (route === '/api/projects/me' && Array.isArray(data)) {
       writeCache(PROJECTS_CACHE_KEY, data);
       set((state) => {

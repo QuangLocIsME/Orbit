@@ -13,6 +13,10 @@ class DocumentRepository {
         return await Document.findOne({ publicId: documentPublicId });
     }
 
+    async findByPublicIdInProject(documentPublicId, projectId) {
+        return await Document.findOne({ publicId: documentPublicId, projectId });
+    }
+
     async findByPublicIds(documentPublicIds) {
         if (!documentPublicIds || documentPublicIds.length === 0) return [];
         return await Document.find({ publicId: { $in: documentPublicIds } }).lean();

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { login, register, verify2FA } from '@/modules/auth/service/auth-service.js';
 import { apiUrl } from '@/config/api.js';
+import { clearClientAuthState } from '@/lib/client-cache';
 
 // Types
 interface FormData {
@@ -414,15 +415,19 @@ export default function AuthForm({ mode }: AuthFormProps) {
         return;
       }
 
+      await clearClientAuthState();
+
       const rawUser = data?.data || {};
       const safeUser = {
-        id: rawUser.id,
-        fullName: rawUser.fullName,
-        email: rawUser.email,
+        id: rawUser.id || rawUser.publicId || rawUser.email,
+        publicId: rawUser.publicId || '',
+        fullName: rawUser.fullName || formData.email,
+        email: rawUser.email || formData.email,
+        role: rawUser.role,
         avatar: rawUser.avatar ?? null,
       };
       localStorage.setItem('orbit_user', JSON.stringify(safeUser));
-      window.location.href = '/home';
+      window.location.assign('/home');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'An error occurred. Please try again.';
       setErrors({ general: message });
@@ -446,15 +451,19 @@ export default function AuthForm({ mode }: AuthFormProps) {
     try {
       const data = await verify2FA(pending2FAEmail, twoFactorCode);
 
+      await clearClientAuthState();
+
       const rawUser = data?.data || {};
       const safeUser = {
-        id: rawUser.id,
-        fullName: rawUser.fullName,
-        email: rawUser.email,
+        id: rawUser.id || rawUser.publicId || rawUser.email,
+        publicId: rawUser.publicId || '',
+        fullName: rawUser.fullName || pending2FAEmail,
+        email: rawUser.email || pending2FAEmail,
+        role: rawUser.role,
         avatar: rawUser.avatar ?? null,
       };
       localStorage.setItem('orbit_user', JSON.stringify(safeUser));
-      window.location.href = '/home';
+      window.location.assign('/home');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Invalid verification code. Please try again.';
       setTwoFactorError(message);

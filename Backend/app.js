@@ -47,6 +47,9 @@ const { createChannelWithRetry: createUploadChannel } = require('./queues/packag
 const app = express();
 const httpServer = http.createServer(app);
 
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS || 1);
+app.set('trust proxy', TRUST_PROXY_HOPS);
+
 const limiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 600,
@@ -96,12 +99,14 @@ app.use(helmet.frameguard({ action: 'deny' }));
 app.use(helmet.noSniff());
 app.use(helmet.xssFilter());
 app.use(helmet.referrerPolicy({ policy: 'strict-origin-when-cross-origin' }));
+const PUBLIC_ORIGIN = process.env.FRONTEND_URI_PUBLIC || process.env.FRONTEND_URI;
 const LAN_ORIGIN = process.env.FRONTEND_URI_LAN || process.env.FRONTEND_URI;
 app.use(
     cors({
         origin: [
             process.env.FRONTEND_URI || process.env.FRONTED_URI || 'http://localhost:4321',
             LAN_ORIGIN,
+            PUBLIC_ORIGIN,
         ],
         credentials: true,
     })
