@@ -212,6 +212,20 @@ const parseXktModel = (buffer, meta, projectSlug) => {
     };
 };
 
+const shouldFallbackXktToIfc = (parsed) => {
+    if (!parsed?.model?.id || !Array.isArray(parsed?.objects) || parsed.objects.length !== 1) {
+        return false;
+    }
+    const onlyObjectId = String(parsed.objects[0]?.id || '');
+    const modelId = String(parsed.model.id);
+    return (
+        onlyObjectId === `${modelId}__parse_error`
+        || onlyObjectId === `${modelId}__empty_metadata`
+        || onlyObjectId === `${modelId}__model_bbox`
+        || onlyObjectId === `${modelId}__no_federated_elements`
+    );
+};
+
 /** Single federated object when XKT loads in xeokit but embedded JSON metadata cannot be parsed (still need clash/UI counts). */
 const buildXktPlaceholderFederatedObject = (sourceModelId, sourceModel, modelTransform, tag) => ({
     id: `${sourceModelId}__${tag}`,
@@ -935,7 +949,35 @@ class ModelService {
                 continue;
             }
             if (sourceFormat === 'xkt') {
-                parsedImports.push(parseXktModel(entry.buffer, entry, projectSlug));
+                const parsedXkt = parseXktModel(entry.buffer, entry, projectSlug);
+                if (shouldFallbackXktToIfc(parsedXkt) && entry.fallbackIfcUrl) {
+                    try {
+                        const ifcResponse = await fetch(entry.fallbackIfcUrl);
+                        if (!ifcResponse.ok) {
+                            throw new Error(`HTTP ${ifcResponse.status}`);
+                        }
+                        const ifcBuffer = Buffer.from(await ifcResponse.arrayBuffer());
+                        const ifcMeta = {
+                            ...entry,
+                            sourceFormat: 'ifc',
+                            originalName: entry.fallbackOriginalName || entry.originalName || `${parsedXkt.model.name}.ifc`,
+                            sourceModel: entry.sourceModel || parsedXkt.model.name,
+                        };
+                        const parsedIfc = await parseIfcModel(ifcBuffer, ifcMeta);
+                        await finalizeNavisworksIfcImport(projectSlug, ifcBuffer, parsedIfc);
+                        parsedImports.push(parsedIfc);
+                        console.info(
+                            `[importModels] XKT metadata fallback: rebuilt model "${parsedIfc.model.name}" from IFC for rich object metadata`
+                        );
+                    } catch (fallbackErr) {
+                        console.warn(
+                            `[importModels] XKT metadata fallback failed for "${entry.originalName || 'unknown'}": ${fallbackErr.message}`
+                        );
+                        parsedImports.push(parsedXkt);
+                    }
+                } else {
+                    parsedImports.push(parsedXkt);
+                }
                 continue;
             }
             throw new Error(`Unsupported model format: ${sourceFormat}`);
@@ -1010,7 +1052,7 @@ class ModelService {
             console.warn(`[clearModels] Failed to clean xkt dir: ${err.message}`);
         }
 
-        // Reset federated model in workspace
+        // Reset federated model and clash workspace data (selection sets, tests, runs).
         await updateWorkspace(safeSlug, (ws) => ({
             ...ws,
             federatedModel: {
@@ -1020,6 +1062,10 @@ class ModelService {
                 objects: [],
                 categories: [],
             },
+            selectionSets: [],
+            clashTests: [],
+            clashRuns: [],
+            objectOverrides: {},
         }));
 
         return { success: true };

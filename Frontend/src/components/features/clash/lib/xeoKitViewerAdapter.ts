@@ -798,7 +798,13 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
    * IFC / Navis ids vs xeokit scene keys: braces, `$` (STEP encoding), path prefixes, casing.
    */
   private normalizeIfcGuidForMatch(s: string): string {
-    return s.trim().replace(/[{}]/g, '').replace(/\$/g, '').replace(/\s+/g, '').toLowerCase();
+    return s
+      .trim()
+      .replace(/[{}]/g, '')
+      .replace(/\$/g, '')
+      .replace(/-/g, '')
+      .replace(/\s+/g, '')
+      .toLowerCase();
   }
 
   /**
@@ -911,8 +917,11 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   private findEntityInXktModels(objectId: string): { entity: unknown; modelId: string } | null {
     const scene = this.viewer.scene as {
       models?: Record<string, { objects?: Record<string, unknown> }>;
+      objects?: Record<string, unknown>;
     } | undefined;
     if (!scene?.models) return null;
+
+    const fallbackModelId = this.loadedXktModelIds[0] ?? '';
 
     for (const modelId of this.loadedXktModelIds) {
       const model = scene.models?.[modelId];
@@ -933,6 +942,23 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
         }
       }
     }
+
+    /** xeokit sometimes mirrors meta-object roots only under `scene.objects`. */
+    const globals = scene.objects;
+    if (globals && fallbackModelId) {
+      const direct = globals[objectId];
+      if (direct) {
+        best = { score: 100, entity: direct, modelId: fallbackModelId };
+      } else {
+        for (const key of Object.keys(globals)) {
+          const s = this.clashIdToSceneKeyMatchScore(objectId, key);
+          if (s > 0 && (!best || s > best.score)) {
+            best = { score: s, entity: globals[key], modelId: fallbackModelId };
+          }
+        }
+      }
+    }
+
     return best ? { entity: best.entity, modelId: best.modelId } : null;
   }
 
