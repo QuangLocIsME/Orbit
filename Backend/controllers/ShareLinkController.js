@@ -1,8 +1,35 @@
 const crypto = require('crypto');
 const ShareLink = require('../models/ShareLink');
+const Package = require('../models/Package');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
 const socketService = require('../services/socketService');
 const { errorResponse } = require('../utils/response');
+
+const SHARE_TYPES = new Set(['project', 'packages', 'team']);
+const ACCESS_ROLES = new Set(['guest', 'viewer', 'member', 'contractor']);
+const ALLOWED_PAGES = new Set(['overview', 'documents', 'versions', 'tasks', 'changes', 'clashes']);
+
+const normalizeStringList = (value) => (
+    Array.isArray(value)
+        ? [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))]
+        : []
+);
+
+const normalizeShareType = (shareType, packageIds = []) => {
+    const type = typeof shareType === 'string' ? shareType.trim() : '';
+    if (SHARE_TYPES.has(type)) return type;
+    return packageIds.length > 0 ? 'packages' : 'project';
+};
+
+const normalizeAllowedRoles = (roles) => {
+    const next = normalizeStringList(roles).filter((role) => ACCESS_ROLES.has(role));
+    return next.length > 0 ? next : ['guest'];
+};
+
+const normalizeAllowedPages = (pages) => {
+    const next = normalizeStringList(pages).filter((page) => ALLOWED_PAGES.has(page));
+    return next.length > 0 ? next : ['overview', 'documents'];
+};
 
 class ShareLinkController {
     hashToken(token) {
@@ -23,6 +50,36 @@ class ShareLinkController {
         return `${this.getBaseUrl()}/share/${token}`;
     }
 
+    async normalizeScope({ projectId, shareType, packageIds }) {
+        const pkgIds = normalizeStringList(packageIds);
+        const type = normalizeShareType(shareType, pkgIds);
+
+        if (type === 'project') {
+            return { shareType: 'project', packageIds: [] };
+        }
+
+        if (type === 'packages') {
+            if (pkgIds.length === 0) {
+                return { error: 'Please select at least one package to share' };
+            }
+
+            const packages = await Package.find({
+                projectId,
+                publicId: { $in: pkgIds },
+                trashedAt: null,
+            }).select('publicId').lean();
+            const validIds = new Set(packages.map((pkg) => String(pkg.publicId)));
+            const missingIds = pkgIds.filter((id) => !validIds.has(id));
+            if (missingIds.length > 0) {
+                return { error: 'One or more selected packages are invalid' };
+            }
+
+            return { shareType: 'packages', packageIds: pkgIds };
+        }
+
+        return { shareType: type, packageIds: pkgIds };
+    }
+
     async createShareLink(req, res) {
         try {
             const { projectId, packageIds, teamIds, shareType, label, allowedRoles, allowedPages, allowedTeamIds } = req.body || {};
@@ -38,40 +95,12 @@ class ShareLinkController {
                 return errorResponse(res, 403, 'Only owner or admin can create share links');
             }
 
-            const type = shareType || (packageIds && packageIds.length > 0 ? 'packages' : 'project');
-            const pkgIds = Array.isArray(packageIds) ? packageIds.filter(Boolean).map(id => id.trim()) : [];
-            const tIds = Array.isArray(teamIds) ? teamIds.filter(Boolean).map(id => id.trim()) : [];
-            const allowedRoleList = Array.isArray(allowedRoles) ? allowedRoles : ['guest'];
-            const allowedPageList = Array.isArray(allowedPages) ? allowedPages : ['overview', 'documents', 'tasks'];
-            const allowedTeamList = Array.isArray(allowedTeamIds) ? allowedTeamIds.filter(Boolean).map(id => id.trim()) : [];
-
-            const existing = await ShareLink.findOne({
-                projectId: pId,
-                shareType: type,
-                packageIds: pkgIds,
-                teamIds: tIds,
-                isActive: true,
-            });
-            if (existing) {
-                return res.status(200).json({
-                    success: true,
-                    message: 'Share link already exists',
-                    data: {
-                        id: String(existing._id),
-                        projectId: existing.projectId,
-                        packageIds: existing.packageIds,
-                        teamIds: existing.teamIds,
-                        shareType: existing.shareType,
-                        shareUrl: existing.shareUrl,
-                        label: existing.label,
-                        allowedRoles: existing.allowedRoles,
-                        allowedPages: existing.allowedPages,
-                        allowedTeamIds: existing.allowedTeamIds,
-                        createdAt: existing.createdAt,
-                        expiresAt: existing.expiresAt,
-                    },
-                });
-            }
+            const scope = await this.normalizeScope({ projectId: pId, shareType, packageIds });
+            if (scope.error) return errorResponse(res, 400, scope.error);
+            const tIds = normalizeStringList(teamIds);
+            const allowedRoleList = normalizeAllowedRoles(allowedRoles);
+            const allowedPageList = normalizeAllowedPages(allowedPages);
+            const allowedTeamList = normalizeStringList(allowedTeamIds);
 
             const rawToken = this.generateToken();
             const tokenHash = this.hashToken(rawToken);
@@ -82,12 +111,12 @@ class ShareLinkController {
 
             const shareLink = new ShareLink({
                 projectId: pId,
-                packageIds: pkgIds,
+                packageIds: scope.packageIds,
                 teamIds: tIds,
                 tokenHash,
                 shareUrl,
                 label: typeof label === 'string' ? label.trim() : '',
-                shareType: type,
+                shareType: scope.shareType,
                 allowedRoles: allowedRoleList,
                 allowedPages: allowedPageList,
                 allowedTeamIds: allowedTeamList,
@@ -237,13 +266,18 @@ class ShareLinkController {
             const link = await ShareLink.findOne({ _id: sId, projectId: pId, isActive: true });
             if (!link) return errorResponse(res, 404, 'Share link not found');
 
-            if (Array.isArray(allowedRoles)) link.allowedRoles = allowedRoles;
-            if (Array.isArray(allowedPages)) link.allowedPages = allowedPages;
-            if (Array.isArray(allowedTeamIds)) link.allowedTeamIds = allowedTeamIds.filter(Boolean).map(id => id.trim());
+            const nextPackageIds = Array.isArray(packageIds) ? packageIds : link.packageIds;
+            const nextShareType = typeof shareType === 'string' ? shareType : link.shareType;
+            const scope = await this.normalizeScope({ projectId: pId, shareType: nextShareType, packageIds: nextPackageIds });
+            if (scope.error) return errorResponse(res, 400, scope.error);
+
+            if (Array.isArray(allowedRoles)) link.allowedRoles = normalizeAllowedRoles(allowedRoles);
+            if (Array.isArray(allowedPages)) link.allowedPages = normalizeAllowedPages(allowedPages);
+            if (Array.isArray(allowedTeamIds)) link.allowedTeamIds = normalizeStringList(allowedTeamIds);
             if (typeof label === 'string') link.label = label.trim();
-            if (typeof shareType === 'string') link.shareType = shareType;
-            if (Array.isArray(packageIds)) link.packageIds = packageIds.filter(Boolean).map(id => id.trim());
-            if (Array.isArray(teamIds)) link.teamIds = teamIds.filter(Boolean).map(id => id.trim());
+            link.shareType = scope.shareType;
+            link.packageIds = scope.packageIds;
+            if (Array.isArray(teamIds)) link.teamIds = normalizeStringList(teamIds);
 
             await link.save();
             socketService.broadcastProject(pId, 'share-links:changed', {

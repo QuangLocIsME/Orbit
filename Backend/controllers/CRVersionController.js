@@ -1,6 +1,7 @@
 const CRVersionRepository = require('../repositories/CRVersionRepository');
 const ChangeRequestRepository = require('../repositories/ChangeRequestRepository');
 const ProjectMemberRepository = require('../repositories/ProjectMemberRepository');
+const UploadApprovalRepository = require('../repositories/UploadApprovalRepository');
 const Task = require('../models/Task');
 const Document = require('../models/Document');
 const ChangeRequest = require('../models/ChangeRequest');
@@ -9,6 +10,7 @@ const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { s3Client, S3_BUCKET, buildS3Url, assertS3Configured } = require('../config/s3');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const socketService = require('../services/socketService');
+const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 
 const normalizeString = (val) => {
     if (typeof val !== 'string') return '';
@@ -206,10 +208,12 @@ class CRVersionController {
             // Create Document records for task attachments so they can be previewed immediately.
             // The conversion job will run in the background; preview is available once it completes.
             const newDocIds = [];
+            const newApprovalIds = [];
             for (const attachment of taskAttachments) {
                 if (!attachment.url) continue;
 
                 try {
+                    const isIfcFile = (attachment.name || '').toLowerCase().endsWith('.ifc');
                     const existingDoc = await Document.findOne({
                         projectId: changeRequest.projectId,
                         originalName: attachment.name,
@@ -239,14 +243,39 @@ class CRVersionController {
                         versionLabel: `${normalizeString(versionLabel) || `v${nextVersionNumber}`}`,
                         versionDescription: `Created from CR Version by ${userId}`,
                         approvalStatus: 'pending',
+                        conversionStatus: isIfcFile ? 'PENDING' : 'NOT_SUPPORTED',
+                        conversionAttempts: 0,
+                        conversionError: '',
                         folderType: 'files',
                         folderPath: '',
                     });
                     await newDoc.save();
                     newDocIds.push({ docId: newDoc.publicId, url: attachment.url });
 
-                    const ext = (attachment.name || '').toLowerCase();
-                    if (ext.endsWith('.ifc')) {
+                    const newApproval = await UploadApprovalRepository.create({
+                        projectId: changeRequest.projectId,
+                        documentId: newDoc.publicId,
+                        packageId: newDoc.packageId || null,
+                        jobId: null,
+                        uploaderId: userId,
+                        originalName: newDoc.originalName,
+                        mimeType: newDoc.mimeType || '',
+                        size: newDoc.size || 0,
+                        folderType: newDoc.folderType || 'files',
+                        folderPath: newDoc.folderPath || '',
+                        versionGroupId: newDoc.versionGroupId,
+                        versionNumber: newDoc.versionNumber || 1,
+                        versionLabel: newDoc.versionLabel || `v${newDoc.versionNumber || 1}`,
+                        versionDescription: newDoc.versionDescription || '',
+                        isNewVersion: Number(newDoc.versionNumber || 1) > 1,
+                        status: 'pending',
+                        fileUrl: newDoc.supabaseFileUrl || newDoc.s3Url || attachment.url || '',
+                        s3Key: newDoc.s3Key || '',
+                        supabaseFileKey: newDoc.supabaseFileKey || '',
+                    });
+                    newApprovalIds.push(newApproval.publicId);
+
+                    if (isIfcFile) {
                         try {
                             await publishIfcConversionJob({
                                 projectId: changeRequest.projectId,
@@ -291,12 +320,19 @@ class CRVersionController {
                 versionId: version.publicId,
                 version,
             });
+            for (const approvalId of newApprovalIds) {
+                socketService.broadcastProject(changeRequest.projectId, 'approval:new', {
+                    projectId: changeRequest.projectId,
+                    approvalId,
+                });
+            }
             if (newDocIds.length > 0) {
                 socketService.broadcastProject(changeRequest.projectId, 'documents:refresh', {
                     projectId: changeRequest.projectId,
                     packageId: null,
                 });
             }
+            await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(201).json({
                 success: true,
@@ -373,6 +409,17 @@ class CRVersionController {
                         { publicId: { $in: docIds } },
                         { $set: { approvalStatus: 'approved', updatedAt: new Date() } }
                     );
+                    for (const docId of docIds) {
+                        const approval = await UploadApprovalRepository.findByDocumentId(docId);
+                        if (approval?.status === 'pending') {
+                            await UploadApprovalRepository.approve(approval.publicId, userId);
+                            socketService.broadcastProject(projectId, 'approval:updated', {
+                                projectId,
+                                approvalId: approval.publicId,
+                                status: 'approved',
+                            });
+                        }
+                    }
                 } catch (docErr) {
                     console.warn('[CRVersionController] Failed to update document approvalStatus:', docErr.message);
                 }
@@ -390,6 +437,7 @@ class CRVersionController {
                     packageId: null,
                 });
             }
+            await publishProjectBlockUpdate({ projectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({
                 success: true,
@@ -427,7 +475,32 @@ class CRVersionController {
                 return errorResponse(res, 400, `Version has already been ${version.status}`);
             }
 
-            await CRVersionRepository.updateStatus(versionId, 'rejected', userId);
+            await CRVersionRepository.updateStatus(versionId, 'rejected', userId, reason || '');
+
+            const docIds = (version?.resultFiles || [])
+                .map(rf => rf.sourceDocumentId)
+                .filter(Boolean);
+            if (docIds.length > 0) {
+                try {
+                    await Document.updateMany(
+                        { publicId: { $in: docIds } },
+                        { $set: { approvalStatus: 'rejected', updatedAt: new Date() } }
+                    );
+                    for (const docId of docIds) {
+                        const approval = await UploadApprovalRepository.findByDocumentId(docId);
+                        if (approval?.status === 'pending') {
+                            await UploadApprovalRepository.reject(approval.publicId, userId, reason || '');
+                            socketService.broadcastProject(projectId, 'approval:updated', {
+                                projectId,
+                                approvalId: approval.publicId,
+                                status: 'rejected',
+                            });
+                        }
+                    }
+                } catch (docErr) {
+                    console.warn('[CRVersionController] Failed to reject version documents:', docErr.message);
+                }
+            }
 
             socketService.broadcastProject(projectId, 'cr:version_updated', {
                 projectId,
@@ -436,6 +509,13 @@ class CRVersionController {
                 status: 'rejected',
                 rejectionReason: reason,
             });
+            if (docIds.length > 0) {
+                socketService.broadcastProject(projectId, 'documents:refresh', {
+                    projectId,
+                    packageId: null,
+                });
+            }
+            await publishProjectBlockUpdate({ projectId, scope: 'versions', blockId: 'summary', userId });
 
             return res.status(200).json({
                 success: true,

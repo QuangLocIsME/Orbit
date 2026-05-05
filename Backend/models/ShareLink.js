@@ -10,7 +10,7 @@ const ShareLinkSchema = new mongoose.Schema({
     shareType: {
         type: String,
         enum: ['project', 'packages', 'team'],
-        default: 'packages',
+        default: 'project',
     },
     allowedRoles: {
         type: [String],

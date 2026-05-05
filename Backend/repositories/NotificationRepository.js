@@ -8,6 +8,21 @@ class NotificationRepository {
         return await notification.save();
     }
 
+    async upsertByRef(userId, refType, refId, data) {
+        return await Notification.findOneAndUpdate(
+            { userId, refType, refId },
+            {
+                ...data,
+                userId,
+                refType,
+                refId,
+                read: false,
+                seen: false,
+            },
+            { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+        );
+    }
+
     async findByUserId(userId, options = {}) {
         const { limit = MAX_NOTIFICATIONS, skip = 0, unreadOnly = false } = options;
         const query = { userId };
@@ -37,16 +52,32 @@ class NotificationRepository {
         );
     }
 
+    async markReadByInviteId(userId, inviteId) {
+        return await Notification.findOneAndUpdate(
+            { userId, 'inviteData.inviteId': inviteId },
+            { read: true, seen: true },
+            { returnDocument: 'after' }
+        );
+    }
+
     async markAllRead(userId) {
         return await Notification.updateMany(
-            { userId, read: false },
-            { read: true }
+            { userId, $or: [{ read: false }, { seen: false }] },
+            { read: true, seen: true }
         );
     }
 
     async markSeen(userId, notificationId) {
         return await Notification.findOneAndUpdate(
             { _id: notificationId, userId },
+            { seen: true },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async markSeenByInviteId(userId, inviteId) {
+        return await Notification.findOneAndUpdate(
+            { userId, 'inviteData.inviteId': inviteId },
             { seen: true },
             { returnDocument: 'after' }
         );

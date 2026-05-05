@@ -4,6 +4,7 @@ const Activity = require('../models/Activity');
 const UploadApproval = require('../models/UploadApproval');
 const UploadApprovalComment = require('../models/UploadApprovalComment');
 const ChangeRequest = require('../models/ChangeRequest');
+const CRVersion = require('../models/CRVersion');
 const CRComment = require('../models/CRComment');
 const Task = require('../models/Task');
 const TaskComment = require('../models/TaskComment');
@@ -166,7 +167,7 @@ async function buildTeamsRosterBlock(projectId) {
 }
 
 async function buildVersionsSummaryBlock(projectId) {
-    const [approvals, changeRequests] = await Promise.all([
+    const [approvals, changeRequests, crVersions] = await Promise.all([
         UploadApproval.find({ projectId })
             .sort({ createdAt: -1 })
             .limit(50)
@@ -175,12 +176,21 @@ async function buildVersionsSummaryBlock(projectId) {
         ChangeRequest.find({ projectId })
             .sort({ createdAt: -1 })
             .limit(50)
-            .select('publicId crId title status priority createdAt updatedAt')
+            .select('publicId crId title status priority description createdBy createdAt updatedAt')
+            .lean(),
+        CRVersion.find({ projectId })
+            .sort({ createdAt: -1 })
+            .limit(50)
             .lean(),
     ]);
+    const crMap = new Map(changeRequests.map((cr) => [cr.publicId, cr]));
 
     return {
         approvals,
+        crVersions: crVersions.map((version) => ({
+            ...version,
+            changeRequest: crMap.get(version.crId) || null,
+        })),
         changeRequests,
     };
 }

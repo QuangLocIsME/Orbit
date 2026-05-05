@@ -30,15 +30,19 @@ class CRVersionRepository {
         );
     }
 
-    async updateStatus(publicId, status, reviewedBy) {
+    async updateStatus(publicId, status, reviewedBy, rejectionReason = '') {
+        const set = {
+            status,
+            reviewedBy,
+            reviewedAt: new Date(),
+        };
+        if (status === 'rejected') set.rejectionReason = rejectionReason;
+        if (status === 'approved') set.rejectionReason = '';
+
         return await CRVersion.findOneAndUpdate(
             { publicId },
             {
-                $set: {
-                    status,
-                    reviewedBy,
-                    reviewedAt: new Date(),
-                },
+                $set: set,
             },
             { returnDocument: 'after' }
         );

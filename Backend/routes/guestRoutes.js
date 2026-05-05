@@ -17,33 +17,64 @@ function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function serializeShareLink(link) {
+    return {
+        projectId: link.projectId,
+        packageIds: Array.isArray(link.packageIds) ? link.packageIds : [],
+        teamIds: Array.isArray(link.teamIds) ? link.teamIds : [],
+        shareType: link.shareType,
+        shareUrl: link.shareUrl,
+        label: link.label,
+        allowedRoles: Array.isArray(link.allowedRoles) ? link.allowedRoles : ['guest'],
+        allowedPages: Array.isArray(link.allowedPages) ? link.allowedPages : ['overview', 'documents'],
+        allowedTeamIds: Array.isArray(link.allowedTeamIds) ? link.allowedTeamIds : [],
+        role: 'guest',
+    };
+}
+
+function hasPackageAccess(link, packageId) {
+    if (!packageId) return true;
+    if (link.shareType !== 'packages') return true;
+    const packageIds = Array.isArray(link.packageIds) ? link.packageIds.map(String) : [];
+    return packageIds.includes(String(packageId));
+}
+
+function hasPageAccess(link, page) {
+    if (!page) return true;
+    const pages = Array.isArray(link.allowedPages) ? link.allowedPages.map(String) : [];
+    return pages.length === 0 || pages.includes(page);
+}
+
+async function resolveGuestLink({ token, projectId, packageId = '', page = '' }) {
+    const rawToken = typeof token === 'string' ? token.trim() : '';
+    if (!rawToken) return { status: 400, body: { success: false, message: 'Missing token' } };
+
+    const tokenHash = hashToken(rawToken);
+    const query = { tokenHash, isActive: true };
+    if (projectId) query.projectId = projectId;
+    const link = await ShareLink.findOne(query);
+
+    if (!link) return { status: 404, body: { success: false, message: 'Share link not found or has been revoked' } };
+    if (new Date() > link.expiresAt) return { status: 410, body: { success: false, message: 'Share link has expired' } };
+    if (!hasPackageAccess(link, packageId)) {
+        return { status: 403, body: { success: false, message: 'You do not have access to this package' } };
+    }
+    if (!hasPageAccess(link, page)) {
+        return { status: 403, body: { success: false, message: `This share link does not allow access to ${page}` } };
+    }
+
+    return { link };
+}
+
 router.get('/share/resolve/:token', async (req, res) => {
     try {
         const { token } = req.params;
-        const rawToken = typeof token === 'string' ? token.trim() : '';
-
-        if (!rawToken) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(rawToken);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true });
-
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
+        const resolved = await resolveGuestLink({ token });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
         return res.status(200).json({
             success: true,
-            data: {
-                projectId: link.projectId,
-                packageIds: link.packageIds,
-                teamIds: link.teamIds,
-                shareType: link.shareType,
-                shareUrl: link.shareUrl,
-                label: link.label,
-                allowedRoles: link.allowedRoles,
-                allowedPages: link.allowedPages,
-                allowedTeamIds: link.allowedTeamIds,
-                role: 'guest',
-            },
+            data: serializeShareLink(resolved.link),
         });
     } catch (error) {
         return res.status(500).json({ success: false, message: 'Failed to resolve share link' });
@@ -55,13 +86,8 @@ router.get('/project/:projectId', async (req, res) => {
         const { token } = req.query;
         const { projectId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
+        const resolved = await resolveGuestLink({ token, projectId });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
         const project = await Project.findOne({ publicId: projectId, trashedAt: null }).lean();
         if (!project) return res.status(404).json({ success: false, message: 'Project not found' });
@@ -85,17 +111,17 @@ router.get('/packages/:projectId', async (req, res) => {
         const { token } = req.query;
         const { projectId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
+        const resolved = await resolveGuestLink({ token, projectId });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
+        const link = resolved.link;
 
         let query = { projectId, trashedAt: null };
-        if (link.shareType === 'packages' && link.packageIds && link.packageIds.length > 0) {
-            query = { projectId, publicId: { $in: link.packageIds }, trashedAt: null };
+        if (link.shareType === 'packages') {
+            query = {
+                projectId,
+                publicId: { $in: Array.isArray(link.packageIds) ? link.packageIds : [] },
+                trashedAt: null,
+            };
         }
 
         const packages = await Package.find(query).select('publicId name status').lean();
@@ -118,19 +144,8 @@ router.get('/package/:projectId/:packageId', async (req, res) => {
         const { token } = req.query;
         const { projectId, packageId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
-
-        if (link.shareType === 'packages' && link.packageIds && link.packageIds.length > 0) {
-            if (!link.packageIds.includes(packageId)) {
-                return res.status(403).json({ success: false, message: 'You do not have access to this package' });
-            }
-        }
+        const resolved = await resolveGuestLink({ token, projectId, packageId });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
         const pkg = await Package.findOne({ publicId: packageId, projectId, trashedAt: null }).lean();
         if (!pkg) return res.status(404).json({ success: false, message: 'Package not found' });
@@ -155,16 +170,23 @@ router.get('/tasks/:projectId', async (req, res) => {
     try {
         const { token, packageId } = req.query;
         const { projectId } = req.params;
+        const requestedPackageId = typeof packageId === 'string' ? packageId.trim() : '';
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
+        const resolved = await resolveGuestLink({
+            token,
+            projectId,
+            packageId: requestedPackageId,
+            page: 'tasks',
+        });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
+        const link = resolved.link;
 
         const query = { projectId, trashedAt: null };
+        if (requestedPackageId) {
+            query.packageId = requestedPackageId;
+        } else if (link.shareType === 'packages') {
+            query.packageId = { $in: Array.isArray(link.packageIds) ? link.packageIds : [] };
+        }
 
         const tasks = await Task.find(query).sort({ createdAt: -1 }).lean();
 
@@ -180,12 +202,8 @@ router.get('/workflow/:projectId', async (req, res) => {
         const { token } = req.query;
         const { projectId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
+        const resolved = await resolveGuestLink({ token, projectId });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
         const project = await Project.findOne({ publicId: projectId, trashedAt: null })
             .select('workflow workflowTemplateId').lean();
@@ -221,15 +239,12 @@ router.get('/members/:projectId', async (req, res) => {
         const { token, packageId } = req.query;
         const { projectId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
+        const requestedPackageId = typeof packageId === 'string' ? packageId.trim() : '';
+        const resolved = await resolveGuestLink({ token, projectId, packageId: requestedPackageId });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
-
-        const pkg = packageId
-            ? await Package.findOne({ publicId: packageId, projectId, trashedAt: null }).lean()
+        const pkg = requestedPackageId
+            ? await Package.findOne({ publicId: requestedPackageId, projectId, trashedAt: null }).lean()
             : null;
 
         const packageMemberIds = new Set([
@@ -256,7 +271,7 @@ router.get('/members/:projectId', async (req, res) => {
                 const user = usersMap[userIdStr] || null;
                 const name = user?.fullName || user?.name || user?.email || 'Unknown';
                 const colors = ['#FF2056', '#615FFF', '#00B8DB', '#7CCF00', '#FF9F43', '#EE5A24'];
-                if (packageId && !packageMemberIds.has(userIdStr)) return null;
+                if (requestedPackageId && !packageMemberIds.has(userIdStr)) return null;
                 return {
                     id: userIdStr,
                     name,
@@ -282,18 +297,8 @@ router.get('/package-full/:projectId/:packageId', async (req, res) => {
         const { token } = req.query;
         const { projectId, packageId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
-
-        if (link.shareType === 'packages' && link.packageIds && link.packageIds.length > 0) {
-            if (!link.packageIds.includes(packageId)) {
-                return res.status(403).json({ success: false, message: 'You do not have access to this package' });
-            }
-        }
+        const resolved = await resolveGuestLink({ token, projectId, packageId });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
         const pkg = await Package.findOne({ publicId: packageId, projectId, trashedAt: null }).lean();
         if (!pkg) return res.status(404).json({ success: false, message: 'Package not found' });
@@ -458,18 +463,8 @@ router.get('/documents/:projectId/:packageId', async (req, res) => {
         const { token } = req.query;
         const { projectId, packageId } = req.params;
 
-        if (!token) return res.status(400).json({ success: false, message: 'Missing token' });
-
-        const tokenHash = hashToken(token);
-        const link = await ShareLink.findOne({ tokenHash, isActive: true, projectId });
-        if (!link) return res.status(404).json({ success: false, message: 'Share link not found or has been revoked' });
-        if (new Date() > link.expiresAt) return res.status(410).json({ success: false, message: 'Share link has expired' });
-
-        if (link.shareType === 'packages' && link.packageIds && link.packageIds.length > 0) {
-            if (!link.packageIds.includes(packageId)) {
-                return res.status(403).json({ success: false, message: 'You do not have access to this package' });
-            }
-        }
+        const resolved = await resolveGuestLink({ token, projectId, packageId, page: 'documents' });
+        if (!resolved.link) return res.status(resolved.status).json(resolved.body);
 
         const [docs, folders] = await Promise.all([
             DocumentRepository.listByProjectAndPackage(projectId, packageId),

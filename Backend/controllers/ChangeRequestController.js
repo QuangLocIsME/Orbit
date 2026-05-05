@@ -583,7 +583,7 @@ class ChangeRequestController {
             // Auto-create version snapshot when CR is marked completed
             if (normalizedStatus === 'completed') {
                 try {
-                    await CRVersionRepository.create({
+                    const version = await CRVersionRepository.create({
                         crId: normalizedCrId,
                         projectId: changeRequest.projectId,
                         versionLabel: `${changeRequest.crId} v1`,
@@ -602,6 +602,12 @@ class ChangeRequestController {
                         },
                         resultFiles: [],
                     });
+                    socketService.broadcastProject(changeRequest.projectId, 'cr:version_created', {
+                        projectId: changeRequest.projectId,
+                        crId: normalizedCrId,
+                        versionId: version.publicId,
+                        version,
+                    });
                 } catch (versionErr) {
                     console.warn('[ChangeRequestController] Auto-version creation failed:', versionErr.message);
                 }
@@ -616,6 +622,9 @@ class ChangeRequestController {
             });
             await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'changes', blockId: 'list', userId });
             await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'tasks', blockId: 'list', userId });
+            if (normalizedStatus === 'completed') {
+                await publishProjectBlockUpdate({ projectId: changeRequest.projectId, scope: 'versions', blockId: 'summary', userId });
+            }
 
             const crLink = `/projects/${changeRequest.projectId}/change-requests/${updated.publicId}`;
             const actorName = await resolveUserDisplayName(userId, 'Unknown');

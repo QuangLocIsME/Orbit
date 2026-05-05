@@ -6,6 +6,18 @@ class ProjectInviteRepository {
         return await newInvite.save();
     }
 
+    async reissueInvite(inviteId, patch) {
+        return await ProjectInvite.findByIdAndUpdate(
+            inviteId,
+            {
+                ...patch,
+                status: 'pending',
+                acceptedAt: null,
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
     async findByTokenHash(tokenHash) {
         return await ProjectInvite.findOne({ tokenHash });
     }

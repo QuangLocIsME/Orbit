@@ -10,7 +10,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { getSocket, type Notification, type InviteNotification } from '@/lib/socket';
-import { isAuthenticated } from '@/lib/auth';
+import { getCurrentUser, isAuthenticated } from '@/lib/auth';
 import { toast } from 'sonner';
 import { useAppStore } from '@/stores/appStore';
 import { apiFetch } from '@/lib/api-client';
@@ -18,6 +18,11 @@ import { apiFetch } from '@/lib/api-client';
 const STORAGE_KEY = 'orbit_notifications';
 const MAX_NOTIFICATIONS = 50;
 const SOUND_ENABLED_KEY = 'orbit_notification_sound_enabled';
+
+interface StoredNotificationsPayload {
+    userId: string;
+    notifications: Notification[];
+}
 
 // Shared Audio instance (singleton) — created lazily on first play
 let notificationAudio: HTMLAudioElement | null = null;
@@ -82,18 +87,50 @@ interface ApiNotification {
     createdAt: string;
 }
 
-function loadFromStorage(): Notification[] {
+function getStoredUserId(): string {
+    const user = getCurrentUser();
+    return user?.id || user?.publicId || '';
+}
+
+function withUserId(n: Notification, userId: string): Notification {
+    return userId ? { ...n, userId: n.userId || userId } : n;
+}
+
+function dedupeNotifications(notifications: Notification[]): Notification[] {
+    const seen = new Set<string>();
+    const out: Notification[] = [];
+    for (const item of notifications) {
+        if (!item?.id || seen.has(item.id)) continue;
+        seen.add(item.id);
+        out.push(item);
+    }
+    return out;
+}
+
+function loadFromStorage(userId: string): Notification[] {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? (JSON.parse(raw) as Notification[]) : [];
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as Notification[] | StoredNotificationsPayload;
+        if (Array.isArray(parsed)) return parsed.map((n) => withUserId(n, userId));
+        if (parsed?.userId !== userId) return [];
+        return Array.isArray(parsed.notifications)
+            ? parsed.notifications.map((n) => withUserId(n, userId))
+            : [];
     } catch {
         return [];
     }
 }
 
-function saveToStorage(notifications: Notification[]) {
+function saveToStorage(notifications: Notification[], userId: string) {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
+        const payload: StoredNotificationsPayload = {
+            userId,
+            notifications: dedupeNotifications(
+                notifications.map((n) => withUserId(n, userId))
+            ).slice(0, MAX_NOTIFICATIONS),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch { /* quota exceeded — ignore */ }
 }
 
@@ -101,6 +138,7 @@ function mapApiToNotification(api: ApiNotification): Notification {
     if (api.refType === 'invite' && api.inviteData) {
         return {
             id: `invite:${api.inviteData.inviteId}`,
+            userId: api.userId,
             type: api.type as Notification['type'],
             title: api.title,
             message: api.message,
@@ -113,6 +151,7 @@ function mapApiToNotification(api: ApiNotification): Notification {
     }
     return {
         id: api._id,
+        userId: api.userId,
         type: api.type as Notification['type'],
         title: api.title,
         message: api.message,
@@ -140,9 +179,11 @@ export interface UseNotificationsReturn {
 }
 
 export function useNotifications(): UseNotificationsReturn {
+    const authUser = useAppStore((s) => s.auth);
+    const currentUserId = authUser?.id || authUser?.publicId || getStoredUserId();
     const [notifications, setNotifications] = useState<Notification[]>(() => {
         if (typeof window === 'undefined') return [];
-        return loadFromStorage();
+        return loadFromStorage(getStoredUserId());
     });
     const [unseenCount, setUnseenCount] = useState(0);
     const [isLoading, setIsLoading] = useState(false);
@@ -164,45 +205,36 @@ export function useNotifications(): UseNotificationsReturn {
             .then((data) => {
                 if (data.success && data.data?.notifications) {
                     const apiNotifications = data.data.notifications as ApiNotification[];
-                    const mapped = apiNotifications.map(mapApiToNotification);
+                    const mapped = dedupeNotifications(
+                        apiNotifications.map(mapApiToNotification).map((n) => withUserId(n, currentUserId))
+                    );
                     const apiUnseenCount = data.data.unseenCount ?? mapped.filter((n) => !n.seen).length;
                     setUnseenCount(apiUnseenCount);
-                    // Merge: prefer API data, keep local realtime ones that aren't in API
-                    setNotifications((prev) => {
-                        const apiIds = new Set(mapped.map((n) => n.id));
-                        const localOnly = prev.filter((n) => !apiIds.has(n.id));
-                        // Deduplicate API results by id, keeping first occurrence
-                        const seenIds = new Set<string>();
-                        const dedupedMapped = mapped.filter((n) => {
-                            if (seenIds.has(n.id)) return false;
-                            seenIds.add(n.id);
-                            return true;
-                        });
-                        const merged = [...dedupedMapped, ...localOnly].slice(0, MAX_NOTIFICATIONS);
-                        saveToStorage(merged);
-                        return merged;
-                    });
+                    // DB is the source of truth; localStorage is only an offline cache.
+                    const next = mapped.slice(0, MAX_NOTIFICATIONS);
+                    setNotifications(next);
+                    saveToStorage(next, currentUserId);
                 }
             })
             .catch(() => {
                 // Fallback to localStorage if API fails
-                const stored = loadFromStorage();
+                const stored = loadFromStorage(currentUserId);
                 if (stored.length > 0) {
                     setNotifications(stored);
                 }
             })
             .finally(() => setIsLoading(false));
-    }, []);
+    }, [currentUserId]);
 
     const push = useCallback((n: Notification) => {
         setNotifications((prev) => {
             if (prev.some((x) => x.id === n.id)) return prev;
-            const next = [{ ...n, seen: false }, ...prev].slice(0, MAX_NOTIFICATIONS);
-            saveToStorage(next);
+            const next = [withUserId({ ...n, seen: false }, currentUserId), ...prev].slice(0, MAX_NOTIFICATIONS);
+            saveToStorage(next, currentUserId);
             setUnseenCount((c) => c + 1);
             return next;
         });
-    }, []);
+    }, [currentUserId]);
 
     const resolveProjectName = useCallback((data: InviteNotification) => {
         const resolvedName = data.projectName && data.projectName !== 'a project'
@@ -226,6 +258,7 @@ export function useNotifications(): UseNotificationsReturn {
             };
             const n: Notification = {
                 id,
+                userId: currentUserId,
                 type: 'info',
                 title: `${data.inviterName} invited you`,
                 message: `Join "${resolvedProjectName}" as ${data.role}`,
@@ -236,11 +269,11 @@ export function useNotifications(): UseNotificationsReturn {
                 seen: false,
             };
             const next = [n, ...prev].slice(0, MAX_NOTIFICATIONS);
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             setUnseenCount((c) => c + 1);
             return next;
         });
-    }, [resolveProjectName]);
+    }, [currentUserId, resolveProjectName]);
 
     // WebSocket realtime handlers
     useEffect(() => {
@@ -267,7 +300,7 @@ export function useNotifications(): UseNotificationsReturn {
                     inviteData: updatedInvite,
                 };
             });
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             return next;
         });
 
@@ -322,47 +355,45 @@ export function useNotifications(): UseNotificationsReturn {
             socket.off('notification:new', handler);
             socket.off('invite:new', inviteHandler);
         };
-    }, [push, handleInviteNew, resolveProjectName]);
+    }, [currentUserId, handleInviteNew, projects, push, resolveProjectName, soundEnabled]);
 
     const markRead = useCallback((id: string) => {
         // Optimistic update — clicking also marks as seen
         setNotifications((prev) => {
             const next = prev.map((n) => (n.id === id ? { ...n, read: true, seen: true } : n));
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             return next;
         });
         setUnseenCount((c) => Math.max(0, c - 1));
         // Sync with backend
-        const dbId = id.startsWith('invite:') ? id.replace('invite:', '') : id;
-        apiFetch(`/api/notifications/${dbId}/read`, { method: 'PATCH' }).catch(() => {
+        apiFetch(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'PATCH' }).catch(() => {
             // Revert on failure
             setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: false, seen: false } : n)));
             setUnseenCount((c) => c + 1);
         });
-    }, []);
+    }, [currentUserId]);
 
     const markSeen = useCallback((id: string) => {
         // Mark as seen (opened dropdown) without marking as read
         setNotifications((prev) => {
             const next = prev.map((n) => (n.id === id ? { ...n, seen: true } : n));
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             return next;
         });
         setUnseenCount((c) => Math.max(0, c - 1));
         // Sync with backend
-        const dbId = id.startsWith('invite:') ? id.replace('invite:', '') : id;
-        apiFetch(`/api/notifications/${dbId}/seen`, { method: 'PATCH' }).catch(() => {
+        apiFetch(`/api/notifications/${encodeURIComponent(id)}/seen`, { method: 'PATCH' }).catch(() => {
             // Revert on failure
             setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, seen: false } : n)));
             setUnseenCount((c) => c + 1);
         });
-    }, []);
+    }, [currentUserId]);
 
     const markAllRead = useCallback(() => {
         // Optimistic update
         setNotifications((prev) => {
             const next = prev.map((n) => ({ ...n, read: true, seen: true }));
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             return next;
         });
         setUnseenCount(0);
@@ -371,17 +402,17 @@ export function useNotifications(): UseNotificationsReturn {
             // Revert on failure
             setNotifications((prev) => {
                 const next = prev.map((n) => ({ ...n, read: false, seen: false }));
-                saveToStorage(next);
+                saveToStorage(next, currentUserId);
                 return next;
             });
         });
-    }, []);
+    }, [currentUserId]);
 
     const markAllSeen = useCallback(() => {
         // Optimistic update — mark all as seen but keep unread
         setNotifications((prev) => {
             const next = prev.map((n) => ({ ...n, seen: true }));
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             return next;
         });
         setUnseenCount(0);
@@ -392,18 +423,20 @@ export function useNotifications(): UseNotificationsReturn {
                 .then((res) => res.json())
                 .then((data) => {
                     if (data.success && data.data?.notifications) {
-                        const mapped = (data.data.notifications as ApiNotification[]).map(mapApiToNotification);
+                        const mapped = dedupeNotifications(
+                            (data.data.notifications as ApiNotification[]).map(mapApiToNotification).map((n) => withUserId(n, currentUserId))
+                        );
                         setNotifications(mapped);
-                        saveToStorage(mapped);
+                        saveToStorage(mapped, currentUserId);
                     }
                 });
         });
-    }, []);
+    }, [currentUserId]);
 
     const clearAll = useCallback(() => {
         // Optimistic update
         setNotifications([]);
-        saveToStorage([]);
+        saveToStorage([], currentUserId);
         // Sync with backend
         apiFetch('/api/notifications/clear', { method: 'DELETE' }).catch(() => {
             // Revert on failure — reload from API
@@ -411,19 +444,21 @@ export function useNotifications(): UseNotificationsReturn {
                 .then((res) => res.json())
                 .then((data) => {
                     if (data.success && data.data?.notifications) {
-                        const mapped = (data.data.notifications as ApiNotification[]).map(mapApiToNotification);
+                        const mapped = dedupeNotifications(
+                            (data.data.notifications as ApiNotification[]).map(mapApiToNotification).map((n) => withUserId(n, currentUserId))
+                        );
                         setNotifications(mapped);
-                        saveToStorage(mapped);
+                        saveToStorage(mapped, currentUserId);
                     }
                 });
         });
-    }, []);
+    }, [currentUserId]);
 
     const deleteNotification = useCallback((id: string) => {
         // Optimistic update
         setNotifications((prev) => {
             const next = prev.filter((n) => n.id !== id);
-            saveToStorage(next);
+            saveToStorage(next, currentUserId);
             return next;
         });
         // Sync with backend — keep the full id including 'invite:' prefix
@@ -433,13 +468,15 @@ export function useNotifications(): UseNotificationsReturn {
                 .then((res) => res.json())
                 .then((data) => {
                     if (data.success && data.data?.notifications) {
-                        const mapped = (data.data.notifications as ApiNotification[]).map(mapApiToNotification);
+                        const mapped = dedupeNotifications(
+                            (data.data.notifications as ApiNotification[]).map(mapApiToNotification).map((n) => withUserId(n, currentUserId))
+                        );
                         setNotifications(mapped);
-                        saveToStorage(mapped);
+                        saveToStorage(mapped, currentUserId);
                     }
                 });
         });
-    }, []);
+    }, [currentUserId]);
 
     const unreadCount = notifications.filter((n) => !n.read).length;
     const inviteUnreadCount = notifications.filter((n) => n.id.startsWith('invite:') && !n.read).length;

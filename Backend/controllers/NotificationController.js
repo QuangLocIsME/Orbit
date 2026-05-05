@@ -38,7 +38,9 @@ class NotificationController {
                 return errorResponse(res, 400, 'Missing notificationId');
             }
 
-            const notification = await NotificationRepository.markRead(userId, notificationId);
+            const notification = notificationId.startsWith('invite:')
+                ? await NotificationRepository.markReadByInviteId(userId, notificationId.replace('invite:', ''))
+                : await NotificationRepository.markRead(userId, notificationId);
             if (!notification) {
                 return errorResponse(res, 404, 'Notification not found');
             }
@@ -77,7 +79,9 @@ class NotificationController {
                 return errorResponse(res, 400, 'Missing notificationId');
             }
 
-            const notification = await NotificationRepository.markSeen(userId, notificationId);
+            const notification = notificationId.startsWith('invite:')
+                ? await NotificationRepository.markSeenByInviteId(userId, notificationId.replace('invite:', ''))
+                : await NotificationRepository.markSeen(userId, notificationId);
             if (!notification) {
                 return errorResponse(res, 404, 'Notification not found');
             }

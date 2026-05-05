@@ -9,7 +9,7 @@ const ChangeRequestRepository = require('../repositories/ChangeRequestRepository
 const ActivityService = require('../services/activityService');
 const DiscordService = require('../services/discordService');
 const socketService = require('../services/socketService');
-const { publishProjectBlockRefresh, publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
+const { publishProjectBlockRefresh, publishProjectBlockUpdate, publishScopedProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { normalizeString } = require('../utils/sanitize');
 const { resolveUserDisplayName } = require('../utils/userDisplayName');
 const { errorResponse } = require('../utils/response');
@@ -30,6 +30,21 @@ const sendDiscordNotification = async (projectId, userId, type, targetName, meta
             metadata,
         });
     } catch { /* silent */ }
+};
+
+const getPackageTaskCacheKey = (projectId, packageId) => `${projectId}:package:${packageId}`;
+
+const publishTaskListUpdate = async ({ projectId, packageId = null, userId = '' }) => {
+    await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
+    if (!packageId) return;
+    await publishScopedProjectBlockUpdate({
+        projectId,
+        cacheKey: getPackageTaskCacheKey(projectId, packageId),
+        scope: 'tasks',
+        blockId: 'list',
+        userId,
+        packageId,
+    });
 };
 
 const badRequest = (res, message) => errorResponse(res, 400, message);
@@ -217,7 +232,7 @@ class TaskController {
                 packageId: packageId || null,
                 taskId: task.publicId,
             });
-            await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId, packageId, userId });
 
             const taskLink = getTaskLink(projectId, packageId, task.publicId);
 
@@ -566,7 +581,7 @@ class TaskController {
                         taskId,
                         status: 'pending-review',
                     });
-                    await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
+                    await publishTaskListUpdate({ projectId, packageId, userId });
 
                     return res.status(200).json({
                         success: true,
@@ -591,7 +606,7 @@ class TaskController {
                 taskId,
                 status,
             });
-            await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId, packageId, userId });
             console.debug('[WS] Emitted task:status-changed', { projectId, packageId, taskId, status });
 
             // Also broadcast to package room for real-time stat updates
@@ -769,7 +784,7 @@ class TaskController {
                 scope: 'tasks',
                 blockId: `comments:task:${taskId}`,
             });
-            await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId, packageId: task.packageId || null, userId });
 
             // Notify all assignees and reviewers when someone comments on their task
             const author = await User.findById(userId).select('_id fullName email avatar').lean();
@@ -865,7 +880,7 @@ class TaskController {
                 scope: 'tasks',
                 blockId: `comments:task:${comment.taskId}`,
             });
-            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId: comment.projectId, packageId: comment.packageId || null, userId });
 
             return res.status(200).json({
                 success: true,
@@ -915,7 +930,7 @@ class TaskController {
                 scope: 'tasks',
                 blockId: `comments:task:${comment.taskId}`,
             });
-            await publishProjectBlockUpdate({ projectId: comment.projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId: comment.projectId, packageId: comment.packageId || null, userId });
 
             return res.status(200).json({
                 success: true,
@@ -984,7 +999,7 @@ class TaskController {
                 taskId: task.publicId,
                 changes: updatedChanges,
             });
-            await publishProjectBlockUpdate({ projectId: task.projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId: task.projectId, packageId: task.packageId || null, userId });
 
             const newAssigneeIds = task.assigneeIds || [];
             const newReviewerIds = task.reviewerIds || [];
@@ -1133,7 +1148,7 @@ class TaskController {
                 packageId: deletedPackageId || null,
                 taskId,
             });
-            await publishProjectBlockUpdate({ projectId: deletedProjectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId: deletedProjectId, packageId: deletedPackageId || null, userId });
 
             return res.status(200).json({ success: true, message: 'Task deleted' });
         } catch {
@@ -1249,7 +1264,7 @@ class TaskController {
                 taskId,
                 status: newStatus,
             });
-            await publishProjectBlockUpdate({ projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId, packageId: task.packageId || null, userId });
 
             if (task.packageId) {
                 socketService.broadcastPackage(task.packageId, 'package:task-count-changed', {
@@ -1332,7 +1347,7 @@ class TaskController {
                     attachments: task.attachments,
                 },
             });
-            await publishProjectBlockUpdate({ projectId: task.projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId: task.projectId, packageId: task.packageId || null, userId });
 
             if (task.packageId) {
                 socketService.broadcastPackage(task.packageId, 'task:updated', {
@@ -1386,7 +1401,7 @@ class TaskController {
                     attachments: task.attachments,
                 },
             });
-            await publishProjectBlockUpdate({ projectId: task.projectId, scope: 'tasks', blockId: 'list', userId });
+            await publishTaskListUpdate({ projectId: task.projectId, packageId: task.packageId || null, userId });
 
             if (task.packageId) {
                 socketService.broadcastPackage(task.packageId, 'task:updated', {

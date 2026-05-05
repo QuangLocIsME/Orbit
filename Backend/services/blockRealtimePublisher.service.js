@@ -44,6 +44,7 @@ async function publishScopedProjectBlockUpdate({ projectId, cacheKey, scope, blo
         data: {
             ...snapshot,
             cacheKey,
+            packageId,
         },
     });
 }

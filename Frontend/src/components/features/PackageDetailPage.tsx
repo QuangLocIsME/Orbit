@@ -178,7 +178,7 @@ export default function PackageDetailPage({ projectPublicId, packageId, isGuest,
           // Fetch tasks via guest API for overview stats
           try {
             const tasksRes = await fetch(
-              `/api/guest/tasks/${encodeURIComponent(found.projectId)}?token=${encodeURIComponent(guestToken)}`
+              `/api/guest/tasks/${encodeURIComponent(found.projectId)}?token=${encodeURIComponent(guestToken)}&packageId=${encodeURIComponent(packageId)}`
             );
             if (tasksRes.ok) {
               const payload = await tasksRes.json();
@@ -265,7 +265,8 @@ export default function PackageDetailPage({ projectPublicId, packageId, isGuest,
           setTeamMembers([]);
         }
 
-        const stages = Array.isArray(workflowRes?.data?.stages) ? workflowRes.data.stages : [];
+        const workflowPayload = workflowRes.ok ? await workflowRes.json().catch(() => null) : null;
+        const stages = Array.isArray(workflowPayload?.data?.stages) ? workflowPayload.data.stages : [];
         setWorkflowStages(stages);
         const lastStageId = stages.length > 0 ? stages[stages.length - 1].id : '';
 
@@ -316,7 +317,7 @@ export default function PackageDetailPage({ projectPublicId, packageId, isGuest,
         if (isGuest && guestToken) {
           try {
             const tasksRes = await fetch(
-              `/api/guest/tasks/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}`
+              `/api/guest/tasks/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}&packageId=${encodeURIComponent(packageId)}`
             );
             if (tasksRes.ok) {
               const payload = await tasksRes.json();

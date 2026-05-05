@@ -60,17 +60,14 @@ export default function GuestScopedTasksPanel({ projectId, packageId, guestToken
             setError(null);
             try {
                 const res = await fetch(
-                    `/api/guest/tasks/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}`
+                    `/api/guest/tasks/${encodeURIComponent(projectId)}?token=${encodeURIComponent(guestToken)}&packageId=${encodeURIComponent(packageId)}`
                 );
                 if (!res.ok) throw new Error('Failed to load tasks');
                 const payload = await res.json();
                 if (!payload.success) throw new Error(payload.message || 'Failed');
 
                 const allTasks: TaskItem[] = (payload.data || [])
-                    .filter((t: any) => {
-                        if (!packageId) return true;
-                        return String(t.packageId) === packageId || !t.packageId;
-                    })
+                    .filter((t: any) => !packageId || String(t.packageId) === packageId)
                     .map((t: any) => ({
                         id: String(t.publicId || t.id || ''),
                         title: String(t.title || 'Untitled task'),

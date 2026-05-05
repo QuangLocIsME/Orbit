@@ -255,7 +255,9 @@ export default function GuestShareView({ token: initialToken }: GuestShareViewPr
 
     const isPackagesShare = resolvedShare.shareType === 'packages' && resolvedShare.packageIds.length > 0;
     const shareablePackageIds = new Set(resolvedShare.packageIds);
-    const visiblePackages = packages.filter(p => shareablePackageIds.has(p.publicId));
+    const visiblePackages = isPackagesShare
+        ? packages.filter(p => shareablePackageIds.has(p.publicId))
+        : packages;
 
     const getStatusClass = (status: string) => {
         const s = String(status || '').toLowerCase();
@@ -337,10 +339,12 @@ export default function GuestShareView({ token: initialToken }: GuestShareViewPr
                     <div className="flex-1 min-w-0">
 
                         {/* ── Packages Grid (similar to project detail) ── */}
-                        {isPackagesShare && visiblePackages.length > 0 && (
+                        {visiblePackages.length > 0 && (
                             <div className="space-y-3">
                                 <div className="flex items-center justify-between">
-                                    <h2 className="text-base font-semibold text-gray-900">Packages</h2>
+                                    <h2 className="text-base font-semibold text-gray-900">
+                                        {isPackagesShare ? 'Shared Packages' : 'Project Packages'}
+                                    </h2>
                                     <span className="text-xs text-gray-400">Click a package to view details</span>
                                 </div>
 
@@ -407,7 +411,7 @@ export default function GuestShareView({ token: initialToken }: GuestShareViewPr
                         )}
 
                         {/* Non-package share: show pages */}
-                        {!isPackagesShare && (
+                        {visiblePackages.length === 0 && (
                             <div className="bg-white rounded-xl border border-gray-200 p-6">
                                 <h2 className="text-base font-semibold text-gray-900 mb-4">Shared Content</h2>
                                 <p className="text-sm text-gray-500">

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { useNotifications } from '@/hooks/useNotifications';
+import { openNotificationTarget } from '@/lib/notification-actions';
 
 interface NotificationBellProps {
   className?: string;
@@ -11,12 +12,16 @@ interface NotificationBellProps {
 export default function NotificationBell({ className = '' }: NotificationBellProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const { unseenCount, markAllSeen, notifications, markRead, markAllRead } = useNotifications();
 
   useEffect(() => {
     if (!showDropdown) return;
     const handleClick = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const insideButton = dropdownRef.current?.contains(target);
+      const insidePanel = panelRef.current?.contains(target);
+      if (!insideButton && !insidePanel) {
         setShowDropdown(false);
       }
     };
@@ -32,14 +37,7 @@ export default function NotificationBell({ className = '' }: NotificationBellPro
   const handleNotificationClick = (n: typeof notifications[0]) => {
     markRead(n.id);
     setShowDropdown(false);
-    if (n.link) {
-      const match = n.link.match(/\/projects\/([^/]+)/);
-      if (match) {
-        window.location.href = `/projects/${match[1]}?tab=tasks`;
-      } else {
-        window.location.href = n.link;
-      }
-    }
+    openNotificationTarget(n);
   };
 
   return (
@@ -66,6 +64,7 @@ export default function NotificationBell({ className = '' }: NotificationBellPro
 
       {showDropdown && ReactDOM.createPortal((
         <div
+          ref={panelRef}
           className="fixed right-4 top-[88px] w-80 rounded-xl border border-border bg-card shadow-xl z-[99999]"
         >
           <div className="flex items-center justify-between border-b border-border px-4 py-3">

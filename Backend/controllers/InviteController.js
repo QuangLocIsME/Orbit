@@ -12,6 +12,8 @@ const { errorResponse } = require('../utils/response');
 
 const INVITE_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
 
+const normalizeString = (value) => (typeof value === 'string' ? value.trim() : '');
+
 const hashToken = (token) =>
     crypto.createHash('sha256').update(token).digest('hex');
 
@@ -44,24 +46,27 @@ class InviteController {
                 return errorResponse(res, 403, 'Only admins and project owners can invite members');
             }
 
-            // Check for duplicate pending invite
-            const existing = await ProjectInviteRepository.findPendingByEmailAndProject(normalizedEmail, normalizedProjectId);
-            if (existing) {
-                return errorResponse(res, 409, 'A pending invite already exists for this email in this project');
-            }
-
             const token = crypto.randomBytes(32).toString('hex');
             const tokenHash = hashToken(token);
+            const expiresAt = new Date(Date.now() + INVITE_EXPIRES_MS);
 
-            const invite = await ProjectInviteRepository.createInvite({
-                projectId: normalizedProjectId,
-                email: normalizedEmail,
-                role: normalizedRole || 'member',
-                tokenHash,
-                status: 'pending',
-                invitedBy: callerId,
-                expiresAt: new Date(Date.now() + INVITE_EXPIRES_MS),
-            });
+            const existing = await ProjectInviteRepository.findPendingByEmailAndProject(normalizedEmail, normalizedProjectId);
+            const invite = existing
+                ? await ProjectInviteRepository.reissueInvite(existing._id, {
+                    role: normalizedRole || existing.role || 'member',
+                    tokenHash,
+                    invitedBy: callerId,
+                    expiresAt,
+                })
+                : await ProjectInviteRepository.createInvite({
+                    projectId: normalizedProjectId,
+                    email: normalizedEmail,
+                    role: normalizedRole || 'member',
+                    tokenHash,
+                    status: 'pending',
+                    invitedBy: callerId,
+                    expiresAt,
+                });
 
             // Look up invitee's userId for real-time notification
             const inviteeProfile = await UserRepository.findByEmail(normalizedEmail);
@@ -85,18 +90,16 @@ class InviteController {
                     role: invite.role,
                     inviterName,
                     acceptUrl,
+                    createdAt: new Date().toISOString(),
                 };
 
                 // Always save to DB first (so it's available when user comes online)
-                await NotificationRepository.create({
-                    userId: String(inviteeProfile._id),
+                await NotificationRepository.upsertByRef(String(inviteeProfile._id), 'invite', String(invite._id), {
                     type: 'info',
                     title: `${inviterName} invited you`,
                     message: `Join "${project?.name || 'a project'}" as ${invite.role}`,
                     link: acceptUrl,
-                    read: false,
-                    refType: 'invite',
-                    refId: String(invite._id),
+                    createdAt: new Date(),
                     inviteData: notificationData,
                 });
 
@@ -115,7 +118,7 @@ class InviteController {
                 scope: 'teams',
                 blockId: 'roster',
                 userId: callerId,
-            });
+            }).catch((err) => console.warn('[Invite] Team roster refresh failed:', err?.message || err));
 
             // Send invite email (fire-and-forget — don't block the response)
             const inviterProfile = await UserRepository.getProfileById(callerId);
@@ -137,9 +140,11 @@ class InviteController {
                     token,
                     expiresAt: invite.expiresAt,
                     acceptUrl,
+                    reissued: Boolean(existing),
                 },
             });
         } catch (error) {
+            console.error('[Invite] createInvite failed:', error?.message || error);
             return errorResponse(res, 400, 'Create invite failed');
         }
     }

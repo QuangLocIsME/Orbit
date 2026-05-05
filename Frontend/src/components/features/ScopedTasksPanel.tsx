@@ -272,8 +272,10 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     })));
   }, [teamMembers]);
 
-  const loadTasks = useCallback(async () => {
-    setIsTasksLoading(true);
+  const loadTasks = useCallback(async (options: { showLoading?: boolean; clearOnError?: boolean } = {}) => {
+    const showLoading = options.showLoading !== false;
+    const clearOnError = options.clearOnError !== false;
+    if (showLoading) setIsTasksLoading(true);
     try {
       const response = await apiFetch('/api/tasks/list', {
         method: 'POST',
@@ -282,12 +284,12 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       });
 
       if (response.status === 404) {
-        setTasksData([]);
+        if (clearOnError) setTasksData([]);
         return;
       }
 
       if (!response.ok) {
-        setTasksData([]);
+        if (clearOnError) setTasksData([]);
         return;
       }
 
@@ -355,15 +357,17 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       setTasksData(mapped);
       setProjectTabCache(cacheProjectId, 'tasks', { tasksData: mapped });
     } catch {
-      setTasksData([]);
+      if (clearOnError) setTasksData([]);
     } finally {
-      setIsTasksLoading(false);
+      if (showLoading) setIsTasksLoading(false);
     }
   }, [cacheProjectId, scope.packageId, scope.type, scopeRequestBody]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchProjectBlock<TasksListBlock>(scope.projectId, 'tasks', taskBlockId, {
+    fetchProjectBlock<TasksListBlock>(cacheProjectId, 'tasks', taskBlockId, {
+      projectId: scope.projectId,
+      cacheKey: cacheProjectId,
       packageId: scope.packageId || null,
     }).then((block) => {
       if (cancelled || !block?.items) return;
@@ -375,7 +379,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     if (cached?.data?.tasksData) {
       setTasksData(cached.data.tasksData);
       setIsTasksLoading(false);
-      loadTasks().catch(() => {});
+      loadTasks({ showLoading: false, clearOnError: false }).catch(() => {});
       return () => {
         cancelled = true;
       };
@@ -388,11 +392,11 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   }, [cacheProjectId, loadTasks]);
 
   useEffect(() => {
-    return onProjectBlockUpdated<TasksListBlock>(scope.projectId, 'tasks', taskBlockId, ({ data }) => {
+    return onProjectBlockUpdated<TasksListBlock>(cacheProjectId, 'tasks', taskBlockId, ({ data }) => {
       setTasksData(data?.items || []);
       setIsTasksLoading(false);
     });
-  }, [scope.projectId]);
+  }, [cacheProjectId]);
 
   // WebSocket realtime — refresh task board when task events occur
   useEffect(() => {
@@ -400,71 +404,80 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
     socket.emit('project:join', { projectId: scope.projectId });
     console.debug('[WS] ScopedTasksPanel: Registering listeners for project:', scope.projectId);
 
-    const handleTaskStatusChanged = ({ projectId, taskId, status }: { projectId: string; taskId: string; status: string }) => {
-      console.debug('[WS] ScopedTasksPanel: task:status-changed', { projectId, taskId, status, listeningFor: scope.projectId });
-      if (projectId !== scope.projectId) return;
+    const matchesTaskScope = (projectId?: string, packageId?: string | null) => {
+      if (projectId !== scope.projectId) return false;
+      const eventPackageId = String(packageId || '').trim();
+      if (scope.type === 'package') {
+        return Boolean(scope.packageId) && eventPackageId === String(scope.packageId);
+      }
+      return eventPackageId.length === 0;
+    };
+
+    const handleTaskStatusChanged = ({ projectId, packageId, taskId, status }: { projectId: string; packageId?: string | null; taskId: string; status: string }) => {
+      console.debug('[WS] ScopedTasksPanel: task:status-changed', { projectId, packageId, taskId, status, listeningFor: scope.projectId });
+      if (!matchesTaskScope(projectId, packageId)) return;
       setTasksData(prev => {
         const exists = prev.some(t => t.id === taskId);
         if (exists) {
           return prev.map(t => t.id === taskId ? { ...t, status } : t);
         }
-        loadTasks();
+        loadTasks({ showLoading: false, clearOnError: false });
         return prev;
       });
     };
 
-    const handleTaskCreated = ({ projectId }: { projectId: string }) => {
-      console.debug('[WS] ScopedTasksPanel: task:created', { projectId, listeningFor: scope.projectId });
-      if (projectId !== scope.projectId) return;
-      loadTasks();
+    const handleTaskCreated = ({ projectId, packageId }: { projectId: string; packageId?: string | null }) => {
+      console.debug('[WS] ScopedTasksPanel: task:created', { projectId, packageId, listeningFor: scope.projectId });
+      if (!matchesTaskScope(projectId, packageId)) return;
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
-    const handleTaskDeleted = ({ projectId }: { projectId: string }) => {
-      console.debug('[WS] ScopedTasksPanel: task:deleted', { projectId, listeningFor: scope.projectId });
-      if (projectId !== scope.projectId) return;
-      loadTasks();
+    const handleTaskDeleted = ({ projectId, packageId }: { projectId: string; packageId?: string | null }) => {
+      console.debug('[WS] ScopedTasksPanel: task:deleted', { projectId, packageId, listeningFor: scope.projectId });
+      if (!matchesTaskScope(projectId, packageId)) return;
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
-    const handleTaskCommented = ({ projectId }: { projectId: string }) => {
-      console.debug('[WS] ScopedTasksPanel: task:commented', { projectId, listeningFor: scope.projectId });
-      if (projectId !== scope.projectId) return;
-      loadTasks();
+    const handleTaskCommented = ({ projectId, packageId }: { projectId: string; packageId?: string | null }) => {
+      console.debug('[WS] ScopedTasksPanel: task:commented', { projectId, packageId, listeningFor: scope.projectId });
+      if (!matchesTaskScope(projectId, packageId)) return;
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
-    const handleTaskUpdated = ({ projectId }: { projectId: string }) => {
-      console.debug('[WS] ScopedTasksPanel: task:updated', { projectId, listeningFor: scope.projectId });
-      if (projectId !== scope.projectId) return;
-      loadTasks();
+    const handleTaskUpdated = ({ projectId, packageId }: { projectId: string; packageId?: string | null }) => {
+      console.debug('[WS] ScopedTasksPanel: task:updated', { projectId, packageId, listeningFor: scope.projectId });
+      if (!matchesTaskScope(projectId, packageId)) return;
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
     const handleCrCreated = ({ projectId }: { projectId: string }) => {
       console.debug('[WS] ScopedTasksPanel: cr:created', { projectId, listeningFor: scope.projectId });
       if (projectId !== scope.projectId) return;
-      loadTasks();
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
     const handleCrUpdated = ({ projectId }: { projectId: string }) => {
       console.debug('[WS] ScopedTasksPanel: cr:updated', { projectId, listeningFor: scope.projectId });
       if (projectId !== scope.projectId) return;
-      loadTasks();
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
     const handleCrStatusChanged = ({ projectId }: { projectId: string }) => {
       console.debug('[WS] ScopedTasksPanel: cr:status-changed', { projectId, listeningFor: scope.projectId });
       if (projectId !== scope.projectId) return;
-      loadTasks();
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
     const handleCrDeleted = ({ projectId }: { projectId: string }) => {
       console.debug('[WS] ScopedTasksPanel: cr:deleted', { projectId, listeningFor: scope.projectId });
       if (projectId !== scope.projectId) return;
-      loadTasks();
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
     const handleCrCommentAdded = ({ projectId }: { projectId: string }) => {
       console.debug('[WS] ScopedTasksPanel: cr:comment_added', { projectId, listeningFor: scope.projectId });
       if (projectId !== scope.projectId) return;
-      loadTasks();
+      loadTasks({ showLoading: false, clearOnError: false });
     };
 
     socket.on('task:status-changed', handleTaskStatusChanged);
@@ -496,7 +509,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       socket.off('cr:comment_added', handleCrCommentAdded);
       socket.emit('project:leave', { projectId: scope.projectId });
     };
-  }, [scope.projectId, loadTasks]);
+  }, [scope.packageId, scope.projectId, scope.type, loadTasks]);
 
   const loadProjectWorkflowData = useCallback(async () => {
     try {
@@ -617,7 +630,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   // Reload tasks when a task is created from the Changes tab DetailModal
   useEffect(() => {
     const handleTaskCreated = () => {
-      void loadTasks();
+      void loadTasks({ showLoading: false, clearOnError: false });
     };
     window.addEventListener('task-created', handleTaskCreated);
     return () => window.removeEventListener('task-created', handleTaskCreated);
@@ -786,14 +799,19 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       // update UI to show 'pending-review' instead of the target stage.
       if (data.pendingReview) {
         setTasksData((prev) => prev.map((t) => t.id === taskId ? { ...t, status: 'pending-review' } : t));
+        void loadTasks({ showLoading: false, clearOnError: false });
         toast.success(data.message || 'Task submitted for review');
         return;
       }
+
+      const savedStatus = String(data?.data?.status || newStatus);
+      setTasksData((prev) => prev.map((t) => t.id === taskId ? { ...t, status: savedStatus } : t));
+      void loadTasks({ showLoading: false, clearOnError: false });
     } catch {
       setTasksData(previousTasks);
       toast.error('Failed to update task status');
     }
-  }, [canCreateTask, currentUserId, projectRole, scopeRequestBody, tasksData]);
+  }, [canCreateTask, currentUserId, loadTasks, projectRole, scopeRequestBody, tasksData]);
 
   const handleDeleteTask = useCallback(async (taskId: string) => {
     try {

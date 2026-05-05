@@ -18,6 +18,55 @@ const forbidden = (res, message) => errorResponse(res, 403, message || 'Forbidde
 const notFound = (res, message) => errorResponse(res, 404, message || 'Not found');
 const serverError = (res, message) => errorResponse(res, 500, message || 'Internal server error');
 
+const buildApprovalDataFromDocument = (doc, fallbackUserId = '') => ({
+    projectId: doc.projectId,
+    documentId: doc.publicId,
+    packageId: doc.packageId || null,
+    jobId: null,
+    uploaderId: doc.uploadedBy || fallbackUserId,
+    originalName: doc.originalName,
+    mimeType: doc.mimeType || '',
+    size: doc.size || 0,
+    folderType: doc.folderType || 'files',
+    folderPath: doc.folderPath || '',
+    versionGroupId: doc.versionGroupId || doc.publicId,
+    versionNumber: doc.versionNumber || 1,
+    versionLabel: doc.versionLabel || `v${doc.versionNumber || 1}`,
+    versionDescription: doc.versionDescription || '',
+    isNewVersion: Number(doc.versionNumber || 1) > 1,
+    status: 'pending',
+    fileUrl: doc.supabaseFileUrl || doc.s3Url || '',
+    s3Key: doc.s3Key || '',
+    supabaseFileKey: doc.supabaseFileKey || '',
+});
+
+async function ensureApprovalForPendingDocument(documentId, projectId, fallbackUserId = '') {
+    let approval = await UploadApprovalRepository.findByDocumentId(documentId);
+    if (approval) return { approval };
+
+    const doc = await DocumentRepository.findByPublicId(documentId);
+    if (!doc) return { notFound: true };
+    if (doc.projectId !== projectId) return { projectMismatch: true };
+    if (doc.approvalStatus !== 'pending') return { terminalStatus: doc.approvalStatus || 'approved' };
+
+    approval = await UploadApprovalRepository.create(buildApprovalDataFromDocument(doc, fallbackUserId));
+    return { approval, created: true, doc };
+}
+
+async function backfillMissingPendingApprovals(projectId, fallbackUserId = '') {
+    const docs = await DocumentRepository.listByProject(projectId);
+    const pendingDocs = (docs || []).filter((doc) => doc?.approvalStatus === 'pending');
+    for (const doc of pendingDocs) {
+        const existing = await UploadApprovalRepository.findByDocumentId(doc.publicId);
+        if (existing) continue;
+        try {
+            await UploadApprovalRepository.create(buildApprovalDataFromDocument(doc, fallbackUserId));
+        } catch (error) {
+            console.warn('[UploadApprovalController] Missing approval backfill failed:', error?.message || error);
+        }
+    }
+}
+
 class UploadApprovalController {
     async listPending(req, res) {
         try {
@@ -36,6 +85,8 @@ class UploadApprovalController {
             if (!member || member.status !== 'accepted') {
                 return forbidden(res, 'Only project members can view upload approvals');
             }
+
+            await backfillMissingPendingApprovals(normalizedProjectId, userId);
 
             const approvals = await UploadApprovalRepository.findByProject(normalizedProjectId, {
                 status: normalizedStatus || undefined,
@@ -151,6 +202,7 @@ class UploadApprovalController {
                 return forbidden(res, 'Only project members can view upload approvals');
             }
 
+            await backfillMissingPendingApprovals(normalizedProjectId, userId);
             const count = await UploadApprovalRepository.countPendingByProject(normalizedProjectId);
 
             return res.status(200).json({ success: true, data: { count } });
@@ -584,10 +636,17 @@ class UploadApprovalController {
                 return forbidden(res, 'Only owner, admin, or manager can approve uploads');
             }
 
-            const approval = await UploadApprovalRepository.findByDocumentId(normalizedDocumentId);
-            if (!approval) {
+            const resolved = await ensureApprovalForPendingDocument(normalizedDocumentId, normalizedProjectId, userId);
+            if (resolved.notFound) {
                 return notFound(res, 'Upload approval not found for this document');
             }
+            if (resolved.projectMismatch) {
+                return notFound(res, 'Upload approval not found in this project');
+            }
+            if (resolved.terminalStatus) {
+                return badRequest(res, `Upload has already been ${resolved.terminalStatus}`);
+            }
+            const approval = resolved.approval;
             if (approval.projectId !== normalizedProjectId) {
                 return notFound(res, 'Upload approval not found in this project');
             }
@@ -672,10 +731,17 @@ class UploadApprovalController {
                 return forbidden(res, 'Only owner, admin, or manager can reject uploads');
             }
 
-            const approval = await UploadApprovalRepository.findByDocumentId(normalizedDocumentId);
-            if (!approval) {
+            const resolved = await ensureApprovalForPendingDocument(normalizedDocumentId, normalizedProjectId, userId);
+            if (resolved.notFound) {
                 return notFound(res, 'Upload approval not found for this document');
             }
+            if (resolved.projectMismatch) {
+                return notFound(res, 'Upload approval not found in this project');
+            }
+            if (resolved.terminalStatus) {
+                return badRequest(res, `Upload has already been ${resolved.terminalStatus}`);
+            }
+            const approval = resolved.approval;
             if (approval.projectId !== normalizedProjectId) {
                 return notFound(res, 'Upload approval not found in this project');
             }

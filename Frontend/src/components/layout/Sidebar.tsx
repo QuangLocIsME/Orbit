@@ -6,6 +6,7 @@ import { syncCurrentUser, signOut, getCurrentUser, type User } from '../../lib/a
 import { useAppStore, type ApiProject } from '../../stores/appStore';
 import { apiFetch } from '../../lib/api-client';
 import { useNotifications } from '@/hooks/useNotifications';
+import { openNotificationTarget } from '@/lib/notification-actions';
 import { toast } from 'sonner';
 
 interface SidebarProps {
@@ -89,6 +90,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const notificationPanelRef = useRef<HTMLDivElement>(null);
   const [projects, setProjects] = useState<Project[]>([]);
 
   const { unseenCount, markAllSeen, notifications, markRead, markAllRead, deleteNotification } = useNotifications();
@@ -196,7 +198,10 @@ export default function Sidebar({ currentPath }: SidebarProps) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
       }
-      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const insideNotificationButton = notificationRef.current?.contains(target);
+      const insideNotificationPanel = notificationPanelRef.current?.contains(target);
+      if (!insideNotificationButton && !insideNotificationPanel) {
         setShowNotifications(false);
       }
     }
@@ -337,6 +342,7 @@ export default function Sidebar({ currentPath }: SidebarProps) {
               {/* Notifications Dropdown */}
               {showNotifications && ReactDOM.createPortal((
                 <div
+                  ref={notificationPanelRef}
                   className="fixed left-[280px] top-[60px] w-80 rounded-xl border border-border bg-card shadow-xl z-[99999]"
                 >
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -378,14 +384,8 @@ export default function Sidebar({ currentPath }: SidebarProps) {
                           <button
                             onClick={() => {
                               markRead(n.id);
-                              if (n.link) {
-                                const match = n.link.match(/\/projects\/([^/]+)/);
-                                if (match) {
-                                  window.location.href = `/projects/${match[1]}?tab=tasks`;
-                                } else {
-                                  window.location.href = n.link;
-                                }
-                              }
+                              setShowNotifications(false);
+                              openNotificationTarget(n);
                             }}
                             className={cn(
                               'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted',

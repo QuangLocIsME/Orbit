@@ -141,7 +141,7 @@ export default function GuestPackageDetail({
             try {
                 const [pkgRes, tasksRes, stagesRes] = await Promise.all([
                     fetch(`/api/guest/package-full/${encodeURIComponent(projectPublicId)}/${encodeURIComponent(packageId)}?token=${encodeURIComponent(guestToken)}`),
-                    fetch(`/api/guest/tasks/${encodeURIComponent(projectPublicId)}?token=${encodeURIComponent(guestToken)}`),
+                    fetch(`/api/guest/tasks/${encodeURIComponent(projectPublicId)}?token=${encodeURIComponent(guestToken)}&packageId=${encodeURIComponent(packageId)}`),
                     fetch(`/api/guest/workflow/${encodeURIComponent(projectPublicId)}?token=${encodeURIComponent(guestToken)}`),
                 ]);
 
@@ -157,9 +157,8 @@ export default function GuestPackageDetail({
                 if (tasksRes.ok) {
                     const tasksData = await tasksRes.json();
                     if (tasksData.success) {
-                        // Filter by publicId since tasks have publicId in packageId field
                         const filtered = (tasksData.data || []).filter((t: any) =>
-                            String(t.packageId || '').replace(/"/g, '') === String(packageId).replace(/"/g, '')
+                            String(t.packageId || '') === String(packageId)
                         );
                         setTasks(filtered.map((t: any) => ({
                             id: String(t.publicId || t.id || ''),
@@ -219,7 +218,7 @@ export default function GuestPackageDetail({
 
         const handleTaskCompleted = (data: { projectId: string }) => {
             if (data.projectId === projectPublicId) {
-                fetch(`/api/guest/tasks/${encodeURIComponent(projectPublicId)}?token=${encodeURIComponent(guestToken)}`)
+                fetch(`/api/guest/tasks/${encodeURIComponent(projectPublicId)}?token=${encodeURIComponent(guestToken)}&packageId=${encodeURIComponent(packageId)}`)
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {

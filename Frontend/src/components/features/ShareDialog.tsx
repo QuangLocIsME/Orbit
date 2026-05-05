@@ -203,7 +203,7 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
         setAccessRole((link.allowedRoles?.[0] as AccessRole) || 'guest');
         setSelectedPackages(new Set(link.packageIds || []));
 
-        if (link.packageIds && link.packageIds.length > 0) {
+        if (link.shareType === 'packages') {
             setScope('packages');
             setSelectedPages(link.allowedPages?.length ? link.allowedPages : ['overview', 'documents']);
         } else {
@@ -244,14 +244,18 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
             toast.error('Please select at least one page');
             return;
         }
+        if (scope === 'packages' && selectedPackages.size === 0) {
+            toast.error('Please select at least one package');
+            return;
+        }
 
         setIsSaving(true);
         try {
-            if (editMode === 'existing' && editingLink) {
-                const pkgIds = Array.from(selectedPackages);
-                const shareType = pkgIds.length > 0 ? 'packages' : 'project';
-                const finalPkgIds = pkgIds.length > 0 ? pkgIds : [];
+            const pkgIds = Array.from(selectedPackages);
+            const shareType = scope;
+            const finalPkgIds = scope === 'packages' ? pkgIds : [];
 
+            if (editMode === 'existing' && editingLink) {
                 const res = await apiFetch('/api/share/update', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -274,10 +278,6 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
                     toast.error(data.message || 'Failed to update link');
                 }
             } else {
-                const pkgIds = Array.from(selectedPackages);
-                const shareType = pkgIds.length > 0 ? 'packages' : 'project';
-                const finalPkgIds = pkgIds.length > 0 ? pkgIds : [];
-
                 const res = await apiFetch('/api/share/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -293,7 +293,14 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
                 const data = await res.json();
                 if (data.success && data.data) {
                     setExistingLinks(prev => [data.data, ...prev]);
-                    toast.success('Share link created');
+                    try {
+                        await navigator.clipboard.writeText(data.data.shareUrl);
+                        setCopiedId(data.data.id);
+                        setTimeout(() => setCopiedId(null), 2000);
+                        toast.success('Share link created and copied');
+                    } catch {
+                        toast.success('Share link created');
+                    }
                     closeEdit();
                 } else {
                     toast.error(data.message || 'Failed to create link');
@@ -382,7 +389,7 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
                                                     {link.label || `${link.shareType} link`}
                                                 </p>
                                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                                                    {link.packageIds && link.packageIds.length > 0 ? (
+                                                    {link.shareType === 'packages' && link.packageIds && link.packageIds.length > 0 ? (
                                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600">
                                                             {link.packageIds.length} pkg{link.packageIds.length > 1 ? 's' : ''}
                                                         </span>
@@ -682,11 +689,11 @@ export default function ShareDialog({ isOpen, onClose, projectId, projectSlug, c
                             </button>
                             <button
                                 onClick={handleSaveLink}
-                                disabled={isSaving || selectedPages.length === 0}
+                                disabled={isSaving || selectedPages.length === 0 || (scope === 'packages' && selectedPackages.size === 0)}
                                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-                                {editMode === 'existing' ? 'Save changes' : 'Copy link'}
+                                {editMode === 'existing' ? 'Save changes' : 'Create link'}
                             </button>
                         </>
                     ) : isAdmin ? (
