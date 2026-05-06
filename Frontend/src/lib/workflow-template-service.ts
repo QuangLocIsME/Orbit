@@ -25,6 +25,10 @@ export interface WorkflowTemplate {
   createdAt: string;
   updatedAt: string;
   isDownloaded?: boolean;
+  isDownloadedCopy?: boolean;
+  installedPublicId?: string;
+  sourcePublicId?: string | null;
+  originalDownloads?: number;
 }
 
 interface PaginatedResponse<T> {

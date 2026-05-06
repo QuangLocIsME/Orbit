@@ -95,6 +95,8 @@ export interface ClashResult {
   clashId: string;
   objectA: string;
   objectB: string;
+  objectAIdentifiers?: string[];
+  objectBIdentifiers?: string[];
   type: 'HARD' | 'SOFT' | 'DUPLICATE';
   status: 'new' | 'reviewed' | 'resolved';
   position: [number, number, number];
@@ -250,6 +252,8 @@ export const resultToViewerClash = (result: ClashResult): Clash => ({
   resolved: result.status === 'resolved',
   objectA: result.objectA,
   objectB: result.objectB,
+  objectAIdentifiers: result.objectAIdentifiers,
+  objectBIdentifiers: result.objectBIdentifiers,
   position: result.position,
   title: result.title,
   location: `X: ${result.position[0].toFixed(2)}, Y: ${result.position[1].toFixed(2)}, Z: ${result.position[2].toFixed(2)}`,

@@ -40,6 +40,11 @@ let cachedRoutes = new Set(ALWAYS_CACHE_ROUTES);
 // Deduplicate concurrent fetches for the same URL
 const inflightRequests = new Map();
 
+// ── Active project tracking ───────────────────────────────────────────────────
+// Maps projectId → Set<clientId> for smart broadcast filtering.
+// Updated on every REFRESH_RESPONSE to keep the mapping current.
+const projectClients = new Map(); // projectId → Set<clientId>
+
 // ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(STATIC_CACHE));
@@ -81,13 +86,26 @@ self.addEventListener('fetch', (event) => {
 
 // ── API Handler ───────────────────────────────────────────────────────────────
 async function handleApiRequest(request) {
-  {
   if (request.method !== 'GET') {
     return fetch(request);
   }
 
   const cache = await caches.open(API_CACHE);
   const cacheKey = request.url;
+  const cached = await cache.match(cacheKey);
+
+  if (cached) {
+    const cachedTime = cached.headers.get('x-cached-at');
+    const isStale = cachedTime ? Date.now() - parseInt(cachedTime) > API_CACHE_TTL_MS : true;
+
+    deliverToClients({
+      type: 'REFRESH_RESPONSE',
+      payload: { route: request.url, data: await cached.clone().json().catch(() => null), isStale },
+    });
+
+    if (isStale) refreshInBackground(request, cache);
+    return cached;
+  }
 
   try {
     const response = await fetch(request);
@@ -103,77 +121,6 @@ async function handleApiRequest(request) {
     }
     return response;
   } catch {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      const cachedTime = cached.headers.get('x-cached-at');
-      const isStale = cachedTime ? Date.now() - parseInt(cachedTime) > API_CACHE_TTL_MS : true;
-      const json = await cached.clone().json().catch(() => null);
-      if (json !== null) {
-        deliverToClients({
-          type: 'REFRESH_RESPONSE',
-          payload: { route: request.url, data: json, isStale },
-        });
-      }
-      return cached;
-    }
-  }
-
-  return new Response(JSON.stringify({ success: false, message: 'Network unavailable' }), {
-    status: 503,
-    headers: { 'Content-Type': 'application/json' },
-  });
-  }
-
-  const cache = await caches.open(API_CACHE);
-  const cacheKey = request.url;
-  const cached = await cache.match(cacheKey);
-
-  if (cached) {
-    // Return cached immediately — no skeleton flicker
-    const cachedTime = cached.headers.get('x-cached-at');
-    const isStale = cachedTime ? Date.now() - parseInt(cachedTime) > API_CACHE_TTL_MS : true;
-
-    // Deliver cached data to page via postMessage so UI can patch state
-    deliverToClients({
-      type: 'REFRESH_RESPONSE',
-      payload: {
-        route: request.url,
-        data: cached.clone(),
-        isStale,
-      },
-    });
-
-    // Refresh in background if stale
-    if (isStale) {
-      refreshInBackground(request, cache);
-    }
-
-    return cached;
-  }
-
-  // No cache — must go to network
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const cloned = response.clone();
-
-      // Add timestamp header
-      const headers = new Headers(cloned.headers);
-      headers.set('x-cached-at', String(Date.now()));
-      const timedResponse = new Response(await cloned.clone().text(), {
-        status: cloned.status,
-        statusText: cloned.statusText,
-        headers,
-      });
-
-      cache.put(cacheKey, timedResponse).catch(() => {});
-      deliverToClients({
-        type: 'REFRESH_RESPONSE',
-        payload: { route: request.url, data: cloned, isStale: false },
-      });
-    }
-    return response;
-  } catch {
     return new Response(JSON.stringify({ success: false, message: 'Network unavailable' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
@@ -185,20 +132,14 @@ async function refreshInBackground(request, cache) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      const cloned = response.clone();
-      const headers = new Headers(cloned.headers);
-      headers.set('x-cached-at', String(Date.now()));
-      const timedResponse = new Response(await cloned.clone().text(), {
-        status: cloned.status,
-        statusText: cloned.statusText,
-        headers,
-      });
-      cache.put(request.url, timedResponse).catch(() => {});
-
-      deliverToClients({
-        type: 'REFRESH_RESPONSE',
-        payload: { route: request.url, data: cloned, isStale: false },
-      });
+      await cacheResponse(cache, request.url, response.clone());
+      const json = await response.clone().json().catch(() => null);
+      if (json !== null) {
+        deliverToClients({
+          type: 'REFRESH_RESPONSE',
+          payload: { route: request.url, data: json, isStale: false },
+        });
+      }
     }
   } catch {
     // silent — stale data already returned
@@ -206,6 +147,12 @@ async function refreshInBackground(request, cache) {
 }
 
 // ── Extract projectId from route ─────────────────────────────────────────────────
+function extractProjectId(url) {
+  const match = String(url).match(/\/api\/projects\/([^/?#]+)/);
+  return match ? match[1] : null;
+}
+
+// ── Cache helper ───────────────────────────────────────────────────────────────
 async function cacheResponse(cache, cacheKey, response) {
   const headers = new Headers(response.headers);
   headers.set('x-cached-at', String(Date.now()));
@@ -217,48 +164,62 @@ async function cacheResponse(cache, cacheKey, response) {
   await cache.put(cacheKey, timedResponse).catch(() => {});
 }
 
-function extractProjectId(url) {
-  const match = String(url).match(/\/api\/projects\/([^/?#]+)/);
-  return match ? match[1] : null;
+// ── Track which clients are on which project page ─────────────────────────────
+// When a REFRESH_RESPONSE arrives for a project-specific route, the SW
+// uses the project's publicId as a key. Clients that have navigated to
+// a URL containing that projectId are eligible to receive the postMessage.
+//
+// The SW maintains a live map of projectId → Set of clientIds.
+// The page reports its current projectId via the ACTIVE_PROJECT message.
+async function registerClientForProject(clientId, projectId) {
+  if (!projectId) return;
+  if (!projectClients.has(projectId)) {
+    projectClients.set(projectId, new Set());
+  }
+  projectClients.get(projectId).add(clientId);
 }
 
-// ── Deliver data to all clients via postMessage ────────────────────────────────
-// Tries structured clone first (efficient), falls back to JSON for Response objects
+// ── Deliver data to matching clients via postMessage ─────────────────────────
+// Smart broadcast: only deliver to clients whose URL contains the projectId
+// from the fetched route. This avoids waking tabs that are on unrelated pages.
 async function deliverToClients(message) {
-  const clients = await self.clients.matchAll({ type: 'window' });
-  for (const client of clients) {
-    try {
-      if (message.type === 'REFRESH_RESPONSE' && message.payload.data) {
-        let data;
-        let transferables = [];
-        if (typeof message.payload.data === 'object' && message.payload.data !== null) {
-          data = message.payload.data;
-        } else {
-          data = message.payload.data;
-        }
-        const projectId = extractProjectId(message.payload.route);
-        client.postMessage(
-          {
-            type: 'REFRESH_RESPONSE',
-            payload: {
-              route: message.payload.route,
-              data,
-              isStale: message.payload.isStale,
-              projectId,
-            },
-          },
-          transferables
-        );
-      } else {
+  let projectId = null;
+
+  if (message.type === 'REFRESH_RESPONSE' && message.payload?.route) {
+    projectId = extractProjectId(message.payload.route);
+  }
+
+  const allClients = await self.clients.matchAll({ type: 'window' });
+
+  if (!projectId) {
+    // No projectId extracted — deliver to all clients (e.g. /api/projects/me)
+    for (const client of allClients) {
+      try {
         client.postMessage(message);
+      } catch {
+        // If structured clone fails, skip (e.g. non-serializable data)
+      }
+    }
+    return;
+  }
+
+  // Smart broadcast: filter clients by URL match
+  for (const client of allClients) {
+    try {
+      const url = client.url || '';
+      if (url.includes(`/projects/${projectId}`) || url.includes(`/projects/${projectId}/`)) {
+        client.postMessage(message);
+        // Keep this client registered for future broadcasts without a route
+        await registerClientForProject(client.id, projectId);
       }
     } catch {
-      // If structured clone fails, skip (e.g. non-serializable data)
+      // skip
     }
   }
 }
 
 // ── Sync to sessionStorage (legacy, kept for compatibility) ────────────────────
+// Sends SYNC_SESSION to all clients for global routes, or filtered clients for project routes
 async function syncToSessionStorage(request, response, data) {
   try {
     const url = new URL(request.url);
@@ -266,6 +227,7 @@ async function syncToSessionStorage(request, response, data) {
 
     if (!cachedRoutes.has(route) && !ALWAYS_CACHE_ROUTES.includes(route)) return;
 
+    const projectId = extractProjectId(request.url);
     const key = 'orbit:' + route.replace('/api/', '');
     const payload = {
       data,
@@ -274,6 +236,11 @@ async function syncToSessionStorage(request, response, data) {
 
     const clients = await self.clients.matchAll({ type: 'window' });
     for (const client of clients) {
+      // Filter: skip non-matching project tabs for project-scoped routes
+      if (projectId) {
+        const cu = client.url || '';
+        if (!cu.includes(`/projects/${projectId}`) && !cu.includes(`/projects/${projectId}/`)) continue;
+      }
       client.postMessage({ type: 'SYNC_SESSION', payload: { key, data: payload } });
     }
   } catch {
@@ -336,6 +303,12 @@ self.addEventListener('message', (event) => {
 
   if (type === 'CLEAR_ALL') {
     clearAllCaches();
+  }
+
+  if (type === 'CLEAR_PROJECT_CLIENTS') {
+    // Page navigated away from a project — remove its tracked client entries
+    const projectId = payload?.projectId;
+    if (projectId) projectClients.delete(projectId);
   }
 });
 
@@ -465,6 +438,7 @@ async function clearApiCache() {
   const cache = await caches.open(API_CACHE);
   const keys = await cache.keys();
   await Promise.all(keys.map((k) => cache.delete(k)));
+  projectClients.clear();
 
   const clients = await self.clients.matchAll({ type: 'window' });
   for (const client of clients) {
@@ -479,6 +453,7 @@ async function clearAllCaches() {
     keys.filter((k) => k.startsWith('orbit-')).map((k) => caches.delete(k))
   );
   inflightRequests.clear();
+  projectClients.clear();
 
   const clients = await self.clients.matchAll({ type: 'window' });
   for (const client of clients) {

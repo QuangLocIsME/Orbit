@@ -74,12 +74,12 @@ export interface ServerToClientEvents {
   'cr:version_updated': (data: { projectId: string; crId: string; versionId: string; status: string }) => void;
 }
 
-// Client-emitted events
+// Client-emitted events (ack callbacks are used for authorization results)
 export interface ClientToServerEvents {
-  'project:join': (data: { projectId: string }) => void;
-  'project:leave': (data: { projectId: string }) => void;
-  'package:join': (data: { packageId: string }) => void;
-  'package:leave': (data: { packageId: string }) => void;
+  'project:join': (data: { projectId: string }, callback?: (res: { success: boolean; role?: string; error?: string }) => void) => void;
+  'project:leave': (data: { projectId: string }, callback?: (res: { success: boolean }) => void) => void;
+  'package:join': (data: { packageId: string }, callback?: (res: { success: boolean; accessLevel?: string; error?: string }) => void) => void;
+  'package:leave': (data: { packageId: string }, callback?: (res: { success: boolean }) => void) => void;
   'ping': (cb: (data: { ts: number }) => void) => void;
 }
 
@@ -178,7 +178,9 @@ export function getSocket(): OrbitSocket {
     if (event === 'project:join') {
       const projectId = payload?.projectId;
       if (projectId && incrementRoomRef(projectRoomRefs, projectId)) {
-        originalEmit(event, payload);
+        originalEmit(event, payload, args[1]);
+      } else if (typeof args[1] === 'function') {
+        args[1]({ success: false, error: 'ALREADY_JOINED' });
       }
       return nextSocket;
     }
@@ -186,7 +188,9 @@ export function getSocket(): OrbitSocket {
     if (event === 'project:leave') {
       const projectId = payload?.projectId;
       if (projectId && decrementRoomRef(projectRoomRefs, projectId)) {
-        originalEmit(event, payload);
+        originalEmit(event, payload, args[1]);
+      } else if (typeof args[1] === 'function') {
+        args[1]({ success: false, error: 'NOT_JOINED' });
       }
       return nextSocket;
     }
@@ -194,7 +198,9 @@ export function getSocket(): OrbitSocket {
     if (event === 'package:join') {
       const packageId = payload?.packageId;
       if (packageId && incrementRoomRef(packageRoomRefs, packageId)) {
-        originalEmit(event, payload);
+        originalEmit(event, payload, args[1]);
+      } else if (typeof args[1] === 'function') {
+        args[1]({ success: false, error: 'ALREADY_JOINED' });
       }
       return nextSocket;
     }
@@ -202,7 +208,9 @@ export function getSocket(): OrbitSocket {
     if (event === 'package:leave') {
       const packageId = payload?.packageId;
       if (packageId && decrementRoomRef(packageRoomRefs, packageId)) {
-        originalEmit(event, payload);
+        originalEmit(event, payload, args[1]);
+      } else if (typeof args[1] === 'function') {
+        args[1]({ success: false, error: 'NOT_JOINED' });
       }
       return nextSocket;
     }
@@ -248,30 +256,47 @@ export function disconnectSocket(): void {
 
 /**
  * Join a project room to receive project-scoped events.
+ * Backend enforces project membership — ACCESS_DENIED means the user has no role in that project.
  */
-export function joinProject(projectId: string): void {
-  getSocket().emit('project:join', { projectId });
+export function joinProject(projectId: string): Promise<{ success: boolean; role?: string; error?: string }> {
+  return new Promise((resolve) => {
+    getSocket().emit('project:join', { projectId }, (response: { success: boolean; role?: string; error?: string }) => {
+      resolve(response);
+    });
+  });
 }
 
 /**
  * Leave a project room.
  */
-export function leaveProject(projectId: string): void {
-  getSocket().emit('project:leave', { projectId });
+export function leaveProject(projectId: string): Promise<{ success: boolean }> {
+  return new Promise((resolve) => {
+    getSocket().emit('project:leave', { projectId }, (response: { success: boolean }) => {
+      resolve(response);
+    });
+  });
 }
 
 /**
- * Join a package room.
+ * Join a package room to receive package-scoped events.
  */
-export function joinPackage(packageId: string): void {
-  getSocket().emit('package:join', { packageId });
+export function joinPackage(packageId: string): Promise<{ success: boolean; accessLevel?: string; error?: string }> {
+  return new Promise((resolve) => {
+    getSocket().emit('package:join', { packageId }, (response: { success: boolean; accessLevel?: string; error?: string }) => {
+      resolve(response);
+    });
+  });
 }
 
 /**
  * Leave a package room.
  */
-export function leavePackage(packageId: string): void {
-  getSocket().emit('package:leave', { packageId });
+export function leavePackage(packageId: string): Promise<{ success: boolean }> {
+  return new Promise((resolve) => {
+    getSocket().emit('package:leave', { packageId }, (response: { success: boolean }) => {
+      resolve(response);
+    });
+  });
 }
 
 /**

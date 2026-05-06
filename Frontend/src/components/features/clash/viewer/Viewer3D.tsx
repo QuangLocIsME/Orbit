@@ -17,6 +17,12 @@ import { useMeasureDistance, type Measurement } from '@/hooks/useMeasureDistance
 import { toast } from 'sonner';
 import { AlertTriangle, Focus, Layers2 } from 'lucide-react';
 
+const clashObjectAViewerIds = (clash: Clash): string[] =>
+  Array.from(new Set([clash.objectA, ...(clash.objectAIdentifiers ?? [])].map((id) => String(id || '').trim()).filter(Boolean)));
+
+const clashObjectBViewerIds = (clash: Clash): string[] =>
+  Array.from(new Set([clash.objectB, ...(clash.objectBIdentifiers ?? [])].map((id) => String(id || '').trim()).filter(Boolean)));
+
 /** Ensure CSS layout has given the canvas a non-zero size before creating WebGL (avoids 300×150 fallback). */
 async function waitForCanvasLayout(canvas: HTMLCanvasElement, timeoutMs = 12000): Promise<void> {
   if (canvas.clientWidth > 0 && canvas.clientHeight > 0) return;
@@ -70,8 +76,8 @@ function unionWorldAABBs(pieces: number[][]): number[] | null {
  */
 function mergeClashWorldAabb(clash: Clash, adapter: XeoKitViewerAdapter): number[] | null {
   const pieces: number[][] = [];
-  const ba = adapter.getObjectBoundingBox(clash.objectA);
-  const bb = adapter.getObjectBoundingBox(clash.objectB);
+  const ba = adapter.getObjectBoundingBox(clashObjectAViewerIds(clash));
+  const bb = adapter.getObjectBoundingBox(clashObjectBViewerIds(clash));
   if (ba) pieces.push([ba.min[0], ba.min[1], ba.min[2], ba.max[0], ba.max[1], ba.max[2]]);
   if (bb) pieces.push([bb.min[0], bb.min[1], bb.min[2], bb.max[0], bb.max[1], bb.max[2]]);
   if (clash.objectABBox) {
@@ -99,7 +105,7 @@ function bboxToBox6(bb: { min: [number, number, number]; max: [number, number, n
 /** World AABB for one clash element: prefer live XKT bounds, else backend `objectA/B` box. */
 function box6ForClashElement(
   adapter: XeoKitViewerAdapter,
-  objectId: string,
+  objectId: string | string[],
   fallback?: BBox
 ): number[] | null {
   const live = adapter.getObjectBoundingBox(objectId);
@@ -153,8 +159,8 @@ function aabbAroundPoints(points: Array<[number, number, number]>, pad: number):
  * - Avoid framing only on `clash.position` with a tiny cube — that missed XKT/object alignment.
  */
 function buildClashFocusWorldAabb(clash: Clash, adapter: XeoKitViewerAdapter): number[] | null {
-  const boxA = box6ForClashElement(adapter, clash.objectA, clash.objectABBox);
-  const boxB = box6ForClashElement(adapter, clash.objectB, clash.objectBBBox);
+  const boxA = box6ForClashElement(adapter, clashObjectAViewerIds(clash), clash.objectABBox);
+  const boxB = box6ForClashElement(adapter, clashObjectBViewerIds(clash), clash.objectBBBox);
   const mergedPair = unionWorldAABBs(
     [boxA, boxB].filter((b): b is number[] => Array.isArray(b) && b.length >= 6)
   );
@@ -468,8 +474,8 @@ export default function Viewer3D({
   const xktPairPresence = useMemo(() => {
     if (!clash || !xeokitAdapter || (xktModels?.length ?? 0) === 0 || !clashDetailXktSynced) return null;
     return {
-      a: xeokitAdapter.hasXktEntity(clash.objectA),
-      b: xeokitAdapter.hasXktEntity(clash.objectB),
+      a: xeokitAdapter.hasXktEntity(clashObjectAViewerIds(clash)),
+      b: xeokitAdapter.hasXktEntity(clashObjectBViewerIds(clash)),
     };
   }, [clash, xeokitAdapter, xktModels, clashDetailXktSynced]);
   /** Only skip bbox when both clash elements resolve in XKT — otherwise show federated bbox + XKT together. */
@@ -670,15 +676,15 @@ export default function Viewer3D({
         if (loadedIds.length > 0) setClashDetailXktSynced(true);
         const c = clashRef.current;
         if (!c) return;
-        const objectA = c.objectA;
-        const objectB = c.objectB;
+        const objectA = clashObjectAViewerIds(c);
+        const objectB = clashObjectBViewerIds(c);
         /** Must run before Dim/Hide so prior clash’s `visible: false` (Hide) does not hide the new pair. */
         xeokitAdapter.forceClearLoadedXktVisualState();
         /** Dim/Hide: recolor clash pair then isolation. All: neutral materials only (no green/yellow tint). */
         if (isolationRef.current === 'off') {
           xeokitAdapter.applyClashPairIsolation('off', objectA, objectB);
         } else {
-          xeokitAdapter.recolorXktObjects(objectA, objectB, [objectA, objectB]);
+          xeokitAdapter.recolorXktObjects(objectA, objectB, [...objectA, ...objectB]);
           xeokitAdapter.applyClashPairIsolation(isolationRef.current, objectA, objectB);
         }
         applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashRef.current);
@@ -691,8 +697,8 @@ export default function Viewer3D({
           requestAnimationFrame(() => {
             const cur = clashRef.current;
             if (!cur || cur.id !== clashIdForToast || !xeokitAdapter) return;
-            const hasA = xeokitAdapter.hasXktEntity(cur.objectA);
-            const hasB = xeokitAdapter.hasXktEntity(cur.objectB);
+            const hasA = xeokitAdapter.hasXktEntity(clashObjectAViewerIds(cur));
+            const hasB = xeokitAdapter.hasXktEntity(clashObjectBViewerIds(cur));
             if ((!hasA || !hasB) && missingPairToastForClashRef.current !== cur.id) {
               missingPairToastForClashRef.current = cur.id;
               toast.warning(
@@ -748,11 +754,13 @@ export default function Viewer3D({
     }
 
     if (xktIsolation === 'off') {
-      xeokitAdapter.applyClashPairIsolation('off', c.objectA, c.objectB);
+      xeokitAdapter.applyClashPairIsolation('off', clashObjectAViewerIds(c), clashObjectBViewerIds(c));
       applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashObjectIds);
     } else {
-      xeokitAdapter.recolorXktObjects(c.objectA, c.objectB, [c.objectA, c.objectB]);
-      xeokitAdapter.applyClashPairIsolation(xktIsolation, c.objectA, c.objectB);
+      const objectA = clashObjectAViewerIds(c);
+      const objectB = clashObjectBViewerIds(c);
+      xeokitAdapter.recolorXktObjects(objectA, objectB, [...objectA, ...objectB]);
+      xeokitAdapter.applyClashPairIsolation(xktIsolation, objectA, objectB);
       applyClashSuppressedEntityVisibility(xeokitAdapter, c, suppressedClashObjectIds);
     }
 

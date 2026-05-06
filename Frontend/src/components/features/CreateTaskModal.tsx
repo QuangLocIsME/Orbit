@@ -77,14 +77,6 @@ interface TaskFormData {
   removedExistingAttachmentIndices: number[];
 }
 
-const defaultStages: WorkflowStage[] = [
-  { id: 'backlog', name: 'Backlog' },
-  { id: 'todo', name: 'To Do' },
-  { id: 'in-progress', name: 'In Progress' },
-  { id: 'review', name: 'Review' },
-  { id: 'done', name: 'Done' },
-];
-
 const priorityOptions = [
   { id: 'low',    label: 'Low',    activeClass: 'bg-[#F0FDF4] border-[#22C55E] text-[#15803D]', dotClass: 'bg-[#22C55E]' },
   { id: 'medium', label: 'Medium', activeClass: 'bg-[#FFFBEB] border-[#F59E0B] text-[#B45309]', dotClass: 'bg-[#F59E0B]' },
@@ -127,12 +119,12 @@ export default function CreateTaskModal({
     [linkedSuggestions]
   );
 
-  const stages = workflowStages && workflowStages.length > 0 ? workflowStages : defaultStages;
+  const stages = workflowStages || [];
 
   const resolvedInitialStageId = (() => {
     if (isEditMode && editTask?.status) return editTask.status;
     if (defaultStageId && stages.some(s => s.id === defaultStageId)) return defaultStageId;
-    return stages[0]?.id || 'backlog';
+    return stages[0]?.id || '';
   })();
 
   const [formData, setFormData] = useState<TaskFormData>(() => {
@@ -250,6 +242,7 @@ export default function CreateTaskModal({
 
   const handleSubmit = () => {
     if (!formData.title.trim()) return;
+    if (!isEditMode && stages.length === 0) return;
     if (isEditMode && editTask && onUpdate) {
       onUpdate(editTask.id, formData);
       onClose();

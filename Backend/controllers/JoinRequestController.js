@@ -131,6 +131,8 @@ class JoinRequestController {
                 invitedBy: userId,
             });
 
+            await socketService.invalidateMembershipCache(joinRequest.projectId, joinRequest.requestedBy);
+
             joinRequest.status = 'approved';
             joinRequest.reviewedBy = userId;
             joinRequest.reviewedAt = new Date();

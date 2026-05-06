@@ -24,7 +24,9 @@ export default defineConfig({
       allowedHosts,
     },
     resolve: {
+      preserveSymlinks: true,
       alias: [
+        { find: 'astro/entrypoints/prerender', replacement: path.resolve(__dirname, './node_modules/astro/dist/entrypoints/prerender.js') },
         { find: '@/components/ui', replacement: path.resolve(__dirname, './components/ui') },
         { find: '@/lib/utils', replacement: path.resolve(__dirname, './lib/utils') },
         { find: '@', replacement: path.resolve(__dirname, './src') }

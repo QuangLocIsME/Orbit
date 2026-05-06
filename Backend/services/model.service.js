@@ -717,6 +717,23 @@ async function finalizeNavisworksIfcImport(projectSlug, ifcBuffer, parsed) {
     return parsed;
 }
 
+async function attachPreconvertedXktToIfcImport(projectSlug, xktBuffer, parsed) {
+    if (!parsed?.model?.id || !Buffer.isBuffer(xktBuffer)) return parsed;
+
+    stripClashMeshesFromObjects(parsed.objects);
+
+    const safeSlug = projectSlug || 'default-project';
+    const xktDir = path.join(LEGACY_PROJECTS_DIR, safeSlug, 'xkt');
+    const xktFile = `${parsed.model.id}.xkt`;
+    fs.mkdirSync(xktDir, { recursive: true });
+    fs.writeFileSync(path.join(xktDir, xktFile), xktBuffer);
+
+    parsed.model.sourceFormat = 'xkt';
+    parsed.model.xktFile = xktFile;
+    console.info(`[importModels] IFC metadata + existing XKT OK: ${xktFile} (${safeSlug})`);
+    return parsed;
+}
+
 const parseIfcModel = async (buffer, meta) => {
     const api = await createIfcApi();
     const sourceModelId = meta.sourceModelId || createId('model');
@@ -940,7 +957,11 @@ class ModelService {
             if (sourceFormat === 'ifc') {
                 try {
                     const parsed = await parseIfcModel(entry.buffer, entry);
-                    await finalizeNavisworksIfcImport(projectSlug, entry.buffer, parsed);
+                    if (Buffer.isBuffer(entry.xktBuffer)) {
+                        await attachPreconvertedXktToIfcImport(projectSlug, entry.xktBuffer, parsed);
+                    } else {
+                        await finalizeNavisworksIfcImport(projectSlug, entry.buffer, parsed);
+                    }
                     parsedImports.push(parsed);
                 } catch (ifcErr) {
                     console.warn(`[importModels] Skipping ${entry.originalName || 'unknown'}: ${ifcErr.message}`);

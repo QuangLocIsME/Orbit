@@ -308,6 +308,53 @@ export default function HomeDashboard({ userName: initialUserName }: HomeDashboa
     fetchData();
   }, []);
 
+  useEffect(() => {
+    const handleProjectCreated = () => {
+      void (async () => {
+        try {
+          const res = await apiFetch('/api/projects/me');
+          if (!res.ok) return;
+          const payload = await res.json();
+          const mappedProjects: Project[] = (payload.data || []).map((p: {
+            publicId: string;
+            name: string;
+            industry?: string;
+            description?: string;
+            coverImageUrl?: string;
+            status?: string;
+            role?: string;
+            folderId?: string | null;
+            lastVisitedAt?: string | null;
+          }) => {
+            const industryName = String(p.industry || '');
+            const customIndustries = loadCustomIndustriesRaw();
+            const customMatch = customIndustries.find((item) => toSlug(item.name) === toSlug(industryName));
+            return {
+              id: p.publicId,
+              slug: p.publicId,
+              name: p.name,
+              description: p.description,
+              thumbnail: p.coverImageUrl || '',
+              lastVisited: p.lastVisitedAt ? new Date(p.lastVisitedAt).toISOString() : new Date().toISOString(),
+              category: 'shared' as const,
+              status: (p.status as Project['status']) || 'active',
+              projectType: toSlug(industryName || 'software'),
+              industryName,
+              customIndustry: customMatch ? { icon: customMatch.iconId, color: customMatch.colorId } : undefined,
+              isFavorite: false,
+            };
+          });
+          setProjects(mappedProjects);
+        } catch {
+          // ignore
+        }
+      })();
+    };
+
+    window.addEventListener('orbit:project-created', handleProjectCreated);
+    return () => window.removeEventListener('orbit:project-created', handleProjectCreated);
+  }, []);
+
   // Sync init from localStorage to avoid flash of wrong name
   const [displayUserName, setDisplayUserName] = useState<string>(() => {
     if (typeof window === 'undefined') return '';

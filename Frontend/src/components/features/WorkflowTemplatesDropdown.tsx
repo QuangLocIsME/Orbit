@@ -35,31 +35,29 @@ export default function WorkflowTemplatesDropdown({
   const [isApplying, setIsApplying] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Sync selected with prop and set default to first "My Templates" item
+  // Sync selected with prop. Do not auto-select: a project has no workflow until one is applied.
   useEffect(() => {
     if (selectedWorkflow) {
       setSelected(selectedWorkflow);
-    } else if (myTemplates.length > 0 && !selected) {
-      setSelected(myTemplates[0].publicId);
-      onSelect?.(myTemplates[0].publicId, myTemplates[0].stages.map((s: any) => ({ id: s.id, name: s.name })));
+    } else {
+      setSelected('');
     }
-  }, [selectedWorkflow, myTemplates, selected, onSelect]);
+  }, [selectedWorkflow]);
 
   // Fetch selectable templates (my + downloaded + library)
   useEffect(() => {
     const fetchTemplates = async () => {
       setIsLoading(true);
       try {
-        const [myRes, downloadedRes, libraryRes] = await Promise.all([
+        const [myRes, downloadedRes] = await Promise.all([
           workflowTemplateService.getMyTemplates({ limit: 50 }),
           workflowTemplateService.getDownloadedTemplates({ limit: 50 }),
-          workflowTemplateService.getTemplates({ limit: 100, sort: 'recent' }),
         ]);
 
         setMyTemplates(myRes.templates);
 
         const byId = new Map<string, WorkflowTemplate>();
-        [...myRes.templates, ...downloadedRes.templates, ...libraryRes.templates].forEach((template) => {
+        [...myRes.templates, ...downloadedRes.templates].forEach((template) => {
           if (!template?.publicId) return;
           if (!byId.has(template.publicId)) {
             byId.set(template.publicId, template);
@@ -239,7 +237,7 @@ export default function WorkflowTemplatesDropdown({
             </div>
           ) : !isLoading && (
             <div className="px-4 py-6 text-center text-[13px] text-[#6A7282]">
-              No workflow templates yet.
+              Install a workflow template first.
             </div>
           )}
 

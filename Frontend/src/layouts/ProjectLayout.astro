@@ -1,5 +1,5 @@
 ---
-import '../styles/global.css';
+import BaseLayout from './BaseLayout.astro';
 import { Toaster } from '@/components/ui/sonner';
 import InviteNotificationHandler from '@/hooks/useInviteNotifications';
 
@@ -16,35 +16,23 @@ const {
 } = Astro.props;
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <title>{title}</title>
-  </head>
-  <body class="min-h-screen font-sans bg-background">
-    <script>
-      import { navigate } from 'astro:transitions/client';
-      import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
+<BaseLayout title={title} bodyClass="bg-background">
+  <script>
+    import { navigate } from 'astro:transitions/client';
+    import { hydrateApp, initAppSocket, clearAll } from '@/stores/appStore';
 
-      window.addEventListener('orbit:auth-expired', () => navigate('/login'));
-      window.addEventListener('orbit:sign-out', () => {
-        clearAll();
-        navigate('/login');
-      });
+    window.addEventListener('orbit:auth-expired', () => navigate('/login'));
+    window.addEventListener('orbit:sign-out', () => {
+      clearAll();
+      navigate('/login');
+    });
 
-      hydrateApp();
-      initAppSocket();
-    </script>
-    <main>
-      <slot />
-    </main>
-    <Toaster client:load />
-    <InviteNotificationHandler client:load />
-  </body>
-</html>
+    hydrateApp();
+    initAppSocket();
+  </script>
+  <main data-project-name={projectName} data-project-slug={projectSlug}>
+    <slot />
+  </main>
+  <Toaster client:load />
+  <InviteNotificationHandler client:load />
+</BaseLayout>

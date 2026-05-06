@@ -251,8 +251,10 @@ class WorkflowTemplateController {
             // Thêm originalDownloads vào template trả về
             copiedTemplate.originalDownloads = originalDownloads;
 
-            // Mark as downloaded
-            await repository.markAsDownloaded(userId, publicId, updatedSource._id);
+            // Mark both source and installed copy so library cards can show Installed
+            // while project workflow dropdowns can still select the user's private copy.
+            await repository.markAsDownloaded(userId, publicId, sourceTemplate._id);
+            await repository.markAsDownloaded(userId, copiedTemplate.publicId, copiedTemplate._id);
             socketService.broadcastAll('workflow-template:changed', {
                 action: 'copied',
                 templateId: copiedTemplate.publicId,
@@ -342,10 +344,25 @@ class WorkflowTemplateController {
             if (!existing) {
                 return error(res, 'Template not found', 404);
             }
+
             if (existing.authorId !== authorId) {
-                return error(res, 'Unauthorized', 403);
+                const uninstallResult = await repository.uninstallForUser(authorId, existing);
+                if (!uninstallResult.deletedRecords) {
+                    return error(res, 'Unauthorized', 403);
+                }
+
+                socketService.broadcastAll('workflow-template:changed', {
+                    action: 'uninstalled',
+                    templateId: publicId,
+                    removedTemplateIds: uninstallResult.removedPublicIds,
+                    authorId,
+                    isPrivate: existing.isPrivate,
+                });
+
+                return success(res, null, 'Template uninstalled successfully');
             }
 
+            await repository.uninstallForUser(authorId, existing);
             await repository.delete(publicId, authorId);
             socketService.broadcastAll('workflow-template:changed', {
                 action: 'deleted',

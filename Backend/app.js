@@ -11,7 +11,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 require('./config/passport');
 const authRoutes = require('./routes/authRoutes');
 const emailRoutes = require('./routes/emailRoutes');
@@ -50,9 +50,16 @@ const httpServer = http.createServer(app);
 const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS || 1);
 app.set('trust proxy', TRUST_PROXY_HOPS);
 
+const getRateLimitIdentity = (req) => {
+    const ipKey = ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown');
+    const userId = req.user?.id;
+    return userId ? `${ipKey}:user:${userId}` : `${ipKey}:guest`;
+};
+
 const limiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 600,
+    keyGenerator: getRateLimitIdentity,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: {
@@ -67,6 +74,7 @@ const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const clashLimiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 600,
+    keyGenerator: getRateLimitIdentity,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: {

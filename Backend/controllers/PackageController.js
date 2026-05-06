@@ -20,7 +20,7 @@ const { publishPackageUpload } = require('../queues/packageUploadQueue');
 const { publishIfcConversionJob } = require('../queues/ifcConversionQueue');
 const { createSignedXktUrl, uploadIfcBuffer, buildSupabaseIfcPath, uploadProjectFileBuffer, buildProjectFilePath, SUPABASE_URL } = require('../services/supabaseStorageService');
 const { s3Client, S3_BUCKET, S3_ENDPOINT, STORAGE_PROVIDER, buildS3Url, assertS3Configured } = require('../config/s3');
-const { broadcastProject, broadcastPackage, notifyUser } = require('../services/socketService');
+const { broadcastProject, broadcastPackage, notifyUser, invalidatePackageAccessCache } = require('../services/socketService');
 const { publishProjectBlockUpdate, publishScopedProjectBlockUpdate, publishProjectBlockRefresh } = require('../services/blockRealtimePublisher.service');
 const ActivityService = require('../services/activityService');
 const DiscordService = require('../services/discordService');
@@ -848,6 +848,14 @@ class PackageController {
                 updatedAt: new Date(),
             });
 
+            const packagePublicId = packageDoc.publicId;
+
+            // Invalidate package access cache for all team members (including creator)
+            await Promise.all([
+                invalidatePackageAccessCache(packagePublicId, userId),
+                ...normalizedTeamMemberIds.map(mid => invalidatePackageAccessCache(packagePublicId, mid)),
+            ]);
+
             const packageData = {
                 publicId: packageDoc.publicId,
                 projectId: packageDoc.projectId,
@@ -1386,6 +1394,14 @@ class PackageController {
                 const oldMembers = new Set(pkg.teamMemberIds || []);
                 const newMembers = updateFields.teamMemberIds || [];
                 const addedMembers = newMembers.filter(id => !oldMembers.has(id));
+                const removedMembers = [...oldMembers].filter(id => !newMembers.includes(id));
+
+                // Invalidate package access cache for all affected users
+                await Promise.all([
+                    ...[...oldMembers, ...newMembers, pkg.creatorId].map(uid =>
+                        invalidatePackageAccessCache(normalizedPackageId, uid)
+                    ),
+                ]);
 
                 if (addedMembers.length > 0) {
                     const editorName = await resolveUserDisplayName(userId);

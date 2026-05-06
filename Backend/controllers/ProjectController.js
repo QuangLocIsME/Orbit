@@ -7,7 +7,7 @@ const ProjectInviteRepository = require('../repositories/ProjectInviteRepository
 const ProjectRoleRepository = require('../repositories/ProjectRoleRepository');
 const { getJson, setJson, delKeys } = require('../services/cacheService');
 const socketService = require('../services/socketService');
-const { invalidateUserCache } = socketService;
+const { invalidateUserCache, invalidateMembershipCache } = socketService;
 const { publishProjectBlockUpdate } = require('../services/blockRealtimePublisher.service');
 const { normalizeString } = require('../utils/sanitize');
 const { errorResponse } = require('../utils/response');
@@ -75,6 +75,12 @@ const invalidateProjectMemberCaches = async (projectId, extraUserIds = []) => {
     await Promise.all(userIds.map((id) => invalidateUserCaches(id)));
 };
 
+const isInstalledWorkflowTemplate = (template, userId) => {
+    if (!template || !userId) return false;
+    if (template.authorId === userId) return true;
+    return template.sourcePublicId && template.isPrivate && template.authorId === userId;
+};
+
 const workflowTemplates = {
     'construction-standard': [
         { id: 'backlog',      label: 'Backlog',      color: '#6A7280' },
@@ -136,6 +142,8 @@ class ProjectController {
                 status: 'accepted',
                 invitedBy: null,
             });
+
+            await invalidateMembershipCache(project.publicId, userId);
 
             // Initialize system roles for new project
             for (const role of systemRoles) {
@@ -838,6 +846,8 @@ class ProjectController {
                 normalizedRole
             );
 
+            await invalidateMembershipCache(normalizedProjectId, normalizedTargetUserId);
+
             await invalidateProjectMemberCaches(normalizedProjectId, [userId]);
 
             // Broadcast so UI role/permissions update immediately
@@ -929,6 +939,7 @@ class ProjectController {
             await Promise.all([
                 invalidateUserCaches(userId),
                 invalidateUserCaches(normalizedTargetUserId),
+                invalidateMembershipCache(normalizedProjectId, normalizedTargetUserId),
             ]);
 
             // Tell the removed member to redirect away from this project
@@ -1005,10 +1016,8 @@ class ProjectController {
             const project = await Project.findOne({ publicId: normalizedProjectId }).select('publicId workflow workflowTemplateId');
             if (!project) return notFound(res, 'Project not found');
 
-            const template = project.workflow?.template || 'construction-standard';
-            const stages = Array.isArray(project.workflow?.stages) && project.workflow.stages.length > 0
-                ? project.workflow.stages
-                : (workflowTemplates[template] || workflowTemplates['construction-standard']);
+            const template = project.workflow?.template || '';
+            const stages = Array.isArray(project.workflow?.stages) ? project.workflow.stages : [];
             const settings = project.workflow?.settings || {
                 autoAssignTasks: false,
                 notifyOnStatusChange: true,
@@ -1018,7 +1027,14 @@ class ProjectController {
 
             return res.status(200).json({
                 success: true,
-                data: { template, stages, settings, taskTags, workflowTemplateId: project.workflowTemplateId },
+                data: {
+                    template,
+                    stages,
+                    settings,
+                    taskTags,
+                    workflowTemplateId: project.workflowTemplateId,
+                    hasWorkflow: Boolean(project.workflowTemplateId && stages.length > 0),
+                },
             });
         } catch (error) {
             return handleServerError(res, 'Failed to load workflow');
@@ -1051,6 +1067,9 @@ class ProjectController {
             if (!template) {
                 return notFound(res, 'Workflow template not found');
             }
+            if (!isInstalledWorkflowTemplate(template, userId)) {
+                return forbidden(res, 'Install this workflow template before applying it to a project');
+            }
 
             // Update project with template stages
             const project = await Project.findOneAndUpdate(
@@ -1059,7 +1078,7 @@ class ProjectController {
                     workflowTemplateId: workflowTemplateId,
                     workflow: {
                         template: template.name,
-                        stages: template.stages.map(s => ({ id: s.id, label: s.name })),
+                        stages: template.stages.map(s => ({ id: s.id, label: s.name, color: s.color })),
                         settings: {
                             autoAssignTasks: false,
                             notifyOnStatusChange: true,
@@ -1109,7 +1128,7 @@ class ProjectController {
             const member = await ProjectMemberRepository.findMember(normalizedProjectId, userId);
             if (!member || (member.role !== 'admin' && member.role !== 'owner')) return forbidden(res);
 
-            const nextTemplate = normalizeString(template) || 'construction-standard';
+            const nextTemplate = normalizeString(template);
             const normalizedStages = Array.isArray(stages)
                 ? stages
                     .map((s) => {
@@ -1123,7 +1142,10 @@ class ProjectController {
 
             const nextStages = normalizedStages && normalizedStages.length > 0
                 ? normalizedStages
-                : (workflowTemplates[nextTemplate] || workflowTemplates['construction-standard']);
+                : null;
+            if (!nextStages) {
+                return badRequest(res, 'Workflow stages are required');
+            }
 
             const nextSettings = {
                 autoAssignTasks: Boolean(settings?.autoAssignTasks),

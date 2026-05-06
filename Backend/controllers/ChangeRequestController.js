@@ -985,22 +985,13 @@ class ChangeRequestController {
             const taskDescStr = normalizeString(taskDescription)
                 || `Task for Change Request ${changeRequest.crId}: ${changeRequest.description}`;
 
-            // Get the first stage of the project's workflow as default status
-            let defaultStatus = 'backlog';
-            try {
-                const project = await Project.findOne({ publicId: changeRequest.projectId })
-                    .select('workflow workflowTemplateId').lean();
-                if (project) {
-                    const stages = Array.isArray(project.workflow?.stages) && project.workflow.stages.length > 0
-                        ? project.workflow.stages
-                        : null;
-                    if (stages && stages[0]?.id) {
-                        defaultStatus = stages[0].id;
-                    }
-                }
-            } catch {
-                // Fall back to 'backlog' if project lookup fails
+            const project = await Project.findOne({ publicId: changeRequest.projectId })
+                .select('workflow workflowTemplateId').lean();
+            const stages = Array.isArray(project?.workflow?.stages) ? project.workflow.stages : [];
+            if (!project || !project.workflowTemplateId || stages.length === 0) {
+                return errorResponse(res, 400, 'Install and apply a workflow template before creating tasks');
             }
+            const defaultStatus = stages[0].id;
 
             const task = await Task.create({
                 projectId: changeRequest.projectId,

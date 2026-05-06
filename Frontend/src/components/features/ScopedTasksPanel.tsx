@@ -152,7 +152,8 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
   const [linkedItemSuggestions, setLinkedItemSuggestions] = useState<LinkedSuggestionItem[]>([]);
 
-  const canCreateTask = !isGuest && projectRole !== 'viewer';
+  const hasWorkflow = selectedWorkflowStages.length > 0 && Boolean(selectedWorkflowId);
+  const canCreateTask = !isGuest && projectRole !== 'viewer' && hasWorkflow;
   const canManageWorkflow = projectRole === 'owner' || projectRole === 'admin';
   const canManageTask = ['owner', 'admin', 'manager'].includes(projectRole);
   const currentUserId = useMemo(() => {
@@ -527,19 +528,22 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
       setProjectTaskTags(tags.map((t: any) => String(t?.name || '').toLowerCase()).filter(Boolean));
 
       const stages = Array.isArray(data.stages) ? data.stages : [];
-      if (stages.length > 0) {
+      const workflowTemplateId = String(data.workflowTemplateId || '');
+      if (workflowTemplateId && stages.length > 0) {
         setSelectedWorkflowStages(stages.map((s: any) => ({
           id: String(s.id || ''),
           name: String(s.label || s.name || ''),
           description: String(s.description || ''),
           color: s.color || undefined,
         })));
-      }
-      if (data.workflowTemplateId) {
-        setSelectedWorkflowId(data.workflowTemplateId);
+        setSelectedWorkflowId(workflowTemplateId);
+      } else {
+        setSelectedWorkflowStages([]);
+        setSelectedWorkflowId('');
       }
     } catch {
-      // CreateTaskModal already has fallback stages.
+      setSelectedWorkflowStages([]);
+      setSelectedWorkflowId('');
     }
   }, [scope.projectId]);
 
@@ -852,6 +856,16 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
   }, [listContextMenu]);
 
   const isPackageScope = scope.type === 'package';
+  const openNewTaskModal = useCallback((stageId?: string) => {
+    if (!hasWorkflow) {
+      toast.error('Install and apply a workflow template before adding tasks');
+      return;
+    }
+    if (!canCreateTask) return;
+    setPendingTaskStageId(stageId);
+    setIsNewTaskModalOpen(true);
+  }, [canCreateTask, hasWorkflow]);
+
   const resolveStageName = useCallback((status: string) => {
     const stage = selectedWorkflowStages.find((s) => s.id === status);
     return stage?.name || status;
@@ -898,8 +912,9 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
               />
             </div>
             <button
-              onClick={() => setIsNewTaskModalOpen(true)}
+              onClick={() => openNewTaskModal()}
               disabled={!canCreateTask}
+              title={!hasWorkflow ? 'Install and apply a workflow template before adding tasks' : undefined}
               className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -975,11 +990,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
               projectRole={projectRole}
               onTaskStatusChange={handleTaskStatusChange}
               onTaskClick={setSelectedTaskId}
-              onAddTask={(stageId) => {
-                if (!canCreateTask) return;
-                setPendingTaskStageId(stageId);
-                setIsNewTaskModalOpen(true);
-              }}
+              onAddTask={openNewTaskModal}
               onEditRequest={(task) => {
                 if (!canManageTask) return;
                 const fullTask = tasksData.find(t => t.id === task.id);
@@ -1370,8 +1381,9 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             onConfigureClick={() => undefined}
           />
           <button
-            onClick={() => setIsNewTaskModalOpen(true)}
+            onClick={() => openNewTaskModal()}
             disabled={!canCreateTask}
+            title={!hasWorkflow ? 'Install and apply a workflow template before adding tasks' : undefined}
             className="inline-flex items-center gap-2 rounded-[10px] bg-[#155DFC] h-10 px-5 text-[14px] font-normal text-white hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -1447,11 +1459,7 @@ export default function ScopedTasksPanel({ scope, projectRole = 'member', varian
             projectRole={projectRole}
             onTaskStatusChange={handleTaskStatusChange}
             onTaskClick={setSelectedTaskId}
-            onAddTask={(stageId) => {
-              if (!canCreateTask) return;
-              setPendingTaskStageId(stageId);
-              setIsNewTaskModalOpen(true);
-            }}
+            onAddTask={openNewTaskModal}
             onEditRequest={(task) => {
               if (!canManageTask) return;
               const fullTask = tasksData.find(t => t.id === task.id);

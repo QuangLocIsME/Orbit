@@ -152,6 +152,23 @@ export function clearApiCache(): void {
 }
 
 /**
+ * Clear the SW's tracked project→client mapping for a specific project.
+ * Call this when the page navigates away from a project so the SW stops
+ * sending irrelevant postMessage broadcasts to that tab.
+ *
+ * @param projectId - The project publicId the client is leaving
+ */
+export function clearProjectClients(projectId: string): void {
+  if (typeof window === 'undefined') return;
+  if (!navigator.serviceWorker?.controller) return;
+
+  navigator.serviceWorker.controller.postMessage({
+    type: 'CLEAR_PROJECT_CLIENTS',
+    payload: { projectId },
+  });
+}
+
+/**
  * Clear all SW caches (e.g. on hard logout).
  */
 export function clearAllCache(): void {

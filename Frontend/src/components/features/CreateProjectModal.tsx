@@ -471,11 +471,18 @@ export default function CreateProjectModal({ isOpen, onClose, onProjectCreated }
       }
     })();
 
-    await toast.promise(requestPromise, {
-      loading: 'Creating project...',
-      success: (data) => `${data.name} has been created successfully`,
-      error: (error) => error?.message || 'Failed to create project',
-    });
+    const toastId = toast.loading('Creating project...');
+    try {
+      const createdProject = await requestPromise;
+      toast.success('Project created successfully', {
+        id: toastId,
+        description: createdProject.name,
+      });
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to create project', {
+        id: toastId,
+      });
+    }
   };
 
   const handleBackdropClick = (e: React.MouseEvent) => {

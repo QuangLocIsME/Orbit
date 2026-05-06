@@ -187,6 +187,8 @@ class InviteController {
                 invitedBy: invite.invitedBy,
             });
 
+            await socketService.invalidateMembershipCache(invite.projectId, userId);
+
             await ProjectInviteRepository.markAccepted(invite._id);
 
             // Notify inviter in real-time

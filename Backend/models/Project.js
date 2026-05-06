@@ -18,7 +18,7 @@ const ProjectSchema = new mongoose.Schema({
     folderIds: { type: [String], default: [], index: true },
     workflowTemplateId: { type: String, default: null, index: true },
     workflow: {
-        template: { type: String, default: 'construction-standard' },
+        template: { type: String, default: '' },
         stages: {
             type: [
                 {
@@ -27,13 +27,7 @@ const ProjectSchema = new mongoose.Schema({
                     color: { type: String, default: '#6A7280' },
                 },
             ],
-            default: [
-                { id: 'backlog',      label: 'Backlog',      color: '#6A7280' },
-                { id: 'todo',         label: 'To Do',         color: '#155DFC' },
-                { id: 'in-progress',  label: 'In Progress',   color: '#F59E0B' },
-                { id: 'review',       label: 'Review',        color: '#8B5CF6' },
-                { id: 'done',         label: 'Done',           color: '#10B981' },
-            ],
+            default: [],
         },
         settings: {
             autoAssignTasks: { type: Boolean, default: false },
@@ -49,11 +43,7 @@ const ProjectSchema = new mongoose.Schema({
                     color: { type: String, default: '#6366F1' },
                 },
             ],
-            default: [
-                { id: '1', name: 'structural', description: 'Structural engineering tasks', color: '#6366F1' },
-                { id: '2', name: 'mep', description: 'MEP related tasks', color: '#3B82F6' },
-                { id: '3', name: 'architecture', description: 'Architectural design tasks', color: '#10B981' },
-            ],
+            default: [],
         },
     },
     integrations: {

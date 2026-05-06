@@ -54,6 +54,13 @@ type XeoKitSceneModelCtor = new (scene: unknown, cfg: Record<string, unknown>) =
   aabb?: number[];
 };
 
+type EntityIdInput = string | string[] | null | undefined;
+
+function entityIdCandidates(input: EntityIdInput): string[] {
+  const raw = Array.isArray(input) ? input : [input];
+  return Array.from(new Set(raw.map((id) => String(id ?? '').trim()).filter(Boolean)));
+}
+
 export type XeoKitSceneObject = {
   id: string;
   position: { x: number; y: number; z: number };
@@ -690,14 +697,18 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
     object.position = [position[0], position[1], position[2]];
   }
 
-  getObjectBoundingBox(id: string): BBoxData | null {
-    const fromXkt = this.findEntityInXktModels(id);
-    if (fromXkt) {
-      const entity = fromXkt.entity as { aabb?: number[] } | undefined;
-      const bb = bboxFromAABB(entity?.aabb);
-      if (bb) return bb;
+  getObjectBoundingBox(id: EntityIdInput): BBoxData | null {
+    for (const candidate of entityIdCandidates(id)) {
+      const fromXkt = this.findEntityInXktModels(candidate);
+      if (fromXkt) {
+        const entity = fromXkt.entity as { aabb?: number[] } | undefined;
+        const bb = bboxFromAABB(entity?.aabb);
+        if (bb) return bb;
+      }
     }
-    const object = this.viewer.scene?.objects?.[id];
+    const object = entityIdCandidates(id)
+      .map((candidate) => this.viewer.scene?.objects?.[candidate])
+      .find(Boolean);
     if (!object) return null;
     return bboxFromAABB(object.aabb);
   }
@@ -790,8 +801,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
   }
 
   /** True if an entity with this IFC / federated id exists in any loaded XKT model. */
-  hasXktEntity(objectId: string): boolean {
-    return this.findEntityInXktModels(objectId) !== null;
+  hasXktEntity(objectId: EntityIdInput): boolean {
+    return entityIdCandidates(objectId).some((id) => this.findEntityInXktModels(id) !== null);
   }
 
   /**
@@ -969,8 +980,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
    * Clash detail clears tint on objectA/objectB so true IFC colors show; dim/hide isolation provides emphasis.
    */
   recolorXktObjects(
-    objectA: string | null,
-    objectB: string | null,
+    objectA: EntityIdInput,
+    objectB: EntityIdInput,
     allClashObjectIds: string[],
     visibleObjectIds?: string[],
     sceneObjects?: XeoKitSceneObject[]
@@ -1015,8 +1026,7 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
 
     if (!isOverviewPass) {
       // Clash detail: restore native appearance on the pair (no synthetic RGB on entities).
-      for (const id of [objectA, objectB] as const) {
-        if (!id) continue;
+      for (const id of [...entityIdCandidates(objectA), ...entityIdCandidates(objectB)]) {
         const candidates = this.resolveMatchingEntityIds(id);
         for (const cand of candidates) {
           const found = this.findEntityInXktModels(cand);
@@ -1081,16 +1091,18 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
    */
   applyClashPairIsolation(
     mode: 'off' | 'dim' | 'hide',
-    objectA: string | null,
-    objectB: string | null
+    objectA: EntityIdInput,
+    objectB: EntityIdInput
   ): void {
     if (mode === 'off') {
       this.resetNaturalAppearanceForAllMode();
       return;
     }
 
-    const hasResolvedA = Boolean(objectA && this.findEntityInXktModels(objectA));
-    const hasResolvedB = Boolean(objectB && this.findEntityInXktModels(objectB));
+    const objectAIds = entityIdCandidates(objectA);
+    const objectBIds = entityIdCandidates(objectB);
+    const hasResolvedA = objectAIds.some((id) => this.findEntityInXktModels(id));
+    const hasResolvedB = objectBIds.some((id) => this.findEntityInXktModels(id));
     const anyPairInXkt = hasResolvedA || hasResolvedB;
 
     /**
@@ -1111,8 +1123,8 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
 
     /** SceneModel clash proxies — match clash ids flexibly (IFC GlobalId casing / prefixes). */
     const isBboxProxyEntityId = (sceneObjId: string) =>
-      (objectA && this.clashUidMatchesSceneEntityId(objectA, sceneObjId)) ||
-      (objectB && this.clashUidMatchesSceneEntityId(objectB, sceneObjId));
+      objectAIds.some((id) => this.clashUidMatchesSceneEntityId(id, sceneObjId)) ||
+      objectBIds.some((id) => this.clashUidMatchesSceneEntityId(id, sceneObjId));
 
     /** Best match score per clash id across all XKT keys — only those keys participate in the “pair” (avoids weak suffix matches). */
     let maxScoreA = 0;
@@ -1121,20 +1133,20 @@ export class XeoKitViewerAdapter implements ViewerAdapter {
       const objects = scene?.models?.[modelId]?.objects;
       if (!objects) continue;
       for (const key of Object.keys(objects)) {
-        if (objectA) maxScoreA = Math.max(maxScoreA, this.clashIdToSceneKeyMatchScore(objectA, key));
-        if (objectB) maxScoreB = Math.max(maxScoreB, this.clashIdToSceneKeyMatchScore(objectB, key));
+        for (const id of objectAIds) maxScoreA = Math.max(maxScoreA, this.clashIdToSceneKeyMatchScore(id, key));
+        for (const id of objectBIds) maxScoreB = Math.max(maxScoreB, this.clashIdToSceneKeyMatchScore(id, key));
       }
     }
     const globalObjectsForMax = scene?.objects ?? {};
     for (const key of Object.keys(globalObjectsForMax)) {
-      if (objectA) maxScoreA = Math.max(maxScoreA, this.clashIdToSceneKeyMatchScore(objectA, key));
-      if (objectB) maxScoreB = Math.max(maxScoreB, this.clashIdToSceneKeyMatchScore(objectB, key));
+      for (const id of objectAIds) maxScoreA = Math.max(maxScoreA, this.clashIdToSceneKeyMatchScore(id, key));
+      for (const id of objectBIds) maxScoreB = Math.max(maxScoreB, this.clashIdToSceneKeyMatchScore(id, key));
     }
 
     const isKeptXktPairMember = (sceneObjId: string) => {
       if (!anyPairInXkt) return false;
-      const sa = objectA ? this.clashIdToSceneKeyMatchScore(objectA, sceneObjId) : 0;
-      const sb = objectB ? this.clashIdToSceneKeyMatchScore(objectB, sceneObjId) : 0;
+      const sa = Math.max(0, ...objectAIds.map((id) => this.clashIdToSceneKeyMatchScore(id, sceneObjId)));
+      const sb = Math.max(0, ...objectBIds.map((id) => this.clashIdToSceneKeyMatchScore(id, sceneObjId)));
       return (maxScoreA > 0 && sa === maxScoreA) || (maxScoreB > 0 && sb === maxScoreB);
     };
 

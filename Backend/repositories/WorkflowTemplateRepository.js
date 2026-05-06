@@ -13,6 +13,7 @@ class WorkflowTemplateRepository {
             authorId: data.authorId,
             authorName: data.authorName,
             isPrivate: data.isPrivate || false,
+            sourcePublicId: data.sourcePublicId || null,
             downloads: 0,
             rating: 0,
         });
@@ -111,19 +112,13 @@ class WorkflowTemplateRepository {
         return sourceTemplate ? sourceTemplate.downloads : 0;
     }
 
-    // Find user's templates (created by user, excluding copies)
+    // Find user's templates (created by user, including copies)
     async findUserTemplates(authorId, { page = 1, limit = 20 } = {}) {
         const skip = (page - 1) * limit;
 
-        // Only return templates that user CREATED (sourcePublicId is null means it's original)
-    // Templates that user copied have sourcePublicId set to the source template's publicId
-    const query = {
-        authorId,
-        $or: [
-            { sourcePublicId: { $exists: false } },
-            { sourcePublicId: null }
-        ]
-    };
+        // Return all templates authored by user (both original and copied templates)
+        // Copies are identified by sourcePublicId being set to the original template's publicId
+        const query = { authorId };
 
         const [templates, total] = await Promise.all([
             WorkflowTemplate.find(query)
@@ -134,8 +129,17 @@ class WorkflowTemplateRepository {
             WorkflowTemplate.countDocuments(query),
         ]);
 
+        // Mark downloaded copies
+        const downloadedRecords = await UserDownloadedTemplate.find({ userId: authorId }).lean();
+        const downloadedIds = new Set(downloadedRecords.map(r => r.publicId));
+
+        const templatesWithFlag = templates.map(t => ({
+            ...t,
+            isDownloadedCopy: t.sourcePublicId ? true : false,
+        }));
+
         return {
-            templates,
+            templates: templatesWithFlag,
             pagination: {
                 page,
                 limit,
@@ -147,11 +151,9 @@ class WorkflowTemplateRepository {
 
     // Find templates that user has downloaded (copied from others)
     async findDownloadedTemplates(userId, { page = 1, limit = 20 } = {}) {
-        const skip = (page - 1) * limit;
-
         // Get all downloaded template publicIds
         const downloadedRecords = await UserDownloadedTemplate.find({ userId }).lean();
-        const downloadedIds = downloadedRecords.map(r => r.publicId);
+        const downloadedIds = downloadedRecords.map(r => r.publicId).filter(Boolean);
 
         if (downloadedIds.length === 0) {
             return {
@@ -160,26 +162,49 @@ class WorkflowTemplateRepository {
             };
         }
 
-        // Include user's private copies that are downloaded from others
-        // These are marked as isDownloadedCopy: true
-        const [templates, total] = await Promise.all([
-            WorkflowTemplate.find({ publicId: { $in: downloadedIds } })
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit)
-                .lean(),
-            WorkflowTemplate.countDocuments({ publicId: { $in: downloadedIds } }),
-        ]);
+        const directTemplates = await WorkflowTemplate.find({ publicId: { $in: downloadedIds } }).lean();
+        const sourceIds = directTemplates.map(t => t.sourcePublicId).filter(Boolean);
+        const installedIds = Array.from(new Set([...downloadedIds, ...sourceIds]));
+
+        const templates = await WorkflowTemplate.find({
+            $or: [
+                { publicId: { $in: installedIds } },
+                { sourcePublicId: { $in: installedIds }, authorId: userId },
+            ],
+        })
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const copyBySource = new Map();
+        templates.forEach((template) => {
+            if (template.sourcePublicId && template.authorId === userId && !copyBySource.has(template.sourcePublicId)) {
+                copyBySource.set(template.sourcePublicId, template);
+            }
+        });
+
+        const uniqueTemplates = [];
+        const seen = new Set();
+        templates.forEach((template) => {
+            if (!template.sourcePublicId && copyBySource.has(template.publicId)) return;
+            if (seen.has(template.publicId)) return;
+            seen.add(template.publicId);
+            uniqueTemplates.push(template);
+        });
 
         // Mark all as downloaded copies
-        const templatesWithFlag = templates.map(t => ({
+        const templatesWithFlag = uniqueTemplates.map(t => ({
             ...t,
             isOwn: false,
             isDownloadedCopy: true,
+            installedPublicId: t.sourcePublicId ? t.publicId : (copyBySource.get(t.publicId)?.publicId || t.publicId),
         }));
 
+        const total = templatesWithFlag.length;
+        const skip = (page - 1) * limit;
+        const pagedTemplates = templatesWithFlag.slice(skip, skip + limit);
+
         return {
-            templates: templatesWithFlag,
+            templates: pagedTemplates,
             pagination: {
                 page,
                 limit,
@@ -217,6 +242,31 @@ class WorkflowTemplateRepository {
         return result;
     }
 
+    // Remove a user's installed/downloaded template records without deleting a shared source.
+    async uninstallForUser(userId, template) {
+        if (!template) return { deletedRecords: 0 };
+
+        const idsToRemove = new Set([template.publicId]);
+        if (template.sourcePublicId) idsToRemove.add(template.sourcePublicId);
+
+        const copies = await WorkflowTemplate.find({
+            authorId: userId,
+            sourcePublicId: { $in: Array.from(idsToRemove) },
+        }).lean();
+
+        copies.forEach((copy) => {
+            if (copy.publicId) idsToRemove.add(copy.publicId);
+            if (copy.sourcePublicId) idsToRemove.add(copy.sourcePublicId);
+        });
+
+        const result = await UserDownloadedTemplate.deleteMany({
+            userId,
+            publicId: { $in: Array.from(idsToRemove) },
+        });
+
+        return { deletedRecords: result.deletedCount || 0, removedPublicIds: Array.from(idsToRemove) };
+    }
+
     // Increment downloads
     async incrementDownloads(publicId) {
         return await WorkflowTemplate.findOneAndUpdate(
@@ -235,7 +285,21 @@ class WorkflowTemplateRepository {
     // Get all template publicIds that a user has downloaded
     async getDownloadedTemplateIds(userId) {
         const records = await UserDownloadedTemplate.find({ userId }).lean();
-        return records.map(r => r.publicId);
+        const ids = new Set(records.map(r => r.publicId).filter(Boolean));
+        const recordIds = records.map(r => r.publicId).filter(Boolean);
+
+        if (recordIds.length > 0) {
+            const templates = await WorkflowTemplate.find({ publicId: { $in: recordIds } })
+                .select('publicId sourcePublicId')
+                .lean();
+
+            templates.forEach((template) => {
+                if (template.publicId) ids.add(template.publicId);
+                if (template.sourcePublicId) ids.add(template.sourcePublicId);
+            });
+        }
+
+        return Array.from(ids);
     }
 
     // Mark template as downloaded by user

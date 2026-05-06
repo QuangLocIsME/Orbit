@@ -10,6 +10,8 @@ export interface Clash {
   stale?: boolean;
   objectA: string;
   objectB: string;
+  objectAIdentifiers?: string[];
+  objectBIdentifiers?: string[];
   position: [number, number, number];
   title: string;
   location: string;
@@ -40,6 +42,8 @@ export interface BackendClash {
   id: string;
   objectA: string;
   objectB: string;
+  objectAIdentifiers?: string[];
+  objectBIdentifiers?: string[];
   position: [number, number, number];
   severity: 'low' | 'medium' | 'high' | 'critical';
   clashType?: 'hard' | 'soft';

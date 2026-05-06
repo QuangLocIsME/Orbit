@@ -33,6 +33,7 @@ interface Template {
   rating: number;
   category?: string;
   isDownloaded?: boolean;
+  installedPublicId?: string;
   // Flag to indicate if this is a downloaded copy (cannot edit/delete)
   isDownloadedCopy?: boolean;
   // Original template publicId (for downloaded copies)
@@ -83,19 +84,20 @@ function toCardTemplate(template: WorkflowTemplate): Template {
     authorId: template.authorId,
     isPrivate: template.isPrivate,
     tags: template.tags || [],
-    stages: template.stages?.map(s => s.name || s) || [],
+    stages: template.stages?.map(s => s.name) || [],
     downloads: template.downloads || 0,
     rating: template.rating || 0,
     category: template.category,
     isDownloaded: template.isDownloaded || false,
+    installedPublicId: template.installedPublicId,
     // Flag to indicate if this is a downloaded copy (cannot edit/delete)
-    isDownloadedCopy: (template as any).isDownloadedCopy || false,
+    isDownloadedCopy: template.isDownloadedCopy || false,
     // Original downloads count from source template
-    originalDownloads: (template as any).originalDownloads,
+    originalDownloads: template.originalDownloads,
   };
 }
 
-function TemplateCard({ template, onEdit, onDelete, onDownload, isDownloaded }: { template: Template; onEdit?: () => void; onDelete?: () => void; onDownload?: () => void; isDownloaded?: boolean }) {
+function TemplateCard({ template, onEdit, onDelete, onDownload, isInstalled }: { template: Template; onEdit?: () => void; onDelete?: () => void; onDownload?: () => void; isInstalled?: boolean }) {
   const visibleStages = template.stages.slice(0, 4);
   const remainingStages = template.stages.length - 4;
 
@@ -120,7 +122,7 @@ function TemplateCard({ template, onEdit, onDelete, onDownload, isDownloaded }: 
                 <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
-                Downloaded
+                Installed
               </span>
             ) : template.isPrivate ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
@@ -208,20 +210,20 @@ function TemplateCard({ template, onEdit, onDelete, onDownload, isDownloaded }: 
           {onDownload && !template.isPrivate && !isDownloadedCopy && (
             <button
               onClick={onDownload}
-              disabled={isDownloaded}
+              disabled={isInstalled}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-150",
-                isDownloaded
+                isInstalled
                   ? "bg-green-100 border border-green-300 text-green-700 cursor-default"
                   : "bg-blue-600 text-white hover:bg-blue-700"
               )}
             >
-              {isDownloaded ? (
+              {isInstalled ? (
                 <>
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  Downloaded
+                  Installed
                 </>
               ) : (
                 <>
@@ -822,15 +824,34 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [myRes, libraryRes, tagsRes] = await Promise.all([
-        workflowTemplateService.getMyTemplates(),
-        workflowTemplateService.getTemplates({ limit: 50 }),
-        workflowTemplateService.getTags().catch(() => []),
+      const [myResult, downloadedResult, libraryResult, tagsResult] = await Promise.allSettled([
+        workflowTemplateService.getMyTemplates({ limit: 100 }),
+        workflowTemplateService.getDownloadedTemplates({ limit: 100 }),
+        workflowTemplateService.getTemplates({ limit: 100, sort: 'recent' }),
+        workflowTemplateService.getTags(),
       ]);
       
-      setMyTemplates(myRes.templates);
-      setLibraryTemplates(libraryRes.templates);
-      setAvailableTags(tagsRes);
+      const myTemplatesResult = myResult.status === 'fulfilled' ? myResult.value.templates : [];
+      const downloadedTemplatesResult = downloadedResult.status === 'fulfilled' ? downloadedResult.value.templates : [];
+      const libraryTemplatesResult = libraryResult.status === 'fulfilled' ? libraryResult.value.templates : [];
+
+      const byId = new Map<string, WorkflowTemplate>();
+      [...myTemplatesResult, ...downloadedTemplatesResult].forEach((template) => {
+        if (!template?.publicId) return;
+        if (!byId.has(template.publicId)) {
+          byId.set(template.publicId, template);
+        }
+      });
+
+      setMyTemplates(Array.from(byId.values()));
+      setLibraryTemplates(libraryTemplatesResult);
+      setAvailableTags(tagsResult.status === 'fulfilled' ? tagsResult.value : []);
+
+      const failedResults = [myResult, downloadedResult, libraryResult].filter(result => result.status === 'rejected');
+      if (failedResults.length > 0) {
+        console.error('Some workflow template requests failed:', failedResults);
+        toast.error('Some templates could not be loaded');
+      }
     } catch (error) {
       console.error('Failed to fetch templates:', error);
       toast.error('Failed to load templates');
@@ -869,6 +890,19 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
 
   // Get current templates based on tab
   const currentTemplates = activeTab === 'my' ? myTemplates : libraryTemplates;
+  const installedTemplateIds = useMemo(() => {
+    const ids = new Set<string>();
+    myTemplates.forEach((template) => {
+      if (!template?.publicId) return;
+      ids.add(template.publicId);
+      if (template.sourcePublicId) ids.add(template.sourcePublicId);
+    });
+    libraryTemplates.forEach((template) => {
+      if (template?.isDownloaded && template.publicId) ids.add(template.publicId);
+      if (template?.installedPublicId) ids.add(template.installedPublicId);
+    });
+    return ids;
+  }, [myTemplates, libraryTemplates]);
 
   // Convert to card format
   const cardTemplates = currentTemplates.map(toCardTemplate);
@@ -939,11 +973,12 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
       setMyTemplates(prev => [{
         ...copiedTemplate,
         isDownloadedCopy: true,
+        sourcePublicId: copiedTemplate.sourcePublicId || template.id,
         originalDownloads: copiedTemplate.originalDownloads || template.downloads,
       }, ...prev]);
       // Cập nhật trạng thái đã tải trong library
       setLibraryTemplates(prev =>
-        prev.map(t => t.publicId === template.id ? { ...t, downloads: (t.downloads || 0) + 1, isDownloaded: true } : t)
+        prev.map(t => t.publicId === template.id ? { ...t, downloads: (t.downloads || 0) + 1, isDownloaded: true, installedPublicId: copiedTemplate.publicId } : t)
       );
       // Thông báo cho các trang khác (Settings, Dropdown) cập nhật danh sách
       window.dispatchEvent(new CustomEvent('workflow-created', { detail: { ...copiedTemplate, isDownloadedCopy: true } }));
@@ -1101,9 +1136,9 @@ export function WorkflowTemplates({ templates: propsTemplates, allTags: propsTag
               key={template.id} 
               template={template}
               onEdit={activeTab === 'my' && !template.isDownloadedCopy ? () => handleEdit(template) : undefined}
-              onDelete={activeTab === 'my' ? () => handleDelete(template) : undefined}
+              onDelete={activeTab === 'my' && !template.isDownloadedCopy ? () => handleDelete(template) : undefined}
               onDownload={activeTab === 'library' && !template.isPrivate && !template.isDownloadedCopy ? () => handleDownload(template) : undefined}
-              isDownloaded={template.isDownloaded}
+              isInstalled={template.isDownloaded || installedTemplateIds.has(template.id)}
             />
           ))}
         </div>

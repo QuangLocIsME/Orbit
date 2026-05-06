@@ -15,6 +15,19 @@ import { ProjectsSkeleton } from '../ui/skeletons';
 import { useAppStore } from '@/stores/appStore';
 import { refreshApiCache } from '@/lib/sw-utils';
 
+function openProject(projectId: string) {
+  const href = `/projects/${encodeURIComponent(projectId)}`;
+  import('astro:transitions/client')
+    .then(({ navigate }) => navigate(href))
+    .catch(() => {
+      window.location.assign(href);
+    });
+}
+
+function shouldOpenProjectInCurrentTab(event: React.MouseEvent<HTMLElement>) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
 // Types
 interface Folder {
   id: string;
@@ -708,7 +721,19 @@ function getCustomIconById(iconId: string): React.ReactNode {
 }
 
 // Project List Item Component (for list view)
-function ProjectListItem({ project, isDragging = false, memberCounts, onToggleFavorite }: { project: Project; isDragging?: boolean; memberCounts: Record<string, number>; onToggleFavorite?: (id: string) => void }) {
+function ProjectListItem({
+  project,
+  isDragging = false,
+  memberCounts,
+  onToggleFavorite,
+  onTrashProject,
+}: {
+  project: Project;
+  isDragging?: boolean;
+  memberCounts: Record<string, number>;
+  onToggleFavorite?: (id: string) => void;
+  onTrashProject?: (id: string) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({
     id: `project:${project.id}`,
     data: { type: 'project', projectId: project.id },
@@ -764,6 +789,9 @@ function ProjectListItem({ project, isDragging = false, memberCounts, onToggleFa
         onClick={(e) => {
           // Let dnd-kit handle drag, only navigate on simple click
           if (e.defaultPrevented) return;
+          if (!shouldOpenProjectInCurrentTab(e)) return;
+          e.preventDefault();
+          openProject(project.id);
         }}
       >
         {/* Type Icon */}
@@ -882,6 +910,11 @@ function ProjectListItem({ project, isDragging = false, memberCounts, onToggleFa
               <a
                 href={`/projects/${project.id}`}
                 draggable={false}
+                onClick={(e) => {
+                  if (!shouldOpenProjectInCurrentTab(e)) return;
+                  e.preventDefault();
+                  openProject(project.id);
+                }}
                 className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
               >
                 <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -891,6 +924,12 @@ function ProjectListItem({ project, isDragging = false, memberCounts, onToggleFa
                 Open Project
               </a>
               <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onTrashProject?.(project.id);
+                }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -920,7 +959,8 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
     // Only skip real control elements — sortable `{...attributes}` sets role="button" on this card,
     // so `[role="button"]` would match the whole card and block navigation entirely.
     if ((e.target as HTMLElement).closest('button, a[href]')) return;
-    window.location.href = `/projects/${project.id}`;
+    if (!shouldOpenProjectInCurrentTab(e)) return;
+    openProject(project.id);
   };
 
   return (
@@ -944,6 +984,11 @@ function ProjectGridCard({ project, isDragging = false, memberCounts, onToggleFa
       <a
         href={`/projects/${project.id}`}
         draggable={false}
+        onClick={(e) => {
+          if (!shouldOpenProjectInCurrentTab(e)) return;
+          e.preventDefault();
+          openProject(project.id);
+        }}
         onDragStart={(e) => {
           e.preventDefault();
           const img = new Image();
@@ -1298,10 +1343,10 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       createdApiProject,
       ...useAppStore.getState().projects.filter((item) => item.publicId !== createdApiProject.publicId),
     ]);
-    const updatedProjects = await loadProjects(false, { force: true });
-    const nextProjects = updatedProjects.some((item) => item.id === createdProject.id)
-      ? updatedProjects
-      : [createdProject, ...updatedProjects];
+    const nextProjects = [
+      createdProject,
+      ...projects.filter((item) => item.id !== createdProject.id),
+    ];
     const cacheValue = { data: nextProjects, expiresAt: Date.now() + PROJECTS_CACHE_TTL_MS };
     projectsCacheRef.current = cacheValue;
     if (typeof window !== 'undefined') {
@@ -1312,11 +1357,9 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
       createdApiProject,
       ...useAppStore.getState().projects.filter((item) => item.publicId !== createdApiProject.publicId),
     ]);
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(cacheValue));
-    }
     await loadFolders(nextProjects, { force: true });
     await loadMemberCounts(nextProjects);
+    refreshApiCache(['/api/projects/me', '/api/folders/me']);
   };
 
   const loadProjects = useCallback(async (
@@ -2000,7 +2043,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                             <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
                           </motion.div>
                         : <motion.div key={project.id} layout>
-                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} onTrashProject={handleTrashProject} />
                           </motion.div>
                     ))}
                   </div>
@@ -2031,7 +2074,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                             <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
                           </motion.div>
                         : <motion.div key={project.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
-                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} onTrashProject={handleTrashProject} />
                           </motion.div>
                     ))}
                   </div>
@@ -2047,7 +2090,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                             <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
                           </motion.div>
                         : <motion.div key={project.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
-                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                            <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} onTrashProject={handleTrashProject} />
                           </motion.div>
                     ))}
                   </div>
@@ -2089,7 +2132,7 @@ export default function ProjectsManager(_props?: ProjectsManagerProps) {
                       <ProjectGridCard project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
                     </motion.div>
                   : <motion.div key={project.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
-                      <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} />
+                      <ProjectListItem project={project} isDragging={activeProjectId === project.id} memberCounts={memberCounts} onToggleFavorite={toggleFavorite} onTrashProject={handleTrashProject} />
                     </motion.div>
               ))}
             </div>

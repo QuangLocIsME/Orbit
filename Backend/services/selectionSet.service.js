@@ -5,6 +5,11 @@ const sanitizeArray = (value) => Array.isArray(value)
     ? Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)))
     : [];
 
+const isMetadataPlaceholderObject = (object) => {
+    const id = String(object?.id || '');
+    return /__(parse_error|empty_metadata|model_bbox|no_federated_elements)$/.test(id);
+};
+
 const normalizeSelectionSet = (payload = {}) => ({
     id: payload.id || createId('selection-set'),
     name: String(payload.name || 'Untitled Selection Set').trim(),
@@ -62,6 +67,7 @@ class SelectionSetService {
             federatedModelOverride || (await modelService.getFederatedModel(projectSlug, workspace));
         const objectIds = federatedModel.objects
             .filter((object) => !object.hidden)
+            .filter((object) => !isMetadataPlaceholderObject(object))
             .filter((object) => {
                 const { modelIds, types, categories } = selectionSet.filters;
                 if (modelIds.length > 0 && !modelIds.includes(object.sourceModelId)) return false;

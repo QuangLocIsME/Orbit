@@ -271,6 +271,34 @@ const toPairKey = (objectA, objectB) => [objectA.id, objectB.id].sort().join('__
 
 const normalizeStatus = (value) => ['new', 'reviewed', 'resolved'].includes(value) ? value : 'new';
 
+const objectViewerIdentifiers = (object, fallbackId) => {
+    const ids = new Set();
+    const add = (value) => {
+        if (value === undefined || value === null) return;
+        const text = String(value).trim();
+        if (!text) return;
+        ids.add(text);
+    };
+
+    add(fallbackId);
+    add(object?.id);
+    add(object?.globalId);
+    add(object?.guid);
+    add(object?.originalSystemId);
+
+    const expressId = object?.geometry?.expressId ?? object?.expressId;
+    add(expressId);
+    if (expressId !== undefined && expressId !== null) {
+        add(`${object?.sourceModelId || ''}:${expressId}`);
+        add(`${object?.sourceModel || ''}:${expressId}`);
+    }
+    if (object?.globalId) {
+        add(`{${object.globalId}}`);
+    }
+
+    return Array.from(ids);
+};
+
 const normalizeTest = (payload = {}) => ({
     id: payload.id || createId('clash-test'),
     name: String(payload.name || 'Untitled Clash Test').trim(),
@@ -292,6 +320,8 @@ const toFrontendResult = (result, test, lookup) => {
         clashId: result.clashId,
         objectA: result.objectA,
         objectB: result.objectB,
+        objectAIdentifiers: objectViewerIdentifiers(objectA, result.objectA),
+        objectBIdentifiers: objectViewerIdentifiers(objectB, result.objectB),
         type: result.type,
         status: result.status,
         position: result.position,

@@ -28,6 +28,7 @@ import {
   invalidateProjectTabsForSocketEvent,
   type ProjectTabInvalidationSource,
 } from '@/lib/project-tab-realtime';
+import { clearProjectClients } from '@/lib/sw-utils';
 
 const PROJECTS_CACHE_KEY = 'orbit:projects:me';
 const FOLDERS_CACHE_KEY = 'orbit:folders:me';
@@ -278,7 +279,11 @@ const _pendingCallbacks: CallbackEntry[] = [];
 function _getOrCreate(socket: OrbitSocket, projectId: string): CallbackEntry[] {
   if (!_projectCallbacks.has(projectId)) {
     _projectCallbacks.set(projectId, []);
-    socket.emit('project:join', { projectId });
+    socket.emit('project:join', { projectId }, (res: { success: boolean; role?: string; error?: string }) => {
+      if (!res?.success && res?.error) {
+        console.debug(`[WS] project:join ${res.error} for project ${projectId}`);
+      }
+    });
   }
   return _projectCallbacks.get(projectId)!;
 }
@@ -355,6 +360,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       window.removeEventListener('sw:data', _swDataHandler);
       _swDataHandler = null;
     }
+    // Clear all tracked project clients since we're logging out
+    _projectCallbacks.forEach((_, projectId) => clearProjectClients(projectId));
+    _projectCallbacks.clear();
     set({ auth: null, projects: [], folders: [], teamMembers: {}, isHydrated: false, prefetchStatus: 'idle' });
   },
 
@@ -611,7 +619,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (arr.length === 0) {
         _projectCallbacks.delete(projectId);
         const s = get().socket;
-        if (s) s.emit('project:leave', { projectId });
+        if (s) s.emit('project:leave', { projectId }, () => {});
+        clearProjectClients(projectId);
       }
     };
   },

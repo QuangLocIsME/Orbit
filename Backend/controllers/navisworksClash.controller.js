@@ -312,15 +312,30 @@ class NavisworksClashController {
                 if (doc.xktKey && doc.conversionStatus === 'READY') {
                     try {
                         const xktBuffer = await downloadXktBuffer(doc.xktKey);
+                        if (!doc.s3Url) {
+                            imports.push({
+                                buffer: xktBuffer,
+                                originalName: doc.originalName.replace(/\.ifc$/i, '.xkt'),
+                                sourceFormat: 'xkt',
+                                sourceModel: doc.originalName.replace(/\.ifc$/i, ''),
+                            });
+                            console.warn(`[importFromDocuments] Using XKT-only import for "${doc.originalName}" because no IFC download URL is stored.`);
+                            continue;
+                        }
+
+                        const ifcResponse = await fetch(doc.s3Url);
+                        if (!ifcResponse.ok) {
+                            throw new Error(`IFC fallback HTTP ${ifcResponse.status}`);
+                        }
+                        const ifcBuffer = Buffer.from(await ifcResponse.arrayBuffer());
                         imports.push({
-                            buffer: xktBuffer,
-                            originalName: doc.originalName.replace(/\.ifc$/i, '.xkt'),
-                            sourceFormat: 'xkt',
+                            buffer: ifcBuffer,
+                            xktBuffer,
+                            originalName: doc.originalName,
+                            sourceFormat: 'ifc',
                             sourceModel: doc.originalName.replace(/\.ifc$/i, ''),
-                            fallbackIfcUrl: doc.s3Url || null,
-                            fallbackOriginalName: doc.originalName,
                         });
-                        console.info(`[importFromDocuments] Using existing XKT for "${doc.originalName}"`);
+                        console.info(`[importFromDocuments] Using IFC metadata + existing XKT for "${doc.originalName}"`);
                         continue;
                     } catch (xktErr) {
                         console.warn(`[importFromDocuments] Failed to download existing XKT for "${doc.originalName}", falling back to IFC: ${xktErr.message}`);

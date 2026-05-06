@@ -481,6 +481,14 @@ export default function TaskBoard({
     return <div className="py-12 text-center text-[14px] text-[#6A7282]">Loading tasks...</div>;
   }
 
+  if (stages.length === 0) {
+    return (
+      <div className="py-12 text-center text-[14px] text-[#6A7282]">
+        Install and apply a workflow template before adding tasks.
+      </div>
+    );
+  }
+
   return (
     <DndContext
       sensors={sensors}

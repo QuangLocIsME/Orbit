@@ -77,6 +77,18 @@ const normalizePackageId = (value) => {
     return normalized || null;
 };
 
+const getProjectWorkflowStages = async (projectId) => {
+    const project = await Project.findOne({ publicId: projectId }).select('workflowTemplateId workflow.stages').lean();
+    const stages = Array.isArray(project?.workflow?.stages) ? project.workflow.stages : [];
+    return {
+        project,
+        stages,
+        hasWorkflow: Boolean(project?.workflowTemplateId && stages.length > 0),
+    };
+};
+
+const workflowRequiredMessage = 'Install and apply a workflow template before creating tasks';
+
 /** Project roles that may create tasks and change task status (not viewers). */
 const canMutateProjectTasks = (member) => {
     if (!member || member.status !== 'accepted') return false;
@@ -153,6 +165,10 @@ class TaskController {
             const actor = await ProjectMemberRepository.findMember(projectId, userId);
             if (!canMutateProjectTasks(actor)) return forbidden(res);
 
+            const workflowState = await getProjectWorkflowStages(projectId);
+            if (!workflowState.project) return notFound(res, 'Project not found');
+            if (!workflowState.hasWorkflow) return badRequest(res, workflowRequiredMessage);
+
             const packageAccess = await validatePackageAccess({
                 projectId,
                 packageId,
@@ -191,7 +207,9 @@ class TaskController {
                 packageId,
                 title,
                 description: normalizeString(req.body?.description),
-                status: normalizeStatus(req.body?.status),
+                status: workflowState.stages.some((stage) => stage.id === normalizeStatus(req.body?.status))
+                    ? normalizeStatus(req.body?.status)
+                    : workflowState.stages[0].id,
                 priority: normalizePriority(req.body?.priority),
                 assigneeId: assigneeIds[0] || '',
                 assigneeIds,
