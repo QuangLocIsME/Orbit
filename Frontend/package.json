@@ -10,10 +10,10 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/netlify": "^7.0.9",
-    "@astrojs/node": "^10.1.1",
+    "@astrojs/netlify": "^8.2.5",
+    "@astrojs/node": "^11.1.5",
     "@astrojs/react": "^5.0.5",
-    "@astrojs/vercel": "^10.0.7",
+    "@astrojs/vercel": "^11.0.10",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
@@ -32,7 +32,7 @@
     "@xeokit/xeokit-bim-viewer": "^2.7.1",
     "@xeokit/xeokit-sdk": "^2.6.108",
     "@xyflow/react": "^12.5.0",
-    "astro": "^6.3.3",
+    "astro": "^7.3.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
